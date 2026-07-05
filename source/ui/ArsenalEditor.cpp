@@ -244,6 +244,7 @@ void ContentComponent::resized()
     auto presetArea = header.reduced (metrics::unit, 12);
     prevPresetButton.setBounds (presetArea.removeFromLeft (26));
     savePresetButton.setBounds (presetArea.removeFromRight (52));
+    presetArea.removeFromRight (8);   // breathing room between > and SAVE
     nextPresetButton.setBounds (presetArea.removeFromRight (26));
     presetNameButton.setBounds (presetArea.reduced (3, 0));
 

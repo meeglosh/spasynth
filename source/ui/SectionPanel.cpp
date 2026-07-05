@@ -34,7 +34,7 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
         Control control;
 
         control.label = std::make_unique<juce::Label>();
-        control.label->setText (displayName (def), juce::dontSendNotification);
+        control.label->setText (displayName (def).toUpperCase(), juce::dontSendNotification);
         control.label->setFont (metrics::smallFont());
         control.label->setJustificationType (juce::Justification::centred);
         control.label->setInterceptsMouseClicks (false, false);
@@ -43,7 +43,7 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
         {
             case params::ParamKind::boolParam:
             {
-                auto toggle = std::make_unique<juce::ToggleButton> (displayName (def));
+                auto toggle = std::make_unique<juce::ToggleButton> (displayName (def).toUpperCase());
                 control.buttonAttachment =
                     std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
                         apvts, def.id, *toggle);

@@ -37,10 +37,29 @@ namespace draw
 void panel (juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     const auto& t = currentTheme();
-    g.setColour (t.panel);
+
+    // Soft elevation shadow (two feathered passes — cheap and convincing).
+    g.setColour (juce::Colours::black.withAlpha (t.isDark ? 0.35f : 0.18f));
+    g.fillRoundedRectangle (bounds.translated (0.0f, 2.5f).expanded (1.0f),
+                            metrics::cornerRadius + 2.0f);
+    g.setColour (juce::Colours::black.withAlpha (t.isDark ? 0.20f : 0.10f));
+    g.fillRoundedRectangle (bounds.translated (0.0f, 4.5f).expanded (2.5f),
+                            metrics::cornerRadius + 4.0f);
+
+    // Panel face with a whisper of vertical gradient.
+    g.setGradientFill (juce::ColourGradient (t.panel.brighter (t.isDark ? 0.05f : 0.02f),
+                                             bounds.getX(), bounds.getY(),
+                                             t.panel.darker (t.isDark ? 0.06f : 0.02f),
+                                             bounds.getX(), bounds.getBottom(), false));
     g.fillRoundedRectangle (bounds, metrics::cornerRadius);
+
     g.setColour (t.outline);
     g.drawRoundedRectangle (bounds.reduced (0.5f), metrics::cornerRadius, 1.0f);
+
+    // Hairline top highlight — the "edge catch" the mock's panels have.
+    g.setColour (juce::Colours::white.withAlpha (t.isDark ? 0.045f : 0.35f));
+    g.drawLine (bounds.getX() + metrics::cornerRadius, bounds.getY() + 1.0f,
+                bounds.getRight() - metrics::cornerRadius, bounds.getY() + 1.0f, 1.0f);
 }
 
 juce::Rectangle<int> sectionHeader (juce::Graphics& g, juce::Rectangle<int> bounds,
@@ -88,24 +107,34 @@ juce::Rectangle<int> sectionHeader (juce::Graphics& g, juce::Rectangle<int> boun
 void displayWell (juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     const auto& t = currentTheme();
-    g.setColour (t.display);
-    g.fillRoundedRectangle (bounds, 2.0f);
+
+    // Recessed well: vertical gradient, slightly darker at the top.
+    g.setGradientFill (juce::ColourGradient (t.display.darker (0.25f),
+                                             bounds.getX(), bounds.getY(),
+                                             t.display.brighter (t.isDark ? 0.08f : 0.02f),
+                                             bounds.getX(), bounds.getBottom(), false));
+    g.fillRoundedRectangle (bounds, 3.0f);
     g.setColour (t.outline);
-    g.drawRoundedRectangle (bounds.reduced (0.5f), 2.0f, 1.0f);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, 1.0f);
 
     // Faint centre line, like the reference scopes.
-    g.setColour (t.outline.withAlpha (0.5f));
+    g.setColour (t.outline.withAlpha (0.45f));
     g.drawHorizontalLine ((int) bounds.getCentreY(), bounds.getX() + 2.0f,
                           bounds.getRight() - 2.0f);
 }
 
 void glowStroke (juce::Graphics& g, const juce::Path& path, juce::Colour colour, float thickness)
 {
-    g.setColour (colour.withAlpha (0.22f));
-    g.strokePath (path, juce::PathStrokeType (thickness * 3.0f,
+    // Three feathered passes for the mock's neon glow.
+    g.setColour (colour.withAlpha (0.10f));
+    g.strokePath (path, juce::PathStrokeType (thickness * 6.0f,
                                               juce::PathStrokeType::curved,
                                               juce::PathStrokeType::rounded));
-    g.setColour (colour);
+    g.setColour (colour.withAlpha (0.28f));
+    g.strokePath (path, juce::PathStrokeType (thickness * 2.6f,
+                                              juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
+    g.setColour (colour.brighter (0.05f));
     g.strokePath (path, juce::PathStrokeType (thickness,
                                               juce::PathStrokeType::curved,
                                               juce::PathStrokeType::rounded));
@@ -161,23 +190,48 @@ void ArsenalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     const auto centre = bounds.getCentre();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    const auto lineW = juce::jlimit (1.6f, 2.4f, radius * 0.11f);
+    const auto lineW = juce::jlimit (1.7f, 2.6f, radius * 0.12f);
     const auto arcRadius = radius - lineW * 0.5f;
+    const auto faceRadius = arcRadius - lineW * 1.7f;
 
-    // Face — a flat disc, reference style.
-    g.setColour (t.knobFace.brighter (slider.isMouseOverOrDragging() ? 0.05f : 0.0f));
-    g.fillEllipse (centre.x - arcRadius + lineW, centre.y - arcRadius + lineW,
-                   (arcRadius - lineW) * 2.0f, (arcRadius - lineW) * 2.0f);
+    // Drop shadow under the disc (mock: knobs float above the panel).
+    {
+        const auto shadowR = faceRadius * 1.18f;
+        juce::ColourGradient shadow (
+            juce::Colours::black.withAlpha (t.isDark ? 0.55f : 0.30f),
+            centre.x, centre.y + faceRadius * 0.28f,
+            juce::Colours::transparentBlack,
+            centre.x, centre.y + faceRadius * 0.28f + shadowR, true);
+        g.setGradientFill (shadow);
+        g.fillEllipse (centre.x - shadowR, centre.y + faceRadius * 0.28f - shadowR,
+                       shadowR * 2.0f, shadowR * 2.0f);
+    }
 
-    // Thin ring track.
+    // Face: vertical gradient disc, light catches the top.
+    const auto hover = slider.isMouseOverOrDragging() ? 0.05f : 0.0f;
+    g.setGradientFill (juce::ColourGradient (
+        t.knobFace.brighter (0.55f + hover), centre.x, centre.y - faceRadius,
+        t.knobFace.darker (0.45f), centre.x, centre.y + faceRadius, false));
+    g.fillEllipse (centre.x - faceRadius, centre.y - faceRadius,
+                   faceRadius * 2.0f, faceRadius * 2.0f);
+
+    // Bevel: bright top rim, dark bottom rim.
+    g.setColour (juce::Colours::white.withAlpha (t.isDark ? 0.10f : 0.55f));
+    g.drawEllipse (centre.x - faceRadius, centre.y - faceRadius,
+                   faceRadius * 2.0f, faceRadius * 2.0f, 1.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.drawEllipse (centre.x - faceRadius + 0.5f, centre.y - faceRadius + 1.0f,
+                   faceRadius * 2.0f - 1.0f, faceRadius * 2.0f - 1.0f, 0.8f);
+
+    // Ring track (groove outside the face).
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour (t.knobTrack);
+    g.setColour (t.knobTrack.withAlpha (0.9f));
     g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
-    // Value arc. Modulation-coloured knobs opt in via component ID.
+    // Value arc with glow.
     const auto accent = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
     const auto isBipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
     const auto fillStart = isBipolar
@@ -186,15 +240,25 @@ void ArsenalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                          fillStart, angle, true);
-    g.setColour (slider.isEnabled() ? accent : t.textSecondary.withAlpha (0.35f));
+    const auto arcColour = slider.isEnabled() ? accent : t.textSecondary.withAlpha (0.35f);
+    if (slider.isEnabled())
+    {
+        g.setColour (arcColour.withAlpha (0.30f));
+        g.strokePath (value, juce::PathStrokeType (lineW * 2.4f,
+                                                   juce::PathStrokeType::curved,
+                                                   juce::PathStrokeType::rounded));
+    }
+    g.setColour (arcColour);
     g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
-    // Pointer.
-    const auto tip = centre.getPointOnCircumference (arcRadius - lineW * 1.6f, angle);
-    const auto inner = centre.getPointOnCircumference (arcRadius * 0.45f, angle);
-    g.setColour (t.textPrimary);
-    g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW);
+    // Pointer: bright needle on the face.
+    const auto tip = centre.getPointOnCircumference (faceRadius * 0.88f, angle);
+    const auto inner = centre.getPointOnCircumference (faceRadius * 0.30f, angle);
+    g.setColour (juce::Colours::black.withAlpha (0.4f));
+    g.drawLine (inner.x + 0.7f, inner.y + 1.0f, tip.x + 0.7f, tip.y + 1.0f, lineW);
+    g.setColour (t.isDark ? juce::Colours::white : t.textPrimary);
+    g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW * 0.9f);
 }
 
 void ArsenalLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -233,6 +297,25 @@ void ArsenalLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
 {
     const auto& t = currentTheme();
     auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
+
+    // Primary action: glossy accent gradient + glow (RANDOMIZE ALL).
+    if (button.getComponentID() == "primary")
+    {
+        g.setColour (t.accent.withAlpha (down ? 0.15f : 0.30f));
+        g.fillRoundedRectangle (bounds.expanded (2.5f), metrics::cornerRadius + 2.0f);
+
+        auto top = t.accent.brighter (highlighted ? 0.22f : 0.14f);
+        auto bottom = t.accent.darker (down ? 0.35f : 0.18f);
+        g.setGradientFill (juce::ColourGradient (top, bounds.getX(), bounds.getY(),
+                                                 bottom, bounds.getX(), bounds.getBottom(),
+                                                 false));
+        g.fillRoundedRectangle (bounds, metrics::cornerRadius);
+
+        g.setColour (juce::Colours::white.withAlpha (0.25f));
+        g.drawLine (bounds.getX() + metrics::cornerRadius, bounds.getY() + 1.0f,
+                    bounds.getRight() - metrics::cornerRadius, bounds.getY() + 1.0f, 1.0f);
+        return;
+    }
 
     auto colour = backgroundColour;
     if (button.getToggleState())

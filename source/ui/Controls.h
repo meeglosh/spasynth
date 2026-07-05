@@ -23,7 +23,7 @@ public:
             apvts, paramID, slider);
         addAndMakeVisible (slider);
 
-        label.setText (labelText, juce::dontSendNotification);
+        label.setText (labelText.toUpperCase(), juce::dontSendNotification);
         label.setFont (metrics::smallFont());
         label.setJustificationType (juce::Justification::centred);
         label.setInterceptsMouseClicks (false, false);

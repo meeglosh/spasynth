@@ -798,11 +798,13 @@ namespace
         for (int roll = 0; roll < rolls; ++roll)
         {
             proc.randomizeAll();
+            // ~1.7s window: slow-attack rolls (legal, musical) need time to
+            // speak before the audibility check.
             midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
-            const auto peak = renderBlocks (proc, buffer, midi, 90);  // ~1s
+            const auto peak = renderBlocks (proc, buffer, midi, 160);
             midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
             renderBlocks (proc, buffer, midi, 90);
-            if (peak > 0.005f)
+            if (peak > 0.003f)
                 ++audible;
         }
 

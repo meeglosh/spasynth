@@ -40,6 +40,7 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
     savePresetButton.onClick = [this] { saveUserPreset(); };
     addAndMakeVisible (savePresetButton);
 
+    randomizeButton.setComponentID ("primary");
     randomizeButton.onClick = [this] { processor.randomizeAll(); };
     addAndMakeVisible (randomizeButton);
 
@@ -172,8 +173,22 @@ void ContentComponent::paint (juce::Graphics& g)
     const auto& t = currentTheme();
     g.fillAll (t.background);
 
+    // Brand band: the big tracked wordmark, centred (per the redesign mock).
+    auto band = getLocalBounds().removeFromTop (metrics::brandBandHeight);
+    g.setColour (t.header.darker (0.25f));
+    g.fillRect (band);
+    // The brand band is always dark, so its ink is always light.
+    g.setColour (juce::Colour (0xffe7ecef));
+    g.setFont (metrics::wordmarkFont());
+    g.drawText ("ARSENAL", band.withTrimmedBottom (9), juce::Justification::centred);
+    g.setColour (juce::Colour (0xff7f8d97));
+    g.setFont (metrics::brandSubFont());
+    g.drawText ("SILVERPLATTER AUDIO", band.withTrimmedTop (21),
+                juce::Justification::centred);
+
     // Header is always dark (Massive X does this in its light theme too).
-    auto header = getLocalBounds().removeFromTop (metrics::headerHeight);
+    auto header = getLocalBounds().withTrimmedTop (metrics::brandBandHeight)
+                      .removeFromTop (metrics::headerHeight);
     g.setColour (t.header);
     g.fillRect (header);
 
@@ -190,9 +205,13 @@ void ContentComponent::paint (juce::Graphics& g)
     g.drawText (juce::String::fromUTF8 ("ARSENAL  \xc2\xb7  SILVERPLATTER AUDIO"),
                 footer.reduced (10, 0), juce::Justification::centredRight);
     g.drawText ("v0.1", footer.reduced (10, 0), juce::Justification::centredLeft);
+    g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));
+    g.setFont (metrics::labelFont());
+    g.drawText ("Arsenal", footer, juce::Justification::centred);
 
     // Caption for the randomizer lock strip.
-    auto lockCaption = getLocalBounds().withTrimmedTop (metrics::headerHeight)
+    auto lockCaption = getLocalBounds()
+                           .withTrimmedTop (metrics::brandBandHeight + metrics::headerHeight)
                            .removeFromTop (metrics::lockRowHeight)
                            .reduced (metrics::unit, 0).removeFromLeft (44);
     g.setColour (t.textSecondary);
@@ -203,6 +222,7 @@ void ContentComponent::paint (juce::Graphics& g)
 void ContentComponent::resized()
 {
     auto bounds = getLocalBounds();
+    bounds.removeFromTop (metrics::brandBandHeight);
 
     // --- Header -------------------------------------------------------------
     auto header = bounds.removeFromTop (metrics::headerHeight);

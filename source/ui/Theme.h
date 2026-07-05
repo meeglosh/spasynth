@@ -30,19 +30,20 @@ struct Theme
 
     static Theme dark()
     {
+        // Deep blue-teal register per the redesign mock.
         Theme t;
         t.isDark        = true;
-        t.background    = juce::Colour (0xff1b1d1f);
-        t.panel         = juce::Colour (0xff232629);
-        t.display       = juce::Colour (0xff131517);
-        t.header        = juce::Colour (0xff161819);
-        t.textPrimary   = juce::Colour (0xffe8e6e3);
-        t.textSecondary = juce::Colour (0xff8f9296);
-        t.accent        = juce::Colour (0xffef8f3a);
-        t.accentMod     = juce::Colour (0xff53b8d0);
-        t.outline       = juce::Colour (0xff33373b);
-        t.knobFace      = juce::Colour (0xff2c3033);
-        t.knobTrack     = juce::Colour (0xff41464b);
+        t.background    = juce::Colour (0xff0c1114);
+        t.panel         = juce::Colour (0xff151c21);
+        t.display       = juce::Colour (0xff0a0f13);
+        t.header        = juce::Colour (0xff090d10);
+        t.textPrimary   = juce::Colour (0xffe7ecef);
+        t.textSecondary = juce::Colour (0xff7f8d97);
+        t.accent        = juce::Colour (0xfff08b3a);
+        t.accentMod     = juce::Colour (0xff4fc4d6);
+        t.outline       = juce::Colour (0xff222d35);
+        t.knobFace      = juce::Colour (0xff1e262d);
+        t.knobTrack     = juce::Colour (0xff2c3841);
         return t;
     }
 
@@ -77,16 +78,34 @@ namespace metrics
 {
     inline constexpr int baseWidth = 1380;
     inline constexpr int baseHeight = 900;
+    inline constexpr int brandBandHeight = 34;   // centred wordmark strip
     inline constexpr int headerHeight = 54;
     inline constexpr int lockRowHeight = 26;
-    inline constexpr int footerHeight = 26;
+    inline constexpr int footerHeight = 24;
     inline constexpr int unit = 8;
-    inline constexpr float cornerRadius = 3.0f;
+    inline constexpr float cornerRadius = 7.0f;  // softer, elevated panels
 
-    inline juce::Font titleFont()   { return juce::Font (juce::FontOptions (19.0f, juce::Font::bold)); }
-    inline juce::Font sectionFont() { return juce::Font (juce::FontOptions (12.0f, juce::Font::bold)); }
+    inline juce::Font titleFont()   { return juce::Font (juce::FontOptions (17.0f, juce::Font::bold)); }
+    inline juce::Font sectionFont()
+    {
+        return juce::Font (juce::FontOptions (12.0f, juce::Font::bold))
+                   .withExtraKerningFactor (0.06f);
+    }
     inline juce::Font labelFont()   { return juce::Font (juce::FontOptions (11.0f)); }
-    inline juce::Font smallFont()   { return juce::Font (juce::FontOptions (9.5f)); }
+    inline juce::Font smallFont()
+    {
+        return juce::Font (juce::FontOptions (9.5f)).withExtraKerningFactor (0.05f);
+    }
+    inline juce::Font wordmarkFont()
+    {
+        // The big tracked wordmark: A R S E N A L
+        return juce::Font (juce::FontOptions (21.0f, juce::Font::plain))
+                   .withExtraKerningFactor (0.42f);
+    }
+    inline juce::Font brandSubFont()
+    {
+        return juce::Font (juce::FontOptions (8.5f)).withExtraKerningFactor (0.30f);
+    }
 }
 
 // Shared painting helpers so every module reads as one system.

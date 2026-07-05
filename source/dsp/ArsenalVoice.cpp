@@ -3,10 +3,9 @@
 namespace arsenal::dsp
 {
 
-ArsenalVoice::ArsenalVoice (const Wavetable& table, const VoiceParams& sharedParams)
+ArsenalVoice::ArsenalVoice (const VoiceParams& sharedParams)
     : params (sharedParams)
 {
-    osc.setTable (&table);
 }
 
 bool ArsenalVoice::canPlaySound (juce::SynthesiserSound* sound)
@@ -20,7 +19,8 @@ void ArsenalVoice::setCurrentPlaybackSampleRate (double newRate)
 
     if (newRate > 0.0)
     {
-        osc.prepare (newRate);
+        for (auto& osc : oscs)
+            osc.prepare (newRate);
         filter.prepare (newRate);
         ampEnv.setSampleRate (newRate);
     }
@@ -31,11 +31,13 @@ void ArsenalVoice::startNote (int midiNoteNumber, float velocity,
 {
     currentNote = midiNoteNumber;
     velocityGain = 0.2f + 0.8f * velocity;
-    pitchWheelMoved (currentPitchWheelPosition);
+    pitchBendSemitones = 2.0f * ((float) currentPitchWheelPosition - 8192.0f) / 8192.0f;
 
-    osc.resetPhase();
+    for (int s = 0; s < params::numOscSlots; ++s)
+        oscs[(size_t) s].noteOn (params.slots[(size_t) s].phaseMode,
+                                 params.slots[(size_t) s].phase, &random);
+
     filter.reset();
-    updateFrequency();
 
     ampEnv.setParameters (params.ampEnv);
     ampEnv.noteOn();
@@ -57,21 +59,24 @@ void ArsenalVoice::stopNote (float, bool allowTailOff)
 void ArsenalVoice::pitchWheelMoved (int newPitchWheelValue)
 {
     pitchBendSemitones = 2.0f * ((float) newPitchWheelValue - 8192.0f) / 8192.0f;
-    updateFrequency();
 }
 
-void ArsenalVoice::updateFrequency()
+void ArsenalVoice::updateSlotBlocks()
 {
-    if (currentNote < 0)
-        return;
+    for (int s = 0; s < params::numOscSlots; ++s)
+    {
+        const auto& slot = params.slots[(size_t) s];
+        if (! slot.enabled)
+            continue;
 
-    const auto note = (float) currentNote
-                    + params.oscCoarse
-                    + params.oscFine * 0.01f
-                    + pitchBendSemitones;
+        const auto note = (float) currentNote + slot.coarse + slot.fine * 0.01f
+                        + pitchBendSemitones;
+        const auto freq = 440.0f * std::exp2 ((note - 69.0f) / 12.0f);
 
-    osc.setFrequency ((float) juce::MidiMessage::getMidiNoteInHertz (69)
-                      * std::pow (2.0f, (note - 69.0f) / 12.0f));
+        oscs[(size_t) s].updateBlock ({ slot.table, freq, slot.position,
+                                        slot.unisonCount, slot.unisonDetune,
+                                        slot.unisonBlend, slot.unisonWidth, slot.pan });
+    }
 }
 
 void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
@@ -80,15 +85,10 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
     if (! ampEnv.isActive())
         return;
 
-    updateFrequency();
+    updateSlotBlocks();
     ampEnv.setParameters (params.ampEnv);
     filter.setParams (params.filterType, params.filterCutoff,
                       params.filterResonance, params.filterDrive);
-
-    // Constant-power pan.
-    const auto panAngle = (params.oscPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-    const auto gainL = std::cos (panAngle) * params.oscGain * velocityGain;
-    const auto gainR = std::sin (panAngle) * params.oscGain * velocityGain;
 
     auto* left = outputBuffer.getWritePointer (0, startSample);
     auto* right = outputBuffer.getNumChannels() > 1
@@ -96,12 +96,24 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const auto envValue = ampEnv.getNextSample();
-        const auto raw = osc.getNextSample (params.oscPosition) * envValue;
+        float sumL = 0.0f, sumR = 0.0f;
 
-        left[i] += filter.processSample (0, raw * gainL);
+        for (int s = 0; s < params::numOscSlots; ++s)
+        {
+            const auto& slot = params.slots[(size_t) s];
+            if (! slot.enabled)
+                continue;
+
+            const auto smp = oscs[(size_t) s].getNextSample();
+            sumL += smp.left * slot.gain;
+            sumR += smp.right * slot.gain;
+        }
+
+        const auto envValue = ampEnv.getNextSample() * velocityGain;
+
+        left[i] += filter.processSample (0, sumL) * envValue;
         if (right != nullptr)
-            right[i] += filter.processSample (1, raw * gainR);
+            right[i] += filter.processSample (1, sumR) * envValue;
 
         if (! ampEnv.isActive())
         {

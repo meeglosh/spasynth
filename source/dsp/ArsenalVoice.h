@@ -17,13 +17,26 @@ struct ArsenalSound : public juce::SynthesiserSound
 
 // Snapshot of the per-voice parameter values, refreshed once per block by the
 // processor from the APVTS. Voices never touch parameter objects directly.
+struct SlotParams
+{
+    bool enabled = false;
+    const Wavetable* table = nullptr;   // owned by the processor's table store
+    float position = 0.0f;
+    float coarse = 0.0f;
+    float fine = 0.0f;
+    float gain = 0.5f;                  // linear
+    float pan = 0.0f;
+    float phase = 0.0f;
+    params::PhaseMode phaseMode = params::PhaseMode::reset;
+    int unisonCount = 1;
+    float unisonDetune = 0.0f;
+    float unisonBlend = 0.7f;
+    float unisonWidth = 0.8f;
+};
+
 struct VoiceParams
 {
-    float oscPosition = 0.0f;
-    float oscCoarse = 0.0f;
-    float oscFine = 0.0f;
-    float oscGain = 0.5f;        // linear
-    float oscPan = 0.0f;
+    std::array<SlotParams, params::maxOscSlots> slots {};
     params::FilterType filterType = params::FilterType::lp12;
     float filterCutoff = 20000.0f;
     float filterResonance = 0.0f;
@@ -34,7 +47,7 @@ struct VoiceParams
 class ArsenalVoice : public juce::SynthesiserVoice
 {
 public:
-    ArsenalVoice (const Wavetable& table, const VoiceParams& sharedParams);
+    explicit ArsenalVoice (const VoiceParams& sharedParams);
 
     bool canPlaySound (juce::SynthesiserSound* sound) override;
     void startNote (int midiNoteNumber, float velocity,
@@ -47,12 +60,13 @@ public:
                           int startSample, int numSamples) override;
 
 private:
-    void updateFrequency();
+    void updateSlotBlocks();
 
     const VoiceParams& params;
-    WavetableOscillator osc;
+    std::array<UnisonOscillator, params::maxOscSlots> oscs;
     MultiModeFilter filter;
     juce::ADSR ampEnv;
+    juce::Random random;
 
     int currentNote = -1;
     float velocityGain = 1.0f;

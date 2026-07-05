@@ -51,6 +51,7 @@ set(ARSENAL_SOURCES
     source/ArsenalProcessor.cpp
     source/params/ParameterRegistry.cpp
     source/dsp/Wavetable.cpp
+    source/dsp/WavetableLoader.cpp
     source/dsp/ArsenalVoice.cpp
     source/ui/ArsenalEditor.cpp)
 
@@ -81,7 +82,7 @@ if(ARSENAL_BUILD_TESTS)
     enable_testing()
 
     juce_add_console_app(ArsenalTests PRODUCT_NAME "ArsenalTests")
-    target_sources(ArsenalTests PRIVATE tests/RenderSmokeTest.cpp ${ARSENAL_SOURCES})
+    target_sources(ArsenalTests PRIVATE tests/ArsenalTests.cpp ${ARSENAL_SOURCES})
     target_include_directories(ArsenalTests PRIVATE source)
     target_compile_definitions(ArsenalTests PRIVATE
         JUCE_WEB_BROWSER=0

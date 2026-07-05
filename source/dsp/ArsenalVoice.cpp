@@ -17,6 +17,7 @@ namespace
         int ampA, ampD, ampS, ampR;
         int env2A, env2D, env2S, env2R;
         int env3A, env3D, env3S, env3R;
+        int chaosDepth, chaosRate, chaosMix;
 
         static const DestLookup& get()
         {
@@ -58,6 +59,10 @@ namespace
                 l.env3D = params::modDestIndex (id::envParam (3, "decay"));
                 l.env3S = params::modDestIndex (id::envParam (3, "sustain"));
                 l.env3R = params::modDestIndex (id::envParam (3, "release"));
+
+                l.chaosDepth = params::modDestIndex (id::chaos::depth);
+                l.chaosRate  = params::modDestIndex (id::chaos::rate);
+                l.chaosMix   = params::modDestIndex (id::chaos::mix);
 
                 return l;
             }();
@@ -126,6 +131,11 @@ void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
     for (int i = 0; i < params::numLFOs; ++i)
         lfos[(size_t) i].noteOn (shared.lfo[(size_t) i]);
 
+    chaosGen.prepare (random);
+    chaosDepth = baseValue (lookup.chaosDepth);
+    chaosRate = baseValue (lookup.chaosRate);
+    chaosMix = baseValue (lookup.chaosMix);
+
     filter.reset();
 
     // Envelopes start from base (unmodulated) values; the first chunk refresh
@@ -170,9 +180,21 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
     const auto& lookup = DestLookup::get();
     const auto sampleRate = getSampleRate();
 
+    // --- Organic Chaos walkers ----------------------------------------------
+    // Advanced with last chunk's effective depth/rate/mix (chaos feeds the
+    // matrix that can modulate those — one-chunk latency breaks the cycle).
+    const auto& ch = shared.chaos;
+    const auto chaosActive = ch.enabled && chaosMix > 0.0f && chaosDepth > 0.0f;
+    const auto chaosScale = chaosActive ? chaosDepth * chaosMix : 0.0f;
+
+    if (chaosActive)
+        chaosGen.process (chaosRate, (double) chunkLen / sampleRate, random);
+
     // --- Modulation sources -------------------------------------------------
     float src[params::numModSources] {};
     src[(int) params::ModSource::env1] = ampEnvLast;
+    src[(int) params::ModSource::chaos] = chaosGen.value (ChaosGenerator::matrixSource)
+                                        * chaosScale;
 
     // Advance env2/3 through the chunk; their end value drives this chunk.
     float env2Value = 0.0f, env3Value = 0.0f;
@@ -214,6 +236,24 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
     for (int d = 0; d < params::numModDests(); ++d)
         eff[d] = juce::jlimit (0.0f, 1.0f, eff[d]);
 
+    // Cache effective chaos controls for next chunk's walker advance.
+    chaosDepth = denorm (eff, lookup.chaosDepth);
+    chaosRate = denorm (eff, lookup.chaosRate);
+    chaosMix = denorm (eff, lookup.chaosMix);
+
+    // Voice-wide chaos drives applied in the render loop.
+    chaosAmpGain = chaosActive && ch.ampOn
+                 ? 1.0f + chaosGen.value (ChaosGenerator::amp) * ch.ampAmount * 0.5f * chaosScale
+                 : 1.0f;
+    satDrive = chaosActive && ch.satOn
+             ? ch.saturation * chaosScale
+               * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::saturation))
+             : 0.0f;
+    distDrive = chaosActive && ch.distOn
+              ? ch.distortion * chaosScale
+                * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::distortion))
+              : 0.0f;
+
     // --- Configure DSP from effective values --------------------------------
     for (int s = 0; s < params::numOscSlots; ++s)
     {
@@ -222,20 +262,33 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
             continue;
 
         const auto& d = lookup.slots[(size_t) s];
+
+        const auto chaosPitch = chaosActive && ch.pitchOn
+                              ? chaosGen.slotPitch (s) * ch.pitchAmountCents * 0.01f * chaosScale
+                              : 0.0f;
+        const auto chaosPos = chaosActive && ch.positionOn
+                            ? chaosGen.slotPosition (s) * ch.positionAmount * chaosScale
+                            : 0.0f;
+        const auto chaosPhase = chaosActive && ch.phaseOn
+                              ? chaosGen.slotPhase (s) * ch.phaseAmount * chaosScale
+                              : 0.0f;
+
         const auto note = (float) currentNote
                         + denorm (eff, d.coarse)
                         + denorm (eff, d.fine) * 0.01f
-                        + pitchBendSemitones;
+                        + pitchBendSemitones
+                        + chaosPitch;
 
         oscs[(size_t) s].updateBlock ({
             stat.table,
             440.0f * std::exp2 ((note - 69.0f) / 12.0f),
-            denorm (eff, d.position),
+            juce::jlimit (0.0f, 1.0f, denorm (eff, d.position) + chaosPos),
             stat.unisonCount,
             denorm (eff, d.unisonDetune),
             denorm (eff, d.unisonBlend),
             denorm (eff, d.unisonWidth),
             denorm (eff, d.pan),
+            chaosPhase,
         });
 
         slotGains[(size_t) s] = juce::Decibels::decibelsToGain (denorm (eff, d.level), -60.0f);
@@ -286,12 +339,38 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
 
             const auto envValue = ampEnv.getNextSample();
             ampEnvLast = envValue;
-            const auto gain = envValue * (0.2f + 0.8f * velocity);
+            const auto gain = envValue * (0.2f + 0.8f * velocity) * chaosAmpGain;
+
+            auto outL = filter.processSample (0, sumL);
+            auto outR = right != nullptr ? filter.processSample (1, sumR) : 0.0f;
+
+            // Chaos saturation: warm tanh, level-compensated.
+            if (satDrive > 0.001f)
+            {
+                const auto k = 1.0f + 5.0f * satDrive;
+                const auto norm = 1.0f / std::tanh (k * 0.7f);
+                outL = std::tanh (outL * k) * 0.7f * norm;
+                outR = std::tanh (outR * k) * 0.7f * norm;
+            }
+
+            // Chaos distortion: harder cubic clip with a touch of asymmetry
+            // for edgier, even-harmonic character.
+            if (distDrive > 0.001f)
+            {
+                const auto k = 1.0f + 12.0f * distDrive;
+                auto shape = [k] (float x)
+                {
+                    auto v = juce::jlimit (-1.0f, 1.0f, x * k * 0.5f + 0.08f * x * x);
+                    return (1.5f * v - 0.5f * v * v * v) / (0.5f * k + 0.5f);
+                };
+                outL = shape (outL);
+                outR = shape (outR);
+            }
 
             const auto n = rendered + i;
-            left[n] += filter.processSample (0, sumL) * gain;
+            left[n] += outL * gain;
             if (right != nullptr)
-                right[n] += filter.processSample (1, sumR) * gain;
+                right[n] += outR * gain;
 
             if (! ampEnv.isActive())
             {

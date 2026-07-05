@@ -296,6 +296,114 @@ namespace
                 + " vs hard " + juce::String (hard) + ")");
     }
 
+    static void chaosMixBypassTest()
+    {
+        std::cout << "chaosMixBypassTest\n";
+
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        // Everything cranked but mix at 0 must be bit-identical to a clean
+        // render (phase mode Reset is deterministic).
+        auto render = [&] (float mix)
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::depth, 1.0f);
+            setParam (proc, id::chaos::rate, 10.0f);
+            setParam (proc, id::chaos::satOn, 1.0f);
+            setParam (proc, id::chaos::distOn, 1.0f);
+            setParam (proc, id::chaos::saturation, 1.0f);
+            setParam (proc, id::chaos::distortion, 1.0f);
+            setParam (proc, id::chaos::mix, mix);
+
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> capture (2, blockSize);
+            for (int b = 0; b < 16; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+            }
+            capture.makeCopyOf (buffer);
+            return capture;
+        };
+
+        arsenal::ArsenalProcessor clean;
+        clean.prepareToPlay (sampleRate, blockSize);
+        setParam (clean, id::chaos::enable, 0.0f);
+        juce::AudioBuffer<float> cleanBuf (2, blockSize);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        for (int b = 0; b < 16; ++b)
+        {
+            clean.processBlock (cleanBuf, midi);
+            midi.clear();
+        }
+
+        const auto mixed0 = render (0.0f);
+        float maxDiff = 0.0f;
+        for (int i = 0; i < blockSize; ++i)
+            maxDiff = juce::jmax (maxDiff, std::abs (mixed0.getSample (0, i)
+                                                     - cleanBuf.getSample (0, i)));
+        expect (maxDiff < 1.0e-6f, "chaos mix=0 is bit-transparent (diff "
+                                   + juce::String (maxDiff) + ")");
+
+        // Full mix with heavy sat/dist must differ audibly from clean.
+        const auto mixed1 = render (1.0f);
+        float diff1 = 0.0f;
+        for (int i = 0; i < blockSize; ++i)
+            diff1 = juce::jmax (diff1, std::abs (mixed1.getSample (0, i)
+                                                 - cleanBuf.getSample (0, i)));
+        expect (diff1 > 1.0e-3f, "chaos mix=1 audibly changes output (diff "
+                                 + juce::String (diff1) + ")");
+    }
+
+    static void chaosMatrixSourceTest()
+    {
+        std::cout << "chaosMatrixSourceTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        // Chaos as a matrix source hammering oscillator level. Fast rate and
+        // full depth: per-block peaks must fluctuate.
+        setParam (proc, id::chaos::depth, 1.0f);
+        setParam (proc, id::chaos::rate, 15.0f);
+        setRouteParams (proc, 0, params::ModSource::chaos,
+                        id::oscSlot (0, id::osc::level), -1.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+        float minPeak = 1.0e9f, maxPeak = 0.0f;
+        for (int b = 0; b < (int) (2.0 * sampleRate / blockSize); ++b)
+        {
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            if (b < 8)
+                continue;
+            const auto peak = buffer.getMagnitude (0, blockSize);
+            minPeak = juce::jmin (minPeak, peak);
+            maxPeak = juce::jmax (maxPeak, peak);
+        }
+
+        expect (maxPeak > 0.02f, "chaos-modulated note is audible");
+        expect (minPeak < maxPeak * 0.7f,
+                "chaos source varies level over time (min " + juce::String (minPeak)
+                + " vs max " + juce::String (maxPeak) + ")");
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -306,6 +414,8 @@ int main()
     modMatrixMacroTest();
     lfoModulationTest();
     velocityRouteTest();
+    chaosMixBypassTest();
+    chaosMatrixSourceTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

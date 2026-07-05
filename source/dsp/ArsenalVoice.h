@@ -6,6 +6,7 @@
 #include "WavetableOscillator.h"
 #include "MultiModeFilter.h"
 #include "LFO.h"
+#include "ChaosGenerator.h"
 
 namespace arsenal::dsp
 {
@@ -53,6 +54,25 @@ struct SharedState
     float modWheel = 0.0f;
     float aftertouch = 0.0f;
     double bpm = 120.0;
+
+    // Organic Chaos statics (depth/rate/mix are mod destinations and live in
+    // baseNorm; these are the plain toggles/amounts).
+    struct Chaos
+    {
+        bool enabled = true;
+        bool pitchOn = true;
+        float pitchAmountCents = 8.0f;
+        bool phaseOn = true;
+        float phaseAmount = 0.15f;
+        bool positionOn = true;
+        float positionAmount = 0.2f;
+        bool ampOn = true;
+        float ampAmount = 0.2f;
+        bool satOn = false;
+        float saturation = 0.3f;
+        bool distOn = false;
+        float distortion = 0.2f;
+    } chaos;
 };
 
 class ArsenalVoice : public juce::SynthesiserVoice
@@ -86,6 +106,7 @@ private:
     MultiModeFilter filter;
     juce::ADSR ampEnv, env2, env3;
     std::array<LFO, params::numLFOs> lfos;
+    ChaosGenerator chaosGen;
     juce::Random random;
 
     int currentNote = -1;
@@ -93,6 +114,12 @@ private:
     float pitchBendSemitones = 0.0f;
     float ampEnvLast = 0.0f;   // amp env value fed back as mod source
     std::array<float, params::maxOscSlots> slotGains {};  // per-chunk linear slot gains
+
+    // Chaos state carried between chunks: effective depth/rate/mix from the
+    // previous chunk (chaos feeds the matrix that modulates them — one-chunk
+    // latency breaks the cycle), plus the current shaper drives.
+    float chaosDepth = 0.0f, chaosRate = 2.0f, chaosMix = 1.0f;
+    float satDrive = 0.0f, distDrive = 0.0f, chaosAmpGain = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalVoice)
 };

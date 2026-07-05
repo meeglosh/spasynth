@@ -30,13 +30,15 @@ enum class Section
     lfo2,
     lfo3,
     macros,
+    chaos,
     matrix,
 };
 
 inline constexpr Section allSections[] = {
     Section::global, Section::oscA, Section::oscB, Section::oscC,
     Section::filter1, Section::ampEnv, Section::env2, Section::env3,
-    Section::lfo1, Section::lfo2, Section::lfo3, Section::macros, Section::matrix,
+    Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
+    Section::chaos, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -62,6 +64,7 @@ enum class ModSource
     velocity,
     modWheel,
     aftertouch,
+    chaos,
     count,
 };
 
@@ -171,6 +174,27 @@ namespace id
     juce::String lfoParam (int lfoIndex, const char* key);
 
     juce::String macro (int macroIndex);  // "macros.macro1"
+
+    // Organic Chaos section.
+    namespace chaos
+    {
+        inline constexpr const char* enable         = "chaos.enable";
+        inline constexpr const char* depth          = "chaos.depth";
+        inline constexpr const char* rate           = "chaos.rate";
+        inline constexpr const char* mix            = "chaos.mix";
+        inline constexpr const char* pitchOn        = "chaos.pitchOn";
+        inline constexpr const char* pitchAmount    = "chaos.pitchAmount";
+        inline constexpr const char* phaseOn        = "chaos.phaseOn";
+        inline constexpr const char* phaseAmount    = "chaos.phaseAmount";
+        inline constexpr const char* positionOn     = "chaos.positionOn";
+        inline constexpr const char* positionAmount = "chaos.positionAmount";
+        inline constexpr const char* ampOn          = "chaos.ampOn";
+        inline constexpr const char* ampAmount      = "chaos.ampAmount";
+        inline constexpr const char* satOn          = "chaos.satOn";
+        inline constexpr const char* saturation     = "chaos.saturation";
+        inline constexpr const char* distOn         = "chaos.distOn";
+        inline constexpr const char* distortion     = "chaos.distortion";
+    }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"
     namespace route

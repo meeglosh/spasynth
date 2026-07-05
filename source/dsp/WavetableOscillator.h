@@ -26,6 +26,7 @@ public:
         float blend = 1.0f;          // detuned-voice level relative to centre
         float width = 0.0f;          // stereo spread of detuned voices
         float pan = 0.0f;            // -1..1 slot pan
+        float phaseOffset = 0.0f;    // cycles; chaos phase drift lands here
     };
 
     void prepare (double newSampleRate) noexcept
@@ -51,6 +52,7 @@ public:
         table = p.table;
         position = p.position;
         count = juce::jlimit (1, maxUnison, p.unisonCount);
+        phaseOffset = p.phaseOffset - std::floor (p.phaseOffset);  // wrap to [0,1)
 
         if (table == nullptr)
             return;
@@ -108,7 +110,11 @@ public:
 
         for (int u = 0; u < count; ++u)
         {
-            const auto idx = phases[(size_t) u] * (double) Wavetable::tableSize;
+            auto readPhase = phases[(size_t) u] + (double) phaseOffset;
+            if (readPhase >= 1.0)
+                readPhase -= 1.0;
+
+            const auto idx = readPhase * (double) Wavetable::tableSize;
             const auto i0 = (int) idx;
             const auto frac = (float) (idx - (double) i0);
 
@@ -132,6 +138,7 @@ private:
     const Wavetable* table = nullptr;
     double sampleRate = 44100.0;
     float position = 0.0f;
+    float phaseOffset = 0.0f;
     int count = 1;
     int mipLevel = 0;
 

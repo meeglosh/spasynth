@@ -56,6 +56,23 @@ ArsenalProcessor::ArsenalProcessor()
         rr.depth  = apvts.getRawParameterValue (params::id::routeParam (r, params::id::route::depth));
     }
 
+    {
+        namespace ch = params::id::chaos;
+        raw.chaos.enable         = apvts.getRawParameterValue (ch::enable);
+        raw.chaos.pitchOn        = apvts.getRawParameterValue (ch::pitchOn);
+        raw.chaos.pitchAmount    = apvts.getRawParameterValue (ch::pitchAmount);
+        raw.chaos.phaseOn        = apvts.getRawParameterValue (ch::phaseOn);
+        raw.chaos.phaseAmount    = apvts.getRawParameterValue (ch::phaseAmount);
+        raw.chaos.positionOn     = apvts.getRawParameterValue (ch::positionOn);
+        raw.chaos.positionAmount = apvts.getRawParameterValue (ch::positionAmount);
+        raw.chaos.ampOn          = apvts.getRawParameterValue (ch::ampOn);
+        raw.chaos.ampAmount      = apvts.getRawParameterValue (ch::ampAmount);
+        raw.chaos.satOn          = apvts.getRawParameterValue (ch::satOn);
+        raw.chaos.saturation     = apvts.getRawParameterValue (ch::saturation);
+        raw.chaos.distOn         = apvts.getRawParameterValue (ch::distOn);
+        raw.chaos.distortion     = apvts.getRawParameterValue (ch::distortion);
+    }
+
     raw.dests.reserve ((size_t) params::numModDests());
     for (const auto& dest : params::modDestinations())
         raw.dests.push_back (apvts.getRawParameterValue (dest.def->id));
@@ -232,6 +249,21 @@ void ArsenalProcessor::updateSharedState (int blockLength)
 
     for (int m = 0; m < params::numMacros; ++m)
         shared.macros[(size_t) m] = raw.macros[(size_t) m]->load();
+
+    auto& ch = shared.chaos;
+    ch.enabled          = raw.chaos.enable->load() >= 0.5f;
+    ch.pitchOn          = raw.chaos.pitchOn->load() >= 0.5f;
+    ch.pitchAmountCents = raw.chaos.pitchAmount->load();
+    ch.phaseOn          = raw.chaos.phaseOn->load() >= 0.5f;
+    ch.phaseAmount      = raw.chaos.phaseAmount->load();
+    ch.positionOn       = raw.chaos.positionOn->load() >= 0.5f;
+    ch.positionAmount   = raw.chaos.positionAmount->load();
+    ch.ampOn            = raw.chaos.ampOn->load() >= 0.5f;
+    ch.ampAmount        = raw.chaos.ampAmount->load();
+    ch.satOn            = raw.chaos.satOn->load() >= 0.5f;
+    ch.saturation       = raw.chaos.saturation->load();
+    ch.distOn           = raw.chaos.distOn->load() >= 0.5f;
+    ch.distortion       = raw.chaos.distortion->load();
 }
 
 void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)

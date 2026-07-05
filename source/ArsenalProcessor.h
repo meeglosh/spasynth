@@ -108,10 +108,28 @@ private:
         std::atomic<float>* depth = nullptr;
     };
 
+    struct RawChaos
+    {
+        std::atomic<float>* enable = nullptr;
+        std::atomic<float>* pitchOn = nullptr;
+        std::atomic<float>* pitchAmount = nullptr;
+        std::atomic<float>* phaseOn = nullptr;
+        std::atomic<float>* phaseAmount = nullptr;
+        std::atomic<float>* positionOn = nullptr;
+        std::atomic<float>* positionAmount = nullptr;
+        std::atomic<float>* ampOn = nullptr;
+        std::atomic<float>* ampAmount = nullptr;
+        std::atomic<float>* satOn = nullptr;
+        std::atomic<float>* saturation = nullptr;
+        std::atomic<float>* distOn = nullptr;
+        std::atomic<float>* distortion = nullptr;
+    };
+
     struct Raw
     {
         std::atomic<float>* masterGain = nullptr;
         std::atomic<float>* filterType = nullptr;
+        RawChaos chaos {};
         std::array<RawSlot, params::numOscSlots> slots {};
         std::array<RawLFO, params::numLFOs> lfos {};
         std::array<std::atomic<float>*, params::numMacros> macros {};

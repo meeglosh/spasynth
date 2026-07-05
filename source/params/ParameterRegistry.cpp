@@ -19,6 +19,7 @@ juce::String sectionName (Section s)
         case Section::lfo2:    return "LFO 2";
         case Section::lfo3:    return "LFO 3";
         case Section::macros:  return "Macros";
+        case Section::chaos:   return "Chaos";
         case Section::matrix:  return "Mod Matrix";
     }
     return {};
@@ -43,6 +44,7 @@ const juce::StringArray& modSourceNames()
         "LFO 1", "LFO 2", "LFO 3",
         "Macro 1", "Macro 2", "Macro 3", "Macro 4",
         "Velocity", "Mod Wheel", "Aftertouch",
+        "Chaos",
     };
     jassert (names.size() == numModSources);
     return names;
@@ -259,6 +261,55 @@ static std::vector<ParamDef> buildCoreDefs()
         p.push_back ({ id::macro (m), "Macro " + juce::String (m + 1), Section::macros,
                        ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                        false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
+
+    // --- Organic Chaos ------------------------------------------------------
+    namespace ch = id::chaos;
+    p.push_back ({ ch::enable, "Chaos Enable", Section::chaos,
+                   ParamKind::boolParam, {}, 1.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.8f, .biasStrength = 0.4f } });
+    p.push_back ({ ch::depth, "Depth", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.4f, "",
+                   true, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ ch::rate, "Rate", Section::chaos,
+                   ParamKind::floatParam, frequencyRange (0.05f, 25.0f), 2.0f, "Hz",
+                   true, { .enabled = true, .minNorm = 0.1f, .maxNorm = 0.8f } });
+    p.push_back ({ ch::mix, "Mix", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   true, { .enabled = true, .minNorm = 0.3f, .biasCentre = 0.8f,
+                           .biasStrength = 0.3f } });
+    p.push_back ({ ch::pitchOn, "Pitch Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::pitchAmount, "Pitch Amt", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 100.0f, 0.0f, 0.4f }, 8.0f, "ct",
+                   false, { .enabled = true, .maxNorm = 0.5f, .biasCentre = 0.15f,
+                            .biasStrength = 0.5f } });
+    p.push_back ({ ch::phaseOn, "Phase Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::phaseAmount, "Phase Amt", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.15f, "",
+                   false, { .enabled = true, .biasCentre = 0.2f, .biasStrength = 0.4f } });
+    p.push_back ({ ch::positionOn, "Position Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::positionAmount, "Position Amt", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
+                   false, { .enabled = true, .biasCentre = 0.25f, .biasStrength = 0.3f } });
+    p.push_back ({ ch::ampOn, "Amp Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::ampAmount, "Amp Amt", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
+                   false, { .enabled = true, .biasCentre = 0.2f, .biasStrength = 0.4f } });
+    p.push_back ({ ch::satOn, "Sat Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::saturation, "Saturation", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.3f,
+                            .biasStrength = 0.3f } });
+    p.push_back ({ ch::distOn, "Dist Drift", Section::chaos,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ ch::distortion, "Distortion", Section::chaos,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
+                   false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
+                            .biasStrength = 0.4f } });
 
     return p;
 }

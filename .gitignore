@@ -1,6 +1,7 @@
 # Sample library content — never commit audio content to the code repo
-Silverplatter Audio packs/
-library/
+# (root-anchored: source/library/ is code and must be tracked)
+/Silverplatter Audio packs/
+/library/
 
 # macOS
 .DS_Store

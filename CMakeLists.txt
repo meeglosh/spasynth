@@ -52,6 +52,7 @@ set(ARSENAL_SOURCES
     source/params/ParameterRegistry.cpp
     source/dsp/Wavetable.cpp
     source/dsp/WavetableLoader.cpp
+    source/dsp/SampleLoader.cpp
     source/dsp/ArsenalVoice.cpp
     source/ui/ArsenalEditor.cpp)
 
@@ -84,10 +85,12 @@ if(ARSENAL_BUILD_TESTS)
     juce_add_console_app(ArsenalTests PRODUCT_NAME "ArsenalTests")
     target_sources(ArsenalTests PRIVATE tests/ArsenalTests.cpp ${ARSENAL_SOURCES})
     target_include_directories(ArsenalTests PRIVATE source)
+    # Modal loops stay on for tests: they pump the message loop to wait for
+    # background sample/wavetable loads.
     target_compile_definitions(ArsenalTests PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_MODAL_LOOPS_PERMITTED=0)
+        JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(ArsenalTests
         PRIVATE
             ArsenalAssets

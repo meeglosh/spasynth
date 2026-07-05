@@ -7,6 +7,8 @@
 #include "MultiModeFilter.h"
 #include "LFO.h"
 #include "ChaosGenerator.h"
+#include "SamplePlayer.h"
+#include "GranularPlayer.h"
 
 namespace arsenal::dsp
 {
@@ -24,10 +26,20 @@ struct SharedState
     struct SlotStatic
     {
         bool enabled = false;
+        params::OscMode mode = params::OscMode::wavetable;
         const Wavetable* table = nullptr;
+        const SampleData* sample = nullptr;
         params::PhaseMode phaseMode = params::PhaseMode::reset;
         float phase = 0.0f;
         int unisonCount = 1;
+
+        float sampleStart = 0.0f;
+        bool loop = true;
+        float loopStart = 0.0f;
+        float loopEnd = 1.0f;
+        bool keytrack = true;
+        int rootNote = 60;
+        float grainPitch = 0.0f;
     };
 
     struct Route
@@ -103,6 +115,10 @@ private:
 
     const SharedState& shared;
     std::array<UnisonOscillator, params::maxOscSlots> oscs;
+    std::array<SamplePlayer, params::maxOscSlots> samplePlayers;
+    std::array<GranularPlayer, params::maxOscSlots> granularPlayers;
+    std::array<SamplePlayer::Params, params::maxOscSlots> sampleParams {};
+    std::array<GranularPlayer::Params, params::maxOscSlots> granularParams {};
     MultiModeFilter filter;
     juce::ADSR ampEnv, env2, env3;
     std::array<LFO, params::numLFOs> lfos;
@@ -120,6 +136,12 @@ private:
     // latency breaks the cycle), plus the current shaper drives.
     float chaosDepth = 0.0f, chaosRate = 2.0f, chaosMix = 1.0f;
     float satDrive = 0.0f, distDrive = 0.0f, chaosAmpGain = 1.0f;
+
+    // Per-slot pan gains for sample/granular modes (wavetable pan is handled
+    // inside the unison oscillator), and last chunk's effective grain position
+    // (feeds the follower playhead, same one-chunk-latency trick as chaos).
+    std::array<float, params::maxOscSlots> slotPanL {}, slotPanR {};
+    std::array<float, params::maxOscSlots> lastGrainPos {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalVoice)
 };

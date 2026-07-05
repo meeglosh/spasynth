@@ -47,6 +47,13 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
 
         sc.factoryButton.onClick = [this, s] { arsenalProcessor.setFactoryWavetable (s); };
         addAndMakeVisible (sc.factoryButton);
+
+        sc.sampleName.setFont (ui::theme::labelFont());
+        sc.sampleName.setColour (juce::Label::textColourId, ui::theme::textSecondary);
+        addAndMakeVisible (sc.sampleName);
+
+        sc.sfxButton.onClick = [this, s] { chooseSample (s); };
+        addAndMakeVisible (sc.sfxButton);
     }
 
     genericViewport.setViewedComponent (&genericPanel, false);
@@ -84,7 +91,34 @@ void ArsenalEditor::refreshSlotLabels()
         sc.tableName.setColour (juce::Label::textColourId,
                                 error.isNotEmpty() ? ui::theme::accent
                                                    : ui::theme::textSecondary);
+
+        const auto sampleError = arsenalProcessor.getSampleError (s);
+        const auto sampleName = arsenalProcessor.getSampleName (s);
+        sc.sampleName.setText (sampleError.isNotEmpty() ? "! " + sampleError
+                               : sampleName.isNotEmpty() ? sampleName
+                                                         : "(no SFX loaded)",
+                               juce::dontSendNotification);
+        sc.sampleName.setColour (juce::Label::textColourId,
+                                 sampleError.isNotEmpty() ? ui::theme::accent
+                                                          : ui::theme::textSecondary);
     }
+}
+
+void ArsenalEditor::chooseSample (int slot)
+{
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Load SFX/sample for Osc " + params::id::oscSlotLetter (slot),
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectFiles,
+                              [this, slot] (const juce::FileChooser& fc)
+    {
+        const auto file = fc.getResult();
+        if (file.existsAsFile())
+            arsenalProcessor.loadSampleFromFile (slot, file);
+    });
 }
 
 void ArsenalEditor::chooseWavetable (int slot)
@@ -151,9 +185,14 @@ void ArsenalEditor::resized()
         auto& sc = slotControls[(size_t) s];
 
         sc.header.setBounds (area.removeFromLeft (56));
-        sc.factoryButton.setBounds (area.removeFromRight (64).reduced (0, 4));
-        sc.loadButton.setBounds (area.removeFromRight (64).reduced (0, 4));
-        sc.tableName.setBounds (area);
+
+        auto wtRow = area.removeFromTop (area.getHeight() / 2);
+        sc.factoryButton.setBounds (wtRow.removeFromRight (60).reduced (0, 3));
+        sc.loadButton.setBounds (wtRow.removeFromRight (52).reduced (0, 3));
+        sc.tableName.setBounds (wtRow);
+
+        sc.sfxButton.setBounds (area.removeFromRight (112).reduced (0, 3));
+        sc.sampleName.setBounds (area);
     }
 
     genericPanel.setSize (bounds.getWidth() - genericViewport.getScrollBarThickness(),

@@ -27,6 +27,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void refreshSlotLabels();
     void chooseWavetable (int slot);
+    void chooseSample (int slot);
 
     ArsenalProcessor& arsenalProcessor;
 
@@ -40,8 +41,10 @@ private:
     {
         juce::Label header;
         juce::Label tableName;
-        juce::TextButton loadButton { "Load..." };
+        juce::TextButton loadButton { "WT..." };
         juce::TextButton factoryButton { "Factory" };
+        juce::Label sampleName;
+        juce::TextButton sfxButton { "SFX..." };
     };
     std::array<SlotControls, params::numOscSlots> slotControls;
     std::unique_ptr<juce::FileChooser> fileChooser;

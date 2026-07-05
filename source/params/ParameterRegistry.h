@@ -65,8 +65,17 @@ enum class ModSource
     modWheel,
     aftertouch,
     chaos,
+    sfxAmpA,     // SFX followers: amp + pitch per slot, interleaved
+    sfxPitchA,
+    sfxAmpB,
+    sfxPitchB,
+    sfxAmpC,
+    sfxPitchC,
     count,
 };
+
+// First SFX follower source; slot s amp = sfxFollowerBase + 2*s, pitch = +1.
+inline constexpr int sfxFollowerBase = (int) ModSource::sfxAmpA;
 
 inline constexpr int numModSources = (int) ModSource::count;
 
@@ -141,6 +150,7 @@ namespace id
     namespace osc
     {
         inline constexpr const char* enable       = "enable";
+        inline constexpr const char* mode         = "mode";      // Wavetable/Sample/Granular
         inline constexpr const char* position     = "position";
         inline constexpr const char* coarse       = "coarse";
         inline constexpr const char* fine         = "fine";
@@ -152,6 +162,21 @@ namespace id
         inline constexpr const char* unisonDetune = "unisonDetune";
         inline constexpr const char* unisonBlend  = "unisonBlend";
         inline constexpr const char* unisonWidth  = "unisonWidth";
+
+        // Sample/SFX engine (classic playback)
+        inline constexpr const char* sampleStart  = "sampleStart";
+        inline constexpr const char* loop         = "loop";
+        inline constexpr const char* loopStart    = "loopStart";
+        inline constexpr const char* loopEnd      = "loopEnd";
+        inline constexpr const char* keytrack     = "keytrack";
+        inline constexpr const char* rootNote     = "rootNote";
+
+        // Sample/SFX engine (granular)
+        inline constexpr const char* grainSize    = "grainSize";
+        inline constexpr const char* grainDensity = "grainDensity";
+        inline constexpr const char* grainPos     = "grainPos";
+        inline constexpr const char* grainSpray   = "grainSpray";
+        inline constexpr const char* grainPitch   = "grainPitch";
     }
 
     juce::String oscSlot (int slotIndex, const char* key);
@@ -215,6 +240,9 @@ enum class FilterType
 
 // Oscillator phase behaviour on note-on.
 enum class PhaseMode { reset, random, free_ };
+
+// Oscillator slot engine — choice order is load-bearing.
+enum class OscMode { wavetable, sample, granular };
 
 // LFO shape choice order — load-bearing, append-only.
 enum class LFOShape { sine, triangle, sawUp, sawDown, square, sampleHold };

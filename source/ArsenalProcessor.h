@@ -48,11 +48,18 @@ public:
     juce::String getWavetableName (int slot) const;
     juce::String getWavetableError (int slot) const;
 
+    // Sample/SFX slot management — same threading contract as wavetables.
+    void loadSampleFromFile (int slot, const juce::File& file);
+    juce::String getSampleName (int slot) const;
+    juce::String getSampleError (int slot) const;
+
 private:
     void updateSharedState (int blockLength);
     void scanMidiControllers (const juce::MidiBuffer& midi);
     void installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
                        juce::String path, juce::String error);
+    void installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
+                        juce::String path, juce::String error);
     void timerCallback() override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -81,13 +88,32 @@ private:
     std::array<SlotTable, params::maxOscSlots> slotTables;
     std::vector<std::shared_ptr<const dsp::Wavetable>> retiredTables;  // message thread
 
+    // Sample/SFX storage, same ownership scheme as wavetables.
+    struct SlotSample
+    {
+        std::shared_ptr<const dsp::SampleData> current;       // message thread
+        std::atomic<const dsp::SampleData*> live { nullptr }; // audio thread
+        juce::String path;
+        juce::String error;
+    };
+    std::array<SlotSample, params::maxOscSlots> slotSamples;
+    std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread
+
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot
     {
         std::atomic<float>* enable = nullptr;
+        std::atomic<float>* mode = nullptr;
         std::atomic<float>* phase = nullptr;
         std::atomic<float>* phaseMode = nullptr;
         std::atomic<float>* unisonCount = nullptr;
+        std::atomic<float>* sampleStart = nullptr;
+        std::atomic<float>* loop = nullptr;
+        std::atomic<float>* loopStart = nullptr;
+        std::atomic<float>* loopEnd = nullptr;
+        std::atomic<float>* keytrack = nullptr;
+        std::atomic<float>* rootNote = nullptr;
+        std::atomic<float>* grainPitch = nullptr;
     };
 
     struct RawLFO

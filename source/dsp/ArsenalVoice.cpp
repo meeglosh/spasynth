@@ -11,6 +11,7 @@ namespace
         struct Slot
         {
             int position, coarse, fine, level, pan, unisonDetune, unisonBlend, unisonWidth;
+            int grainSize, grainDensity, grainPos, grainSpray;
         };
         std::array<Slot, params::numOscSlots> slots {};
         int cutoff, resonance, drive;
@@ -39,6 +40,10 @@ namespace
                     slot.unisonDetune = params::modDestIndex (id::oscSlot (s, id::osc::unisonDetune));
                     slot.unisonBlend  = params::modDestIndex (id::oscSlot (s, id::osc::unisonBlend));
                     slot.unisonWidth  = params::modDestIndex (id::oscSlot (s, id::osc::unisonWidth));
+                    slot.grainSize    = params::modDestIndex (id::oscSlot (s, id::osc::grainSize));
+                    slot.grainDensity = params::modDestIndex (id::oscSlot (s, id::osc::grainDensity));
+                    slot.grainPos     = params::modDestIndex (id::oscSlot (s, id::osc::grainPos));
+                    slot.grainSpray   = params::modDestIndex (id::oscSlot (s, id::osc::grainSpray));
                 }
 
                 l.cutoff    = params::modDestIndex (id::filter1Cutoff);
@@ -125,8 +130,13 @@ void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
     pitchBendSemitones = 2.0f * ((float) currentPitchWheelPosition - 8192.0f) / 8192.0f;
 
     for (int s = 0; s < params::numOscSlots; ++s)
-        oscs[(size_t) s].noteOn (shared.slots[(size_t) s].phaseMode,
-                                 shared.slots[(size_t) s].phase, &random);
+    {
+        const auto& stat = shared.slots[(size_t) s];
+        oscs[(size_t) s].noteOn (stat.phaseMode, stat.phase, &random);
+        samplePlayers[(size_t) s].noteOn (stat.sample, stat.sampleStart);
+        granularPlayers[(size_t) s].noteOn();
+        lastGrainPos[(size_t) s] = baseValue (lookup.slots[(size_t) s].grainPos);
+    }
 
     for (int i = 0; i < params::numLFOs; ++i)
         lfos[(size_t) i].noteOn (shared.lfo[(size_t) i]);
@@ -222,6 +232,23 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
     src[(int) params::ModSource::modWheel]   = shared.modWheel;
     src[(int) params::ModSource::aftertouch] = shared.aftertouch;
 
+    // SFX followers: stream the offline analysis curves at each slot's
+    // current playback position.
+    for (int s = 0; s < params::numOscSlots; ++s)
+    {
+        const auto& stat = shared.slots[(size_t) s];
+        if (! stat.enabled || stat.sample == nullptr
+            || stat.mode == params::OscMode::wavetable)
+            continue;
+
+        const auto seconds = stat.mode == params::OscMode::sample
+            ? samplePlayers[(size_t) s].positionSeconds (stat.sample)
+            : (double) lastGrainPos[(size_t) s] * stat.sample->lengthSeconds();
+
+        src[params::sfxFollowerBase + 2 * s]     = stat.sample->ampAt (seconds);
+        src[params::sfxFollowerBase + 2 * s + 1] = stat.sample->pitchAt (seconds);
+    }
+
     // --- Apply routes in normalized space -----------------------------------
     float eff[params::maxModDests];
     std::copy (shared.baseNorm.begin(),
@@ -273,23 +300,68 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
                               ? chaosGen.slotPhase (s) * ch.phaseAmount * chaosScale
                               : 0.0f;
 
-        const auto note = (float) currentNote
-                        + denorm (eff, d.coarse)
-                        + denorm (eff, d.fine) * 0.01f
-                        + pitchBendSemitones
-                        + chaosPitch;
+        const auto pitchOffset = denorm (eff, d.coarse)
+                               + denorm (eff, d.fine) * 0.01f
+                               + pitchBendSemitones
+                               + chaosPitch;
 
-        oscs[(size_t) s].updateBlock ({
-            stat.table,
-            440.0f * std::exp2 ((note - 69.0f) / 12.0f),
-            juce::jlimit (0.0f, 1.0f, denorm (eff, d.position) + chaosPos),
-            stat.unisonCount,
-            denorm (eff, d.unisonDetune),
-            denorm (eff, d.unisonBlend),
-            denorm (eff, d.unisonWidth),
-            denorm (eff, d.pan),
-            chaosPhase,
-        });
+        if (stat.mode == params::OscMode::wavetable)
+        {
+            const auto note = (float) currentNote + pitchOffset;
+
+            oscs[(size_t) s].updateBlock ({
+                stat.table,
+                440.0f * std::exp2 ((note - 69.0f) / 12.0f),
+                juce::jlimit (0.0f, 1.0f, denorm (eff, d.position) + chaosPos),
+                stat.unisonCount,
+                denorm (eff, d.unisonDetune),
+                denorm (eff, d.unisonBlend),
+                denorm (eff, d.unisonWidth),
+                denorm (eff, d.pan),
+                chaosPhase,
+            });
+        }
+        else
+        {
+            // Sample/granular: keytrack transposes relative to the root note.
+            const auto keySemis = stat.keytrack
+                                ? (float) (currentNote - stat.rootNote) : 0.0f;
+
+            // Equal-power pan for the stereo sample paths.
+            const auto pan = juce::jlimit (-1.0f, 1.0f, denorm (eff, d.pan));
+            const auto panAngle = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            slotPanL[(size_t) s] = std::cos (panAngle) * juce::MathConstants<float>::sqrt2;
+            slotPanR[(size_t) s] = std::sin (panAngle) * juce::MathConstants<float>::sqrt2;
+
+            if (stat.mode == params::OscMode::sample)
+            {
+                const auto ratio = std::exp2 ((keySemis + pitchOffset) / 12.0f);
+                sampleParams[(size_t) s] = {
+                    stat.sample,
+                    (double) ratio * (stat.sample != nullptr
+                                          ? stat.sample->sourceSampleRate / sampleRate : 1.0),
+                    stat.loop,
+                    (double) stat.loopStart,
+                    (double) stat.loopEnd,
+                };
+            }
+            else
+            {
+                const auto grainPos = juce::jlimit (0.0f, 1.0f,
+                                                    denorm (eff, d.grainPos) + chaosPos);
+                lastGrainPos[(size_t) s] = grainPos;
+
+                granularParams[(size_t) s] = {
+                    stat.sample,
+                    denorm (eff, d.grainSize) * 0.001f,  // ms -> s
+                    denorm (eff, d.grainDensity),
+                    grainPos,
+                    denorm (eff, d.grainSpray),
+                    (double) std::exp2 ((keySemis + stat.grainPitch + pitchOffset) / 12.0f),
+                    sampleRate,
+                };
+            }
+        }
 
         slotGains[(size_t) s] = juce::Decibels::decibelsToGain (denorm (eff, d.level), -60.0f);
     }
@@ -329,12 +401,41 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
 
             for (int s = 0; s < params::numOscSlots; ++s)
             {
-                if (! shared.slots[(size_t) s].enabled)
+                const auto& stat = shared.slots[(size_t) s];
+                if (! stat.enabled)
                     continue;
 
-                const auto smp = oscs[(size_t) s].getNextSample();
-                sumL += smp.left * slotGains[(size_t) s];
-                sumR += smp.right * slotGains[(size_t) s];
+                float l = 0.0f, r = 0.0f;
+
+                switch (stat.mode)
+                {
+                    case params::OscMode::wavetable:
+                    {
+                        const auto smp = oscs[(size_t) s].getNextSample();
+                        l = smp.left;
+                        r = smp.right;
+                        break;
+                    }
+                    case params::OscMode::sample:
+                    {
+                        const auto smp = samplePlayers[(size_t) s]
+                                             .getNextSample (sampleParams[(size_t) s]);
+                        l = smp.left * slotPanL[(size_t) s];
+                        r = smp.right * slotPanR[(size_t) s];
+                        break;
+                    }
+                    case params::OscMode::granular:
+                    {
+                        const auto smp = granularPlayers[(size_t) s]
+                                             .getNextSample (granularParams[(size_t) s], random);
+                        l = smp.left * slotPanL[(size_t) s];
+                        r = smp.right * slotPanR[(size_t) s];
+                        break;
+                    }
+                }
+
+                sumL += l * slotGains[(size_t) s];
+                sumR += r * slotGains[(size_t) s];
             }
 
             const auto envValue = ampEnv.getNextSample();

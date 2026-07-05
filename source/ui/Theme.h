@@ -24,7 +24,7 @@ namespace theme
     // Spacing / metrics
     inline constexpr int unit = 8;
     inline constexpr int topBarHeight = 64;
-    inline constexpr int slotStripHeight = 36;
+    inline constexpr int slotStripHeight = 64;  // two rows: wavetable + SFX
     inline constexpr float cornerRadius = 6.0f;
 
     // Typography

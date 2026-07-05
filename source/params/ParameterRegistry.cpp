@@ -45,6 +45,9 @@ const juce::StringArray& modSourceNames()
         "Macro 1", "Macro 2", "Macro 3", "Macro 4",
         "Velocity", "Mod Wheel", "Aftertouch",
         "Chaos",
+        "SFX A Amp", "SFX A Pitch",
+        "SFX B Amp", "SFX B Pitch",
+        "SFX C Amp", "SFX C Pitch",
     };
     jassert (names.size() == numModSources);
     return names;
@@ -170,6 +173,46 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::unisonWidth), letter + "Uni Width", section,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.8f, "",
                    true, { .enabled = true, .biasCentre = 0.7f, .biasStrength = 0.3f } });
+
+    // --- Sample/SFX engine ---------------------------------------------------
+    p.push_back ({ pid (id::osc::mode), letter + "Mode", section,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.0f, .biasStrength = 0.5f },
+                   { "Wavetable", "Sample", "Granular" } });
+    p.push_back ({ pid (id::osc::sampleStart), letter + "Smp Start", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.0f,
+                            .biasStrength = 0.6f } });
+    p.push_back ({ pid (id::osc::loop), letter + "Loop", section,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ pid (id::osc::loopStart), letter + "Loop Start", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.1f, .biasStrength = 0.5f } });
+    p.push_back ({ pid (id::osc::loopEnd), letter + "Loop End", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.9f, .biasStrength = 0.5f } });
+    p.push_back ({ pid (id::osc::keytrack), letter + "Keytrack", section,
+                   ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
+    p.push_back ({ pid (id::osc::rootNote), letter + "Root Note", section,
+                   ParamKind::intParam, { 0.0f, 127.0f, 1.0f }, 60.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ pid (id::osc::grainSize), letter + "Grain Size", section,
+                   ParamKind::floatParam, { 10.0f, 500.0f, 0.0f, 0.4f }, 80.0f, "ms",
+                   true, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
+    p.push_back ({ pid (id::osc::grainDensity), letter + "Grain Density", section,
+                   ParamKind::floatParam, { 1.0f, 100.0f, 0.0f, 0.4f }, 20.0f, "/s",
+                   true, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ pid (id::osc::grainPos), letter + "Grain Pos", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true } });
+    p.push_back ({ pid (id::osc::grainSpray), letter + "Grain Spray", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.1f, "",
+                   true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
+                           .biasStrength = 0.3f } });
+    p.push_back ({ pid (id::osc::grainPitch), letter + "Grain Pitch", section,
+                   ParamKind::floatParam, { -24.0f, 24.0f, 1.0f }, 0.0f, "st",
+                   false, { .enabled = true, .minNorm = 0.25f, .maxNorm = 0.75f,
+                            .biasCentre = 0.5f, .biasStrength = 0.7f } });
 }
 
 static void addADSRParams (std::vector<ParamDef>& p, Section section, const juce::String& idPrefix)

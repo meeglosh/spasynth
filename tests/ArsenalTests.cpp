@@ -404,6 +404,171 @@ namespace
                 + " vs max " + juce::String (maxPeak) + ")");
     }
 
+    // Writes a WAV whose amplitude ramps 0 -> 1 over its length (440 Hz sine).
+    static juce::File writeRampSine (double seconds, double sampleRate)
+    {
+        const auto numSamples = (int) (seconds * sampleRate);
+        juce::AudioBuffer<float> buffer (1, numSamples);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto ramp = (float) i / (float) numSamples;
+            buffer.setSample (0, i, ramp * (float) std::sin (
+                juce::MathConstants<double>::twoPi * 440.0 * i / sampleRate));
+        }
+
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("arsenal-sfx-test", ".wav");
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+        auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
+                                                       .withSampleRate (sampleRate)
+                                                       .withNumChannels (1)
+                                                       .withBitsPerSample (24));
+        if (writer != nullptr)
+            writer->writeFromAudioSampleBuffer (buffer, 0, numSamples);
+        return file;
+    }
+
+    // Pumps the message loop until the sample lands in the slot.
+    static bool waitForSample (arsenal::ArsenalProcessor& proc, int slot, int timeoutMs)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
+        while (juce::Time::getMillisecondCounter() < deadline)
+        {
+            if (proc.getSampleName (slot).isNotEmpty() || proc.getSampleError (slot).isNotEmpty())
+                return proc.getSampleError (slot).isEmpty();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        return false;
+    }
+
+    static void samplePlaybackTest()
+    {
+        std::cout << "samplePlaybackTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto file = writeRampSine (2.0, sampleRate);
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads with analysis");
+
+        // Classic sample mode, keytrack off -> plays at source pitch (440 Hz).
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::keytrack), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::sampleStart), 0.5f);  // start in audible region
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+        renderBlocks (proc, buffer, midi, 16);
+
+        // Estimate frequency by zero crossings over one block.
+        proc.processBlock (buffer, midi);
+        int crossings = 0;
+        for (int i = 1; i < blockSize; ++i)
+            if ((buffer.getSample (0, i - 1) < 0.0f) != (buffer.getSample (0, i) < 0.0f))
+                ++crossings;
+        const auto freq = (float) crossings * (float) sampleRate / (2.0f * blockSize);
+        expect (freq > 400.0f && freq < 480.0f,
+                "keytrack-off sample plays at source pitch (" + juce::String (freq) + " Hz)");
+
+        file.deleteFile();
+    }
+
+    static void granularTest()
+    {
+        std::cout << "granularTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto file = writeRampSine (2.0, sampleRate);
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads for granular");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::granular);
+        setParam (proc, id::oscSlot (0, id::osc::grainPos), 0.8f);  // loud region
+        setParam (proc, id::oscSlot (0, id::osc::grainDensity), 30.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        const auto peak = renderBlocks (proc, buffer, midi, 32);
+        expect (peak > 0.02f, "granular engine produces output (peak "
+                              + juce::String (peak) + ")");
+
+        file.deleteFile();
+    }
+
+    static void sfxFollowerTest()
+    {
+        std::cout << "sfxFollowerTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto file = writeRampSine (2.0, sampleRate);
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads for follower");
+
+        // Slot A plays the ramping SFX (loop off). Its amp follower drives
+        // slot B's level DOWN: as the SFX gets louder, slot B gets quieter.
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::level), -60.0f);  // SFX itself silent
+        setParam (proc, id::oscSlot (1, id::osc::enable), 1.0f);
+        setRouteParams (proc, 0, params::ModSource::sfxAmpA,
+                        id::oscSlot (1, id::osc::level), -1.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+        // Average block peaks early vs late in the 2-second sample.
+        auto averagePeak = [&] (int numBlocks)
+        {
+            float sum = 0.0f;
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                sum += buffer.getMagnitude (0, blockSize);
+            }
+            return sum / (float) numBlocks;
+        };
+
+        averagePeak (8);  // attack settles
+        const auto early = averagePeak (30);
+        averagePeak ((int) (sampleRate / blockSize));  // skip ~1s into the ramp
+        const auto late = averagePeak (30);
+
+        expect (early > 0.02f, "follower patch is audible early on");
+        expect (late < early * 0.6f,
+                "amp follower tracks the SFX ramp (early " + juce::String (early)
+                + " vs late " + juce::String (late) + ")");
+
+        file.deleteFile();
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -416,6 +581,9 @@ int main()
     velocityRouteTest();
     chaosMixBypassTest();
     chaosMatrixSourceTest();
+    samplePlaybackTest();
+    granularTest();
+    sfxFollowerTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

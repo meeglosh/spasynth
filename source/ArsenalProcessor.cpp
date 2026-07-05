@@ -8,6 +8,7 @@ namespace arsenal
 namespace
 {
     constexpr const char* wavetableStateType = "WAVETABLES";
+    constexpr const char* sampleStateType = "SAMPLES";
 
     juce::Identifier slotPathProperty (int slot)
     {
@@ -27,9 +28,17 @@ ArsenalProcessor::ArsenalProcessor()
         auto& rs = raw.slots[(size_t) s];
         const auto pid = [s] (const char* key) { return params::id::oscSlot (s, key); };
         rs.enable      = apvts.getRawParameterValue (pid (params::id::osc::enable));
+        rs.mode        = apvts.getRawParameterValue (pid (params::id::osc::mode));
         rs.phase       = apvts.getRawParameterValue (pid (params::id::osc::phase));
         rs.phaseMode   = apvts.getRawParameterValue (pid (params::id::osc::phaseMode));
         rs.unisonCount = apvts.getRawParameterValue (pid (params::id::osc::unisonCount));
+        rs.sampleStart = apvts.getRawParameterValue (pid (params::id::osc::sampleStart));
+        rs.loop        = apvts.getRawParameterValue (pid (params::id::osc::loop));
+        rs.loopStart   = apvts.getRawParameterValue (pid (params::id::osc::loopStart));
+        rs.loopEnd     = apvts.getRawParameterValue (pid (params::id::osc::loopEnd));
+        rs.keytrack    = apvts.getRawParameterValue (pid (params::id::osc::keytrack));
+        rs.rootNote    = apvts.getRawParameterValue (pid (params::id::osc::rootNote));
+        rs.grainPitch  = apvts.getRawParameterValue (pid (params::id::osc::grainPitch));
     }
 
     for (int i = 0; i < params::numLFOs; ++i)
@@ -98,9 +107,53 @@ ArsenalProcessor::~ArsenalProcessor()
 
 void ArsenalProcessor::timerCallback()
 {
-    // Any table retired more than one timer period ago can no longer be in
+    // Anything retired more than one timer period ago can no longer be in
     // use by the audio thread (it re-reads `live` every block).
     retiredTables.clear();
+    retiredSamples.clear();
+}
+
+void ArsenalProcessor::installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
+                                      juce::String path, juce::String error)
+{
+    auto& ss = slotSamples[(size_t) slot];
+    ss.error = std::move (error);
+
+    if (sample != nullptr)
+    {
+        if (ss.current != nullptr)
+            retiredSamples.push_back (std::move (ss.current));
+        ss.current = std::move (sample);
+        ss.live.store (ss.current.get());
+        ss.path = std::move (path);
+    }
+
+    sendChangeMessage();
+}
+
+void ArsenalProcessor::loadSampleFromFile (int slot, const juce::File& file)
+{
+    juce::Thread::launch ([this, slot, file]
+    {
+        auto result = dsp::loadSampleFromFile (file);
+
+        juce::MessageManager::callAsync ([this, slot, loaded = std::move (result),
+                                          path = file.getFullPathName()]() mutable
+        {
+            installSample (slot, std::move (loaded.sample), path, loaded.error);
+        });
+    });
+}
+
+juce::String ArsenalProcessor::getSampleName (int slot) const
+{
+    const auto& current = slotSamples[(size_t) slot].current;
+    return current != nullptr ? current->name : juce::String();
+}
+
+juce::String ArsenalProcessor::getSampleError (int slot) const
+{
+    return slotSamples[(size_t) slot].error;
 }
 
 void ArsenalProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
@@ -189,10 +242,19 @@ void ArsenalProcessor::updateSharedState (int blockLength)
         auto& slot = shared.slots[(size_t) s];
 
         slot.enabled     = rs.enable->load() >= 0.5f;
+        slot.mode        = (params::OscMode) (int) rs.mode->load();
         slot.table       = slotTables[(size_t) s].live.load();
+        slot.sample      = slotSamples[(size_t) s].live.load();
         slot.phase       = rs.phase->load();
         slot.phaseMode   = (params::PhaseMode) (int) rs.phaseMode->load();
         slot.unisonCount = (int) rs.unisonCount->load();
+        slot.sampleStart = rs.sampleStart->load();
+        slot.loop        = rs.loop->load() >= 0.5f;
+        slot.loopStart   = rs.loopStart->load();
+        slot.loopEnd     = rs.loopEnd->load();
+        slot.keytrack    = rs.keytrack->load() >= 0.5f;
+        slot.rootNote    = (int) rs.rootNote->load();
+        slot.grainPitch  = rs.grainPitch->load();
     }
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
@@ -284,8 +346,12 @@ void ArsenalProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
 
     auto wavetables = state.getOrCreateChildWithName (wavetableStateType, nullptr);
+    auto samples = state.getOrCreateChildWithName (sampleStateType, nullptr);
     for (int s = 0; s < params::numOscSlots; ++s)
+    {
         wavetables.setProperty (slotPathProperty (s), slotTables[(size_t) s].path, nullptr);
+        samples.setProperty (slotPathProperty (s), slotSamples[(size_t) s].path, nullptr);
+    }
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -299,25 +365,35 @@ void ArsenalProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto state = juce::ValueTree::fromXml (*xml);
 
-    // Wavetable paths ride along in the state tree but are not parameters.
+    // Wavetable/sample paths ride along in the state tree but are not
+    // parameters.
     auto wavetables = state.getChildWithName (wavetableStateType);
     if (wavetables.isValid())
         state.removeChild (wavetables, nullptr);
+    auto samples = state.getChildWithName (sampleStateType);
+    if (samples.isValid())
+        state.removeChild (samples, nullptr);
 
     apvts.replaceState (state);
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {
-        const auto path = wavetables.isValid()
-                        ? wavetables.getProperty (slotPathProperty (s)).toString()
-                        : juce::String();
+        const auto wtPath = wavetables.isValid()
+                          ? wavetables.getProperty (slotPathProperty (s)).toString()
+                          : juce::String();
+        const auto smpPath = samples.isValid()
+                           ? samples.getProperty (slotPathProperty (s)).toString()
+                           : juce::String();
 
-        juce::MessageManager::callAsync ([this, s, path]
+        juce::MessageManager::callAsync ([this, s, wtPath, smpPath]
         {
-            if (path.isEmpty())
+            if (wtPath.isEmpty())
                 setFactoryWavetable (s);
             else
-                loadWavetableFromFile (s, juce::File (path));
+                loadWavetableFromFile (s, juce::File (wtPath));
+
+            if (smpPath.isNotEmpty())
+                loadSampleFromFile (s, juce::File (smpPath));
         });
     }
 }

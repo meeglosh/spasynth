@@ -5,6 +5,7 @@
 #include "Wavetable.h"
 #include "WavetableOscillator.h"
 #include "MultiModeFilter.h"
+#include "LFO.h"
 
 namespace arsenal::dsp
 {
@@ -15,39 +16,52 @@ struct ArsenalSound : public juce::SynthesiserSound
     bool appliesToChannel (int) override { return true; }
 };
 
-// Snapshot of the per-voice parameter values, refreshed once per block by the
-// processor from the APVTS. Voices never touch parameter objects directly.
-struct SlotParams
+// Everything voices need for a block, written once per block by the processor
+// (audio thread) before Synthesiser::renderNextBlock. Voices only read.
+struct SharedState
 {
-    bool enabled = false;
-    const Wavetable* table = nullptr;   // owned by the processor's table store
-    float position = 0.0f;
-    float coarse = 0.0f;
-    float fine = 0.0f;
-    float gain = 0.5f;                  // linear
-    float pan = 0.0f;
-    float phase = 0.0f;
-    params::PhaseMode phaseMode = params::PhaseMode::reset;
-    int unisonCount = 1;
-    float unisonDetune = 0.0f;
-    float unisonBlend = 0.7f;
-    float unisonWidth = 0.8f;
-};
+    struct SlotStatic
+    {
+        bool enabled = false;
+        const Wavetable* table = nullptr;
+        params::PhaseMode phaseMode = params::PhaseMode::reset;
+        float phase = 0.0f;
+        int unisonCount = 1;
+    };
 
-struct VoiceParams
-{
-    std::array<SlotParams, params::maxOscSlots> slots {};
+    struct Route
+    {
+        int source = 0;      // ModSource index
+        int destIndex = 0;   // dense mod-dest index
+        float depth = 0.0f;
+    };
+
+    std::array<SlotStatic, params::maxOscSlots> slots {};
     params::FilterType filterType = params::FilterType::lp12;
-    float filterCutoff = 20000.0f;
-    float filterResonance = 0.0f;
-    float filterDrive = 0.0f;
-    juce::ADSR::Parameters ampEnv { 0.005f, 0.2f, 0.8f, 0.15f };
+
+    // Normalized (0..1) base values for every mod destination, indexed by the
+    // registry's dense mod-dest index.
+    std::array<float, params::maxModDests> baseNorm {};
+
+    int numActiveRoutes = 0;
+    std::array<Route, params::numModRoutes> routes {};
+
+    std::array<LFO::Params, params::numLFOs> lfo {};
+    std::array<double, params::numLFOs> lfoGlobalPhase {};  // at block start
+
+    std::array<float, params::numMacros> macros {};
+    float modWheel = 0.0f;
+    float aftertouch = 0.0f;
+    double bpm = 120.0;
 };
 
 class ArsenalVoice : public juce::SynthesiserVoice
 {
 public:
-    explicit ArsenalVoice (const VoiceParams& sharedParams);
+    // Modulation is evaluated at this granularity within a block.
+    static constexpr int chunkSize = 64;
+
+    explicit ArsenalVoice (const SharedState& shared);
 
     bool canPlaySound (juce::SynthesiserSound* sound) override;
     void startNote (int midiNoteNumber, float velocity,
@@ -60,17 +74,27 @@ public:
                           int startSample, int numSamples) override;
 
 private:
-    void updateSlotBlocks();
+    // Computes modulation sources and effective parameter values for one
+    // chunk, then configures oscillators/filter/envelopes from them.
+    // blockOffset = samples since block start (for global LFO phase).
+    void computeChunk (int blockOffset, int chunkLen);
 
-    const VoiceParams& params;
+    float baseValue (int destIndex) const;  // denormalized, no modulation
+
+    const SharedState& shared;
     std::array<UnisonOscillator, params::maxOscSlots> oscs;
     MultiModeFilter filter;
-    juce::ADSR ampEnv;
+    juce::ADSR ampEnv, env2, env3;
+    std::array<LFO, params::numLFOs> lfos;
     juce::Random random;
 
     int currentNote = -1;
-    float velocityGain = 1.0f;
+    float velocity = 1.0f;
     float pitchBendSemitones = 0.0f;
+    float ampEnvLast = 0.0f;   // amp env value fed back as mod source
+    std::array<float, params::maxOscSlots> slotGains {};  // per-chunk linear slot gains
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalVoice)
 };
 
 } // namespace arsenal::dsp

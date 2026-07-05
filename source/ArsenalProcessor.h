@@ -49,16 +49,22 @@ public:
     juce::String getWavetableError (int slot) const;
 
 private:
-    void updateVoiceParams();
+    void updateSharedState (int blockLength);
+    void scanMidiControllers (const juce::MidiBuffer& midi);
     void installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
                        juce::String path, juce::String error);
     void timerCallback() override;
 
     juce::AudioProcessorValueTreeState apvts;
 
-    dsp::VoiceParams voiceParams;   // written on audio thread, read by voices
+    dsp::SharedState shared;   // written on audio thread, read by voices
     juce::Synthesiser synth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
+
+    double currentSampleRate = 44100.0;
+    float lastModWheel = 0.0f;
+    float lastAftertouch = 0.0f;
+    std::array<double, params::numLFOs> lfoPhaseAccum {};  // free-running LFO phases
 
     // --- Wavetable storage -------------------------------------------------
     // Audio thread reads `live` each block; message thread owns `current` and
@@ -79,31 +85,39 @@ private:
     struct RawSlot
     {
         std::atomic<float>* enable = nullptr;
-        std::atomic<float>* position = nullptr;
-        std::atomic<float>* coarse = nullptr;
-        std::atomic<float>* fine = nullptr;
-        std::atomic<float>* level = nullptr;
-        std::atomic<float>* pan = nullptr;
         std::atomic<float>* phase = nullptr;
         std::atomic<float>* phaseMode = nullptr;
         std::atomic<float>* unisonCount = nullptr;
-        std::atomic<float>* unisonDetune = nullptr;
-        std::atomic<float>* unisonBlend = nullptr;
-        std::atomic<float>* unisonWidth = nullptr;
+    };
+
+    struct RawLFO
+    {
+        std::atomic<float>* shape = nullptr;
+        std::atomic<float>* rate = nullptr;
+        std::atomic<float>* sync = nullptr;
+        std::atomic<float>* division = nullptr;
+        std::atomic<float>* phase = nullptr;
+        std::atomic<float>* retrig = nullptr;
+        std::atomic<float>* unipolar = nullptr;
+    };
+
+    struct RawRoute
+    {
+        std::atomic<float>* source = nullptr;
+        std::atomic<float>* dest = nullptr;
+        std::atomic<float>* depth = nullptr;
     };
 
     struct Raw
     {
         std::atomic<float>* masterGain = nullptr;
-        std::array<RawSlot, params::numOscSlots> slots {};
         std::atomic<float>* filterType = nullptr;
-        std::atomic<float>* filterCutoff = nullptr;
-        std::atomic<float>* filterResonance = nullptr;
-        std::atomic<float>* filterDrive = nullptr;
-        std::atomic<float>* ampAttack = nullptr;
-        std::atomic<float>* ampDecay = nullptr;
-        std::atomic<float>* ampSustain = nullptr;
-        std::atomic<float>* ampRelease = nullptr;
+        std::array<RawSlot, params::numOscSlots> slots {};
+        std::array<RawLFO, params::numLFOs> lfos {};
+        std::array<std::atomic<float>*, params::numMacros> macros {};
+        std::array<RawRoute, params::numModRoutes> routes {};
+        // One pointer per mod destination, in dense mod-dest index order.
+        std::vector<std::atomic<float>*> dests;
     } raw;
 
     static constexpr int numVoices = 16;

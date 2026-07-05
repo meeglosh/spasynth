@@ -13,6 +13,13 @@ juce::String sectionName (Section s)
         case Section::oscC:    return "Osc C";
         case Section::filter1: return "Filter 1";
         case Section::ampEnv:  return "Amp Env";
+        case Section::env2:    return "Env 2";
+        case Section::env3:    return "Env 3";
+        case Section::lfo1:    return "LFO 1";
+        case Section::lfo2:    return "LFO 2";
+        case Section::lfo3:    return "LFO 3";
+        case Section::macros:  return "Macros";
+        case Section::matrix:  return "Mod Matrix";
     }
     return {};
 }
@@ -21,6 +28,53 @@ Section oscSection (int slotIndex)
 {
     jassert (slotIndex >= 0 && slotIndex < numOscSlots);
     return (Section) ((int) Section::oscA + slotIndex);
+}
+
+Section lfoSection (int lfoIndex)
+{
+    jassert (lfoIndex >= 0 && lfoIndex < numLFOs);
+    return (Section) ((int) Section::lfo1 + lfoIndex);
+}
+
+const juce::StringArray& modSourceNames()
+{
+    static const juce::StringArray names {
+        "None", "Env 1 (Amp)", "Env 2", "Env 3",
+        "LFO 1", "LFO 2", "LFO 3",
+        "Macro 1", "Macro 2", "Macro 3", "Macro 4",
+        "Velocity", "Mod Wheel", "Aftertouch",
+    };
+    jassert (names.size() == numModSources);
+    return names;
+}
+
+const juce::StringArray& lfoDivisionNames()
+{
+    static const juce::StringArray names {
+        "8/1", "4/1", "2/1", "1/1",
+        "1/2", "1/2T", "1/4", "1/4.", "1/4T",
+        "1/8", "1/8.", "1/8T", "1/16", "1/16T", "1/32",
+    };
+    return names;
+}
+
+float lfoDivisionBeats (int divisionChoice)
+{
+    static constexpr float beats[] = {
+        32.0f, 16.0f, 8.0f, 4.0f,
+        2.0f, 4.0f / 3.0f, 1.0f, 1.5f, 2.0f / 3.0f,
+        0.5f, 0.75f, 1.0f / 3.0f, 0.25f, 1.0f / 6.0f, 0.125f,
+    };
+    static_assert (std::size (beats) == 15);
+    return beats[juce::jlimit (0, (int) std::size (beats) - 1, divisionChoice)];
+}
+
+juce::String destDisplayName (const ParamDef& def)
+{
+    // Osc names already carry their slot letter ("A Position").
+    const auto isOsc = def.section == Section::oscA || def.section == Section::oscB
+                    || def.section == Section::oscC;
+    return isOsc ? "Osc " + def.name : sectionName (def.section) + " " + def.name;
 }
 
 namespace id
@@ -33,6 +87,27 @@ namespace id
     juce::String oscSlot (int slotIndex, const char* key)
     {
         return "osc" + oscSlotLetter (slotIndex) + "." + key;
+    }
+
+    juce::String envParam (int envNumber, const char* key)
+    {
+        jassert (envNumber == 2 || envNumber == 3);
+        return "env" + juce::String (envNumber) + "." + key;
+    }
+
+    juce::String lfoParam (int lfoIndex, const char* key)
+    {
+        return "lfo" + juce::String (lfoIndex + 1) + "." + key;
+    }
+
+    juce::String macro (int macroIndex)
+    {
+        return "macros.macro" + juce::String (macroIndex + 1);
+    }
+
+    juce::String routeParam (int routeIndex, const char* key)
+    {
+        return "matrix.route" + juce::String (routeIndex + 1) + "." + key;
     }
 }
 
@@ -74,7 +149,7 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
                    true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.7f } });
     p.push_back ({ pid (id::osc::phase), letter + "Phase", section,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                   true, { .enabled = true, .biasCentre = 0.0f, .biasStrength = 0.8f } });
+                   false, { .enabled = true, .biasCentre = 0.0f, .biasStrength = 0.8f } });
     p.push_back ({ pid (id::osc::phaseMode), letter + "Phase Mode", section,
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true },
@@ -95,55 +170,161 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
                    true, { .enabled = true, .biasCentre = 0.7f, .biasStrength = 0.3f } });
 }
 
+static void addADSRParams (std::vector<ParamDef>& p, Section section, const juce::String& idPrefix)
+{
+    p.push_back ({ idPrefix + ".attack", "Attack", section,
+                   ParamKind::floatParam, { 0.001f, 10.0f, 0.0f, 0.35f }, 0.005f, "s",
+                   true, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.15f,
+                           .biasStrength = 0.6f } });
+    p.push_back ({ idPrefix + ".decay", "Decay", section,
+                   ParamKind::floatParam, { 0.001f, 10.0f, 0.0f, 0.35f }, 0.2f, "s",
+                   true, { .enabled = true } });
+    p.push_back ({ idPrefix + ".sustain", "Sustain", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.8f, "",
+                   true, { .enabled = true, .minNorm = 0.2f } });
+    p.push_back ({ idPrefix + ".release", "Release", section,
+                   ParamKind::floatParam, { 0.001f, 20.0f, 0.0f, 0.35f }, 0.15f, "s",
+                   true, { .enabled = true, .maxNorm = 0.7f } });
+}
+
+static void addLFOParams (std::vector<ParamDef>& p, int lfoIndex)
+{
+    const auto section = lfoSection (lfoIndex);
+    const auto prefix = "L" + juce::String (lfoIndex + 1) + " ";
+    const auto pid = [lfoIndex] (const char* key) { return id::lfoParam (lfoIndex, key); };
+
+    p.push_back ({ pid (id::lfo::shape), prefix + "Shape", section,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H" } });
+    p.push_back ({ pid (id::lfo::rate), prefix + "Rate", section,
+                   ParamKind::floatParam, frequencyRange (0.01f, 40.0f), 1.0f, "Hz",
+                   false, { .enabled = true, .minNorm = 0.2f, .maxNorm = 0.8f } });
+    p.push_back ({ pid (id::lfo::sync), prefix + "Sync", section,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ pid (id::lfo::division), prefix + "Division", section,
+                   ParamKind::choiceParam, {}, 6.0f /* 1/4 */, "",
+                   false, { .enabled = true, .minNorm = 0.2f, .maxNorm = 0.9f },
+                   lfoDivisionNames() });
+    p.push_back ({ pid (id::lfo::phase), prefix + "Phase", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.0f, .biasStrength = 0.8f } });
+    p.push_back ({ pid (id::lfo::retrig), prefix + "Retrig", section,
+                   ParamKind::boolParam, {}, 1.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ pid (id::lfo::unipolar), prefix + "Unipolar", section,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true } });
+}
+
+// Non-matrix parameter definitions, in registry order.
+static std::vector<ParamDef> buildCoreDefs()
+{
+    std::vector<ParamDef> p;
+
+    p.push_back ({ id::masterGain, "Master", Section::global,
+                   ParamKind::floatParam, { -60.0f, 6.0f, 0.01f, 2.5f }, -6.0f, "dB",
+                   false, { .enabled = false } });
+
+    for (int slot = 0; slot < numOscSlots; ++slot)
+        addOscSlotParams (p, slot);
+
+    p.push_back ({ id::filter1Type, "Type", Section::filter1,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "LP 12", "LP 24", "HP 12", "HP 24",
+                     "BP 12", "BP 24", "Notch 12", "Notch 24" } });
+    p.push_back ({ id::filter1Cutoff, "Cutoff", Section::filter1,
+                   ParamKind::floatParam, frequencyRange (20.0f, 20000.0f), 20000.0f, "Hz",
+                   true, { .enabled = true, .minNorm = 0.2f, .biasCentre = 0.6f,
+                           .biasStrength = 0.3f } });
+    p.push_back ({ id::filter1Resonance, "Resonance", Section::filter1,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .maxNorm = 0.85f, .biasCentre = 0.3f,
+                           .biasStrength = 0.4f } });
+    p.push_back ({ id::filter1Drive, "Drive", Section::filter1,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
+                           .biasStrength = 0.5f } });
+
+    addADSRParams (p, Section::ampEnv, "ampEnv");
+    addADSRParams (p, Section::env2, "env2");
+    addADSRParams (p, Section::env3, "env3");
+
+    for (int i = 0; i < numLFOs; ++i)
+        addLFOParams (p, i);
+
+    for (int m = 0; m < numMacros; ++m)
+        p.push_back ({ id::macro (m), "Macro " + juce::String (m + 1), Section::macros,
+                       ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                       false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
+
+    return p;
+}
+
 const std::vector<ParamDef>& all()
 {
     static const std::vector<ParamDef> defs = []
     {
-        std::vector<ParamDef> p;
+        auto p = buildCoreDefs();
 
-        p.push_back ({ id::masterGain, "Master", Section::global,
-                       ParamKind::floatParam, { -60.0f, 6.0f, 0.01f, 2.5f }, -6.0f, "dB",
-                       false, { .enabled = false } });
+        // Matrix routes are appended after everything else so the destination
+        // choice list can be generated from the defs above.
+        juce::StringArray destNames { "None" };
+        for (const auto& def : p)
+            if (def.modDestination)
+                destNames.add (destDisplayName (def));
 
-        for (int slot = 0; slot < numOscSlots; ++slot)
-            addOscSlotParams (p, slot);
-
-        p.push_back ({ id::filter1Type, "Type", Section::filter1,
-                       ParamKind::choiceParam, {}, 0.0f, "",
-                       false, { .enabled = true },
-                       { "LP 12", "LP 24", "HP 12", "HP 24",
-                         "BP 12", "BP 24", "Notch 12", "Notch 24" } });
-        p.push_back ({ id::filter1Cutoff, "Cutoff", Section::filter1,
-                       ParamKind::floatParam, frequencyRange (20.0f, 20000.0f), 20000.0f, "Hz",
-                       true, { .enabled = true, .minNorm = 0.2f, .biasCentre = 0.6f,
-                               .biasStrength = 0.3f } });
-        p.push_back ({ id::filter1Resonance, "Resonance", Section::filter1,
-                       ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                       true, { .enabled = true, .maxNorm = 0.85f, .biasCentre = 0.3f,
-                               .biasStrength = 0.4f } });
-        p.push_back ({ id::filter1Drive, "Drive", Section::filter1,
-                       ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                       true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
-                               .biasStrength = 0.5f } });
-
-        p.push_back ({ id::ampAttack, "Attack", Section::ampEnv,
-                       ParamKind::floatParam, { 0.001f, 10.0f, 0.0f, 0.35f }, 0.005f, "s",
-                       true, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.15f,
-                               .biasStrength = 0.6f } });
-        p.push_back ({ id::ampDecay, "Decay", Section::ampEnv,
-                       ParamKind::floatParam, { 0.001f, 10.0f, 0.0f, 0.35f }, 0.2f, "s",
-                       true, { .enabled = true } });
-        p.push_back ({ id::ampSustain, "Sustain", Section::ampEnv,
-                       ParamKind::floatParam, { 0.0f, 1.0f }, 0.8f, "",
-                       true, { .enabled = true, .minNorm = 0.2f } });
-        p.push_back ({ id::ampRelease, "Release", Section::ampEnv,
-                       ParamKind::floatParam, { 0.001f, 20.0f, 0.0f, 0.35f }, 0.15f, "s",
-                       true, { .enabled = true, .maxNorm = 0.7f } });
+        for (int r = 0; r < numModRoutes; ++r)
+        {
+            const auto label = "R" + juce::String (r + 1) + " ";
+            p.push_back ({ id::routeParam (r, id::route::source), label + "Source",
+                           Section::matrix, ParamKind::choiceParam, {}, 0.0f, "",
+                           false, { .enabled = true }, modSourceNames() });
+            p.push_back ({ id::routeParam (r, id::route::dest), label + "Dest",
+                           Section::matrix, ParamKind::choiceParam, {}, 0.0f, "",
+                           false, { .enabled = true }, destNames });
+            p.push_back ({ id::routeParam (r, id::route::depth), label + "Depth",
+                           Section::matrix, ParamKind::floatParam,
+                           { -1.0f, 1.0f }, 0.0f, "",
+                           false, { .enabled = true, .biasCentre = 0.5f,
+                                    .biasStrength = 0.4f } });
+        }
 
         return p;
     }();
 
     return defs;
+}
+
+const std::vector<ModDest>& modDestinations()
+{
+    static const std::vector<ModDest> dests = []
+    {
+        std::vector<ModDest> d;
+        int index = 0;
+        for (const auto& def : all())
+            if (def.modDestination)
+                d.push_back ({ &def, index++ });
+        return d;
+    }();
+
+    return dests;
+}
+
+int numModDests()
+{
+    return (int) modDestinations().size();
+}
+
+int modDestIndex (const juce::String& paramID)
+{
+    for (const auto& dest : modDestinations())
+        if (dest.def->id == paramID)
+            return dest.index;
+
+    return -1;
 }
 
 const ParamDef* find (const juce::String& paramID)
@@ -185,11 +366,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // One host-visible parameter group per section.
-    constexpr Section sections[] = { Section::global, Section::oscA, Section::oscB,
-                                     Section::oscC, Section::filter1, Section::ampEnv };
-
-    for (auto section : sections)
+    for (auto section : allSections)
     {
         auto group = std::make_unique<juce::AudioProcessorParameterGroup> (
             sectionName (section), sectionName (section), "|");

@@ -3,9 +3,84 @@
 namespace arsenal::dsp
 {
 
-ArsenalVoice::ArsenalVoice (const VoiceParams& sharedParams)
-    : params (sharedParams)
+namespace
 {
+    // Named handles into the dense mod-dest index space, resolved once.
+    struct DestLookup
+    {
+        struct Slot
+        {
+            int position, coarse, fine, level, pan, unisonDetune, unisonBlend, unisonWidth;
+        };
+        std::array<Slot, params::numOscSlots> slots {};
+        int cutoff, resonance, drive;
+        int ampA, ampD, ampS, ampR;
+        int env2A, env2D, env2S, env2R;
+        int env3A, env3D, env3S, env3R;
+
+        static const DestLookup& get()
+        {
+            static const DestLookup lookup = []
+            {
+                jassert (params::numModDests() <= params::maxModDests);
+
+                DestLookup l {};
+                namespace id = params::id;
+
+                for (int s = 0; s < params::numOscSlots; ++s)
+                {
+                    auto& slot = l.slots[(size_t) s];
+                    slot.position     = params::modDestIndex (id::oscSlot (s, id::osc::position));
+                    slot.coarse       = params::modDestIndex (id::oscSlot (s, id::osc::coarse));
+                    slot.fine         = params::modDestIndex (id::oscSlot (s, id::osc::fine));
+                    slot.level        = params::modDestIndex (id::oscSlot (s, id::osc::level));
+                    slot.pan          = params::modDestIndex (id::oscSlot (s, id::osc::pan));
+                    slot.unisonDetune = params::modDestIndex (id::oscSlot (s, id::osc::unisonDetune));
+                    slot.unisonBlend  = params::modDestIndex (id::oscSlot (s, id::osc::unisonBlend));
+                    slot.unisonWidth  = params::modDestIndex (id::oscSlot (s, id::osc::unisonWidth));
+                }
+
+                l.cutoff    = params::modDestIndex (id::filter1Cutoff);
+                l.resonance = params::modDestIndex (id::filter1Resonance);
+                l.drive     = params::modDestIndex (id::filter1Drive);
+
+                l.ampA = params::modDestIndex (id::ampAttack);
+                l.ampD = params::modDestIndex (id::ampDecay);
+                l.ampS = params::modDestIndex (id::ampSustain);
+                l.ampR = params::modDestIndex (id::ampRelease);
+
+                l.env2A = params::modDestIndex (id::envParam (2, "attack"));
+                l.env2D = params::modDestIndex (id::envParam (2, "decay"));
+                l.env2S = params::modDestIndex (id::envParam (2, "sustain"));
+                l.env2R = params::modDestIndex (id::envParam (2, "release"));
+
+                l.env3A = params::modDestIndex (id::envParam (3, "attack"));
+                l.env3D = params::modDestIndex (id::envParam (3, "decay"));
+                l.env3S = params::modDestIndex (id::envParam (3, "sustain"));
+                l.env3R = params::modDestIndex (id::envParam (3, "release"));
+
+                return l;
+            }();
+
+            return lookup;
+        }
+    };
+
+    const juce::NormalisableRange<float>& destRange (int destIndex)
+    {
+        return params::modDestinations()[(size_t) destIndex].def->range;
+    }
+
+    float denorm (const float* values, int destIndex)
+    {
+        return destRange (destIndex).convertFrom0to1 (values[destIndex]);
+    }
+}
+
+ArsenalVoice::ArsenalVoice (const SharedState& sharedState)
+    : shared (sharedState)
+{
+    DestLookup::get();  // resolve indices before the audio thread needs them
 }
 
 bool ArsenalVoice::canPlaySound (juce::SynthesiserSound* sound)
@@ -21,26 +96,51 @@ void ArsenalVoice::setCurrentPlaybackSampleRate (double newRate)
     {
         for (auto& osc : oscs)
             osc.prepare (newRate);
+        for (auto& lfo : lfos)
+            lfo.prepare (newRate);
         filter.prepare (newRate);
         ampEnv.setSampleRate (newRate);
+        env2.setSampleRate (newRate);
+        env3.setSampleRate (newRate);
     }
 }
 
-void ArsenalVoice::startNote (int midiNoteNumber, float velocity,
+float ArsenalVoice::baseValue (int destIndex) const
+{
+    return denorm (shared.baseNorm.data(), destIndex);
+}
+
+void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
                               juce::SynthesiserSound*, int currentPitchWheelPosition)
 {
+    const auto& lookup = DestLookup::get();
+
     currentNote = midiNoteNumber;
-    velocityGain = 0.2f + 0.8f * velocity;
+    velocity = noteVelocity;
     pitchBendSemitones = 2.0f * ((float) currentPitchWheelPosition - 8192.0f) / 8192.0f;
 
     for (int s = 0; s < params::numOscSlots; ++s)
-        oscs[(size_t) s].noteOn (params.slots[(size_t) s].phaseMode,
-                                 params.slots[(size_t) s].phase, &random);
+        oscs[(size_t) s].noteOn (shared.slots[(size_t) s].phaseMode,
+                                 shared.slots[(size_t) s].phase, &random);
+
+    for (int i = 0; i < params::numLFOs; ++i)
+        lfos[(size_t) i].noteOn (shared.lfo[(size_t) i]);
 
     filter.reset();
 
-    ampEnv.setParameters (params.ampEnv);
+    // Envelopes start from base (unmodulated) values; the first chunk refresh
+    // applies modulation.
+    ampEnv.setParameters ({ baseValue (lookup.ampA), baseValue (lookup.ampD),
+                            baseValue (lookup.ampS), baseValue (lookup.ampR) });
+    env2.setParameters ({ baseValue (lookup.env2A), baseValue (lookup.env2D),
+                          baseValue (lookup.env2S), baseValue (lookup.env2R) });
+    env3.setParameters ({ baseValue (lookup.env3A), baseValue (lookup.env3D),
+                          baseValue (lookup.env3S), baseValue (lookup.env3R) });
+
     ampEnv.noteOn();
+    env2.noteOn();
+    env3.noteOn();
+    ampEnvLast = 0.0f;
 }
 
 void ArsenalVoice::stopNote (float, bool allowTailOff)
@@ -48,10 +148,14 @@ void ArsenalVoice::stopNote (float, bool allowTailOff)
     if (allowTailOff)
     {
         ampEnv.noteOff();
+        env2.noteOff();
+        env3.noteOff();
     }
     else
     {
         ampEnv.reset();
+        env2.reset();
+        env3.reset();
         clearCurrentNote();
     }
 }
@@ -61,22 +165,93 @@ void ArsenalVoice::pitchWheelMoved (int newPitchWheelValue)
     pitchBendSemitones = 2.0f * ((float) newPitchWheelValue - 8192.0f) / 8192.0f;
 }
 
-void ArsenalVoice::updateSlotBlocks()
+void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
 {
+    const auto& lookup = DestLookup::get();
+    const auto sampleRate = getSampleRate();
+
+    // --- Modulation sources -------------------------------------------------
+    float src[params::numModSources] {};
+    src[(int) params::ModSource::env1] = ampEnvLast;
+
+    // Advance env2/3 through the chunk; their end value drives this chunk.
+    float env2Value = 0.0f, env3Value = 0.0f;
+    for (int i = 0; i < chunkLen; ++i)
+    {
+        env2Value = env2.getNextSample();
+        env3Value = env3.getNextSample();
+    }
+    src[(int) params::ModSource::env2] = env2Value;
+    src[(int) params::ModSource::env3] = env3Value;
+
+    for (int i = 0; i < params::numLFOs; ++i)
+    {
+        const auto& p = shared.lfo[(size_t) i];
+        const auto inc = (double) LFO::effectiveRateHz (p, shared.bpm) / sampleRate;
+        const auto globalPhase = shared.lfoGlobalPhase[(size_t) i] + inc * blockOffset;
+        src[(int) params::ModSource::lfo1 + i] =
+            lfos[(size_t) i].processChunk (p, chunkLen, shared.bpm, globalPhase, random);
+    }
+
+    for (int m = 0; m < params::numMacros; ++m)
+        src[(int) params::ModSource::macro1 + m] = shared.macros[(size_t) m];
+
+    src[(int) params::ModSource::velocity]   = velocity;
+    src[(int) params::ModSource::modWheel]   = shared.modWheel;
+    src[(int) params::ModSource::aftertouch] = shared.aftertouch;
+
+    // --- Apply routes in normalized space -----------------------------------
+    float eff[params::maxModDests];
+    std::copy (shared.baseNorm.begin(),
+               shared.baseNorm.begin() + params::numModDests(), eff);
+
+    for (int r = 0; r < shared.numActiveRoutes; ++r)
+    {
+        const auto& route = shared.routes[(size_t) r];
+        eff[route.destIndex] += src[route.source] * route.depth;
+    }
+
+    for (int d = 0; d < params::numModDests(); ++d)
+        eff[d] = juce::jlimit (0.0f, 1.0f, eff[d]);
+
+    // --- Configure DSP from effective values --------------------------------
     for (int s = 0; s < params::numOscSlots; ++s)
     {
-        const auto& slot = params.slots[(size_t) s];
-        if (! slot.enabled)
+        const auto& stat = shared.slots[(size_t) s];
+        if (! stat.enabled)
             continue;
 
-        const auto note = (float) currentNote + slot.coarse + slot.fine * 0.01f
+        const auto& d = lookup.slots[(size_t) s];
+        const auto note = (float) currentNote
+                        + denorm (eff, d.coarse)
+                        + denorm (eff, d.fine) * 0.01f
                         + pitchBendSemitones;
-        const auto freq = 440.0f * std::exp2 ((note - 69.0f) / 12.0f);
 
-        oscs[(size_t) s].updateBlock ({ slot.table, freq, slot.position,
-                                        slot.unisonCount, slot.unisonDetune,
-                                        slot.unisonBlend, slot.unisonWidth, slot.pan });
+        oscs[(size_t) s].updateBlock ({
+            stat.table,
+            440.0f * std::exp2 ((note - 69.0f) / 12.0f),
+            denorm (eff, d.position),
+            stat.unisonCount,
+            denorm (eff, d.unisonDetune),
+            denorm (eff, d.unisonBlend),
+            denorm (eff, d.unisonWidth),
+            denorm (eff, d.pan),
+        });
+
+        slotGains[(size_t) s] = juce::Decibels::decibelsToGain (denorm (eff, d.level), -60.0f);
     }
+
+    filter.setParams (shared.filterType,
+                      denorm (eff, lookup.cutoff),
+                      denorm (eff, lookup.resonance),
+                      denorm (eff, lookup.drive));
+
+    ampEnv.setParameters ({ denorm (eff, lookup.ampA), denorm (eff, lookup.ampD),
+                            denorm (eff, lookup.ampS), denorm (eff, lookup.ampR) });
+    env2.setParameters ({ denorm (eff, lookup.env2A), denorm (eff, lookup.env2D),
+                          denorm (eff, lookup.env2S), denorm (eff, lookup.env2R) });
+    env3.setParameters ({ denorm (eff, lookup.env3A), denorm (eff, lookup.env3D),
+                          denorm (eff, lookup.env3S), denorm (eff, lookup.env3R) });
 }
 
 void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
@@ -85,41 +260,47 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
     if (! ampEnv.isActive())
         return;
 
-    updateSlotBlocks();
-    ampEnv.setParameters (params.ampEnv);
-    filter.setParams (params.filterType, params.filterCutoff,
-                      params.filterResonance, params.filterDrive);
-
     auto* left = outputBuffer.getWritePointer (0, startSample);
     auto* right = outputBuffer.getNumChannels() > 1
                 ? outputBuffer.getWritePointer (1, startSample) : nullptr;
 
-    for (int i = 0; i < numSamples; ++i)
+    int rendered = 0;
+    while (rendered < numSamples)
     {
-        float sumL = 0.0f, sumR = 0.0f;
+        const auto chunkLen = juce::jmin (chunkSize, numSamples - rendered);
+        computeChunk (startSample + rendered, chunkLen);
 
-        for (int s = 0; s < params::numOscSlots; ++s)
+        for (int i = 0; i < chunkLen; ++i)
         {
-            const auto& slot = params.slots[(size_t) s];
-            if (! slot.enabled)
-                continue;
+            float sumL = 0.0f, sumR = 0.0f;
 
-            const auto smp = oscs[(size_t) s].getNextSample();
-            sumL += smp.left * slot.gain;
-            sumR += smp.right * slot.gain;
+            for (int s = 0; s < params::numOscSlots; ++s)
+            {
+                if (! shared.slots[(size_t) s].enabled)
+                    continue;
+
+                const auto smp = oscs[(size_t) s].getNextSample();
+                sumL += smp.left * slotGains[(size_t) s];
+                sumR += smp.right * slotGains[(size_t) s];
+            }
+
+            const auto envValue = ampEnv.getNextSample();
+            ampEnvLast = envValue;
+            const auto gain = envValue * (0.2f + 0.8f * velocity);
+
+            const auto n = rendered + i;
+            left[n] += filter.processSample (0, sumL) * gain;
+            if (right != nullptr)
+                right[n] += filter.processSample (1, sumR) * gain;
+
+            if (! ampEnv.isActive())
+            {
+                clearCurrentNote();
+                return;
+            }
         }
 
-        const auto envValue = ampEnv.getNextSample() * velocityGain;
-
-        left[i] += filter.processSample (0, sumL) * envValue;
-        if (right != nullptr)
-            right[i] += filter.processSample (1, sumR) * envValue;
-
-        if (! ampEnv.isActive())
-        {
-            clearCurrentNote();
-            break;
-        }
+        rendered += chunkLen;
     }
 }
 

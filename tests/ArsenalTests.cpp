@@ -155,6 +155,147 @@ namespace
     }
 }
 
+    static void setRouteParams (arsenal::ArsenalProcessor& proc, int route,
+                         arsenal::params::ModSource source,
+                         const juce::String& destParamID, float depth)
+    {
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        // Destination choice index = dense mod-dest index + 1 ("None" is 0).
+        const auto destChoice = (float) (params::modDestIndex (destParamID) + 1);
+
+        setParam (proc, id::routeParam (route, id::route::source), (float) (int) source);
+        setParam (proc, id::routeParam (route, id::route::dest), destChoice);
+        setParam (proc, id::routeParam (route, id::route::depth), depth);
+    }
+
+    static void modMatrixMacroTest()
+    {
+        std::cout << "modMatrixMacroTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        // Baseline: no modulation.
+        float basePeak = 0.0f;
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            basePeak = renderBlocks (proc, buffer, midi, 32);
+        }
+
+        // Macro 1 at full, routed to Osc A level with depth -1 -> much quieter.
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setRouteParams (proc, 0, params::ModSource::macro1,
+                            id::oscSlot (0, id::osc::level), -1.0f);
+            setParam (proc, id::macro (0), 1.0f);
+
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            const auto moddedPeak = renderBlocks (proc, buffer, midi, 32);
+
+            expect (basePeak > 0.05f, "baseline note is audible");
+            expect (moddedPeak < basePeak * 0.1f,
+                    "macro->level route attenuates (base " + juce::String (basePeak)
+                    + " vs modded " + juce::String (moddedPeak) + ")");
+        }
+    }
+
+    static void lfoModulationTest()
+    {
+        std::cout << "lfoModulationTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        // LFO 1: 4 Hz square, routed hard to Osc A level -> output pulses.
+        setParam (proc, id::lfoParam (0, id::lfo::shape),
+                  (float) (int) params::LFOShape::square);
+        setParam (proc, id::lfoParam (0, id::lfo::rate), 4.0f);
+        setRouteParams (proc, 0, params::ModSource::lfo1,
+                        id::oscSlot (0, id::osc::level), -1.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+        // Collect per-block peaks over ~1 second; square LFO should produce
+        // loud and near-silent blocks.
+        float minPeak = 1.0e9f, maxPeak = 0.0f;
+        for (int b = 0; b < (int) (sampleRate / blockSize); ++b)
+        {
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            if (b < 8)
+                continue;  // let the attack settle
+            const auto peak = buffer.getMagnitude (0, blockSize);
+            minPeak = juce::jmin (minPeak, peak);
+            maxPeak = juce::jmax (maxPeak, peak);
+        }
+
+        expect (maxPeak > 0.05f, "LFO-modulated note is audible at peaks");
+        expect (minPeak < maxPeak * 0.2f,
+                "square LFO->level pulses output (min " + juce::String (minPeak)
+                + " vs max " + juce::String (maxPeak) + ")");
+    }
+
+    static void velocityRouteTest()
+    {
+        std::cout << "velocityRouteTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        // Velocity opens the filter: base cutoff low, velocity routed up.
+        setParam (proc, id::filter1Cutoff, 200.0f);
+        setRouteParams (proc, 0, params::ModSource::velocity, id::filter1Cutoff, 1.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        auto brightness = [&] (juce::uint8 vel)
+        {
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, vel), 0);
+            renderBlocks (proc, buffer, midi, 16);
+            // Rough high-frequency content estimate: mean absolute sample-to-
+            // sample difference.
+            float hf = 0.0f;
+            for (int i = 1; i < blockSize; ++i)
+                hf += std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1));
+            midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            renderBlocks (proc, buffer, midi, (int) (2.0 * sampleRate / blockSize));
+            return hf / (float) blockSize;
+        };
+
+        const auto soft = brightness (10);
+        const auto hard = brightness (127);
+
+        expect (hard > soft * 1.5f,
+                "velocity->cutoff makes loud notes brighter (soft " + juce::String (soft)
+                + " vs hard " + juce::String (hard) + ")");
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -162,6 +303,9 @@ int main()
     renderSmokeTest();
     multiSlotUnisonTest();
     wavetableLoaderTest();
+    modMatrixMacroTest();
+    lfoModulationTest();
+    velocityRouteTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

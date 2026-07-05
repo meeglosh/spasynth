@@ -10,6 +10,10 @@ namespace arsenal::params
 inline constexpr int numOscSlots = 3;
 inline constexpr int maxOscSlots = 4;
 
+inline constexpr int numLFOs = 3;
+inline constexpr int numMacros = 4;
+inline constexpr int numModRoutes = 16;
+
 // Sections drive UI grouping, host parameter groups, and the per-section lock
 // toggles used by RANDOMIZE ALL. Keep in sync with sectionName().
 enum class Section
@@ -20,10 +24,50 @@ enum class Section
     oscC,
     filter1,
     ampEnv,
+    env2,
+    env3,
+    lfo1,
+    lfo2,
+    lfo3,
+    macros,
+    matrix,
+};
+
+inline constexpr Section allSections[] = {
+    Section::global, Section::oscA, Section::oscB, Section::oscC,
+    Section::filter1, Section::ampEnv, Section::env2, Section::env3,
+    Section::lfo1, Section::lfo2, Section::lfo3, Section::macros, Section::matrix,
 };
 
 juce::String sectionName (Section);
 Section oscSection (int slotIndex);
+Section lfoSection (int lfoIndex);
+
+// Modulation sources. The matrix source choice parameters use exactly this
+// order, so it is APPEND-ONLY: new sources (Chaos, SFX followers) go at the
+// end or saved projects break.
+enum class ModSource
+{
+    none,
+    env1,       // amp envelope
+    env2,
+    env3,
+    lfo1,
+    lfo2,
+    lfo3,
+    macro1,
+    macro2,
+    macro3,
+    macro4,
+    velocity,
+    modWheel,
+    aftertouch,
+    count,
+};
+
+inline constexpr int numModSources = (int) ModSource::count;
+
+const juce::StringArray& modSourceNames();
 
 // Randomization metadata consumed by RANDOMIZE ALL. Ranges are in normalized
 // (0..1) parameter space. biasStrength 0 = uniform across [minNorm, maxNorm];
@@ -53,6 +97,27 @@ struct ParamDef
     juce::StringArray choices {};            // choiceParam only
 };
 
+// A parameter that can be a modulation destination, with its dense index into
+// the per-voice modulation arrays. Index order == registry order (stable).
+struct ModDest
+{
+    const ParamDef* def;
+    int index;
+};
+
+const std::vector<ModDest>& modDestinations();
+int numModDests();
+
+// Fixed capacity for per-voice modulation arrays (no allocation on the audio
+// thread). numModDests() is asserted against this at startup.
+inline constexpr int maxModDests = 64;
+
+// Dense mod-dest index for a parameter ID, or -1 if it is not a destination.
+int modDestIndex (const juce::String& paramID);
+
+// Human-readable destination name used in matrix choice parameters.
+juce::String destDisplayName (const ParamDef&);
+
 // Stable parameter IDs. Everything (DSP, UI, mod matrix, randomizer) refers to
 // parameters through these, never through ad hoc string literals.
 namespace id
@@ -70,7 +135,6 @@ namespace id
     inline constexpr const char* ampRelease = "ampEnv.release";
 
     // Per-oscillator-slot parameter IDs: "oscA.position", "oscB.level", ...
-    // Suffix keys:
     namespace osc
     {
         inline constexpr const char* enable       = "enable";
@@ -89,6 +153,33 @@ namespace id
 
     juce::String oscSlot (int slotIndex, const char* key);
     juce::String oscSlotLetter (int slotIndex);
+
+    // Envelope 2/3 parameter IDs: envParam(2, "attack") -> "env2.attack"
+    juce::String envParam (int envNumber, const char* key);
+
+    // LFO parameter IDs: lfoParam(0, "rate") -> "lfo1.rate"
+    namespace lfo
+    {
+        inline constexpr const char* shape    = "shape";
+        inline constexpr const char* rate     = "rate";
+        inline constexpr const char* sync     = "sync";
+        inline constexpr const char* division = "division";
+        inline constexpr const char* phase    = "phase";
+        inline constexpr const char* retrig   = "retrig";
+        inline constexpr const char* unipolar = "unipolar";
+    }
+    juce::String lfoParam (int lfoIndex, const char* key);
+
+    juce::String macro (int macroIndex);  // "macros.macro1"
+
+    // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"
+    namespace route
+    {
+        inline constexpr const char* source = "source";
+        inline constexpr const char* dest   = "dest";
+        inline constexpr const char* depth  = "depth";
+    }
+    juce::String routeParam (int routeIndex, const char* key);
 }
 
 // Filter type choice order — DSP switches on the raw choice index, so this
@@ -100,6 +191,14 @@ enum class FilterType
 
 // Oscillator phase behaviour on note-on.
 enum class PhaseMode { reset, random, free_ };
+
+// LFO shape choice order — load-bearing, append-only.
+enum class LFOShape { sine, triangle, sawUp, sawDown, square, sampleHold };
+
+// Tempo-sync divisions, in beats (quarter notes). Choice order matches
+// lfoDivisionBeats(). Append-only.
+float lfoDivisionBeats (int divisionChoice);
+const juce::StringArray& lfoDivisionNames();
 
 const std::vector<ParamDef>& all();
 const ParamDef* find (const juce::String& paramID);

@@ -19,33 +19,46 @@ ArsenalProcessor::ArsenalProcessor()
     : juce::AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", params::createLayout())
 {
-    raw.masterGain      = apvts.getRawParameterValue (params::id::masterGain);
-    raw.filterType      = apvts.getRawParameterValue (params::id::filter1Type);
-    raw.filterCutoff    = apvts.getRawParameterValue (params::id::filter1Cutoff);
-    raw.filterResonance = apvts.getRawParameterValue (params::id::filter1Resonance);
-    raw.filterDrive     = apvts.getRawParameterValue (params::id::filter1Drive);
-    raw.ampAttack       = apvts.getRawParameterValue (params::id::ampAttack);
-    raw.ampDecay        = apvts.getRawParameterValue (params::id::ampDecay);
-    raw.ampSustain      = apvts.getRawParameterValue (params::id::ampSustain);
-    raw.ampRelease      = apvts.getRawParameterValue (params::id::ampRelease);
+    raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
+    raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {
         auto& rs = raw.slots[(size_t) s];
         const auto pid = [s] (const char* key) { return params::id::oscSlot (s, key); };
-        rs.enable       = apvts.getRawParameterValue (pid (params::id::osc::enable));
-        rs.position     = apvts.getRawParameterValue (pid (params::id::osc::position));
-        rs.coarse       = apvts.getRawParameterValue (pid (params::id::osc::coarse));
-        rs.fine         = apvts.getRawParameterValue (pid (params::id::osc::fine));
-        rs.level        = apvts.getRawParameterValue (pid (params::id::osc::level));
-        rs.pan          = apvts.getRawParameterValue (pid (params::id::osc::pan));
-        rs.phase        = apvts.getRawParameterValue (pid (params::id::osc::phase));
-        rs.phaseMode    = apvts.getRawParameterValue (pid (params::id::osc::phaseMode));
-        rs.unisonCount  = apvts.getRawParameterValue (pid (params::id::osc::unisonCount));
-        rs.unisonDetune = apvts.getRawParameterValue (pid (params::id::osc::unisonDetune));
-        rs.unisonBlend  = apvts.getRawParameterValue (pid (params::id::osc::unisonBlend));
-        rs.unisonWidth  = apvts.getRawParameterValue (pid (params::id::osc::unisonWidth));
+        rs.enable      = apvts.getRawParameterValue (pid (params::id::osc::enable));
+        rs.phase       = apvts.getRawParameterValue (pid (params::id::osc::phase));
+        rs.phaseMode   = apvts.getRawParameterValue (pid (params::id::osc::phaseMode));
+        rs.unisonCount = apvts.getRawParameterValue (pid (params::id::osc::unisonCount));
     }
+
+    for (int i = 0; i < params::numLFOs; ++i)
+    {
+        auto& rl = raw.lfos[(size_t) i];
+        const auto pid = [i] (const char* key) { return params::id::lfoParam (i, key); };
+        rl.shape    = apvts.getRawParameterValue (pid (params::id::lfo::shape));
+        rl.rate     = apvts.getRawParameterValue (pid (params::id::lfo::rate));
+        rl.sync     = apvts.getRawParameterValue (pid (params::id::lfo::sync));
+        rl.division = apvts.getRawParameterValue (pid (params::id::lfo::division));
+        rl.phase    = apvts.getRawParameterValue (pid (params::id::lfo::phase));
+        rl.retrig   = apvts.getRawParameterValue (pid (params::id::lfo::retrig));
+        rl.unipolar = apvts.getRawParameterValue (pid (params::id::lfo::unipolar));
+    }
+
+    for (int m = 0; m < params::numMacros; ++m)
+        raw.macros[(size_t) m] = apvts.getRawParameterValue (params::id::macro (m));
+
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        auto& rr = raw.routes[(size_t) r];
+        rr.source = apvts.getRawParameterValue (params::id::routeParam (r, params::id::route::source));
+        rr.dest   = apvts.getRawParameterValue (params::id::routeParam (r, params::id::route::dest));
+        rr.depth  = apvts.getRawParameterValue (params::id::routeParam (r, params::id::route::depth));
+    }
+
+    raw.dests.reserve ((size_t) params::numModDests());
+    for (const auto& dest : params::modDestinations())
+        raw.dests.push_back (apvts.getRawParameterValue (dest.def->id));
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
     for (int s = 0; s < params::numOscSlots; ++s)
@@ -56,7 +69,7 @@ ArsenalProcessor::ArsenalProcessor()
 
     synth.addSound (new dsp::ArsenalSound());
     for (int i = 0; i < numVoices; ++i)
-        synth.addVoice (new dsp::ArsenalVoice (voiceParams));
+        synth.addVoice (new dsp::ArsenalVoice (shared));
 
     startTimer (1000);  // purges retired wavetables
 }
@@ -122,6 +135,7 @@ juce::String ArsenalProcessor::getWavetableError (int slot) const
 
 void ArsenalProcessor::prepareToPlay (double sampleRate, int)
 {
+    currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (
@@ -134,34 +148,90 @@ bool ArsenalProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
         || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::mono();
 }
 
-void ArsenalProcessor::updateVoiceParams()
+void ArsenalProcessor::scanMidiControllers (const juce::MidiBuffer& midi)
+{
+    for (const auto metadata : midi)
+    {
+        const auto m = metadata.getMessage();
+
+        if (m.isController() && m.getControllerNumber() == 1)
+            lastModWheel = (float) m.getControllerValue() / 127.0f;
+        else if (m.isChannelPressure())
+            lastAftertouch = (float) m.getChannelPressureValue() / 127.0f;
+    }
+
+    shared.modWheel = lastModWheel;
+    shared.aftertouch = lastAftertouch;
+}
+
+void ArsenalProcessor::updateSharedState (int blockLength)
 {
     for (int s = 0; s < params::numOscSlots; ++s)
     {
         const auto& rs = raw.slots[(size_t) s];
-        auto& slot = voiceParams.slots[(size_t) s];
+        auto& slot = shared.slots[(size_t) s];
 
-        slot.enabled      = rs.enable->load() >= 0.5f;
-        slot.table        = slotTables[(size_t) s].live.load();
-        slot.position     = rs.position->load();
-        slot.coarse       = rs.coarse->load();
-        slot.fine         = rs.fine->load();
-        slot.gain         = juce::Decibels::decibelsToGain (rs.level->load(), -60.0f);
-        slot.pan          = rs.pan->load();
-        slot.phase        = rs.phase->load();
-        slot.phaseMode    = (params::PhaseMode) (int) rs.phaseMode->load();
-        slot.unisonCount  = (int) rs.unisonCount->load();
-        slot.unisonDetune = rs.unisonDetune->load();
-        slot.unisonBlend  = rs.unisonBlend->load();
-        slot.unisonWidth  = rs.unisonWidth->load();
+        slot.enabled     = rs.enable->load() >= 0.5f;
+        slot.table       = slotTables[(size_t) s].live.load();
+        slot.phase       = rs.phase->load();
+        slot.phaseMode   = (params::PhaseMode) (int) rs.phaseMode->load();
+        slot.unisonCount = (int) rs.unisonCount->load();
     }
 
-    voiceParams.filterType      = (params::FilterType) (int) raw.filterType->load();
-    voiceParams.filterCutoff    = raw.filterCutoff->load();
-    voiceParams.filterResonance = raw.filterResonance->load();
-    voiceParams.filterDrive     = raw.filterDrive->load();
-    voiceParams.ampEnv          = { raw.ampAttack->load(), raw.ampDecay->load(),
-                                    raw.ampSustain->load(), raw.ampRelease->load() };
+    shared.filterType = (params::FilterType) (int) raw.filterType->load();
+
+    // Normalized base values for every mod destination.
+    const auto& dests = params::modDestinations();
+    for (size_t d = 0; d < dests.size(); ++d)
+        shared.baseNorm[d] = dests[d].def->range.convertTo0to1 (raw.dests[d]->load());
+
+    // Compact list of routes that actually do something.
+    shared.numActiveRoutes = 0;
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        const auto& rr = raw.routes[(size_t) r];
+        const auto source = (int) rr.source->load();
+        const auto destChoice = (int) rr.dest->load();
+        const auto depth = rr.depth->load();
+
+        if (source == 0 || destChoice == 0 || depth == 0.0f)
+            continue;
+
+        auto& route = shared.routes[(size_t) shared.numActiveRoutes++];
+        route.source = source;
+        route.destIndex = destChoice - 1;  // choice 0 is "None"
+        route.depth = depth;
+    }
+
+    // Transport.
+    shared.bpm = 120.0;
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm())
+                shared.bpm = *bpm;
+
+    // LFO params + global free-running phases (value at block start; advanced
+    // past the block for next time).
+    for (int i = 0; i < params::numLFOs; ++i)
+    {
+        const auto& rl = raw.lfos[(size_t) i];
+        auto& lp = shared.lfo[(size_t) i];
+        lp.shape       = (params::LFOShape) (int) rl.shape->load();
+        lp.rateHz      = rl.rate->load();
+        lp.sync        = rl.sync->load() >= 0.5f;
+        lp.division    = (int) rl.division->load();
+        lp.phaseOffset = rl.phase->load();
+        lp.retrig      = rl.retrig->load() >= 0.5f;
+        lp.unipolar    = rl.unipolar->load() >= 0.5f;
+
+        const auto inc = (double) dsp::LFO::effectiveRateHz (lp, shared.bpm) / currentSampleRate;
+        lfoPhaseAccum[(size_t) i] = std::fmod (lfoPhaseAccum[(size_t) i], 1.0);
+        shared.lfoGlobalPhase[(size_t) i] = lfoPhaseAccum[(size_t) i];
+        lfoPhaseAccum[(size_t) i] += inc * blockLength;
+    }
+
+    for (int m = 0; m < params::numMacros; ++m)
+        shared.macros[(size_t) m] = raw.macros[(size_t) m]->load();
 }
 
 void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -169,7 +239,8 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    updateVoiceParams();
+    scanMidiControllers (midi);
+    updateSharedState (buffer.getNumSamples());
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
 
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));

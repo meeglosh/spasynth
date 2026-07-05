@@ -441,13 +441,25 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
     if (auto* constrainer = getConstrainer())
     {
         constrainer->setFixedAspectRatio ((double) baseW / baseH);
-        constrainer->setSizeLimits (baseW * 55 / 100, baseH * 55 / 100,
+        constrainer->setSizeLimits (baseW * 40 / 100, baseH * 40 / 100,
                                     baseW * 2, baseH * 2);
     }
 
-    // Restore the remembered window scale.
-    const auto scale = juce::jlimit (0.55, 2.0,
-        (double) arsenalProcessor.getAPVTS().state.getProperty ("uiScale", 1.0));
+    // Restore the remembered window scale, clamped so the whole editor
+    // (including the resize corner) always fits the host's screen — on small
+    // displays the default must shrink, never open with edges off-screen.
+    auto maxScale = 2.0;
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto usable = display->userBounds;
+        maxScale = juce::jmin (
+            2.0,
+            (double) (usable.getWidth() - 40) / baseW,
+            (double) (usable.getHeight() - 140) / baseH);   // headroom for DAW chrome
+    }
+
+    const auto saved = (double) arsenalProcessor.getAPVTS().state.getProperty ("uiScale", 1.0);
+    const auto scale = juce::jlimit (0.4, juce::jmax (0.4, maxScale), saved);
     setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
 }
 

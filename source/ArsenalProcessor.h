@@ -6,6 +6,7 @@
 #include "dsp/ArsenalVoice.h"
 #include "dsp/FXChain.h"
 #include "library/PresetManager.h"
+#include "MidiLearn.h"
 
 namespace arsenal
 {
@@ -68,6 +69,9 @@ public:
     // Audio -> UI telemetry (lock-free; UI reads on its repaint timers).
     dsp::Telemetry& getTelemetry() { return telemetry; }
 
+    // MIDI Learn (right-click assignments).
+    MidiLearnManager& getMidiLearn() { return *midiLearn; }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -80,8 +84,9 @@ public:
     library::PresetManager& getPresetManager() { return *presetManager; }
 
     // Full plugin state as a tree (params + portable wavetable/sample paths).
-    // Shared by host chunks and the preset system.
-    juce::ValueTree buildStateTree();
+    // Shared by host chunks and the preset system; MIDI mappings ride along
+    // only in host sessions (presets must never clobber hardware setups).
+    juce::ValueTree buildStateTree (bool includeMidiMap = true);
     void restoreStateTree (const juce::ValueTree&);
 
     // Rescans the configured library and (re)generates factory presets for
@@ -137,7 +142,8 @@ private:
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread
 
-    // Constructed last (captures the pristine default state).
+    // Constructed after the APVTS (they capture parameter/default state).
+    std::unique_ptr<MidiLearnManager> midiLearn;
     std::unique_ptr<library::PresetManager> presetManager;
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).

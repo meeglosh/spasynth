@@ -49,6 +49,7 @@ juce_add_binary_data(ArsenalAssets
 
 set(ARSENAL_SOURCES
     source/ArsenalProcessor.cpp
+    source/MidiLearn.cpp
     source/params/ParameterRegistry.cpp
     source/params/Randomizer.cpp
     source/library/Library.cpp

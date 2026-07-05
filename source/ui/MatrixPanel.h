@@ -27,6 +27,9 @@ public:
             row->depth.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             row->depth.setPopupDisplayEnabled (true, false, this);
             row->depth.setComponentID ("mod");
+            row->source.getProperties().set ("paramID", sourceID);
+            row->dest.getProperties().set ("paramID", destID);
+            row->depth.getProperties().set ("paramID", depthID);
 
             row->sourceAttachment = std::make_unique<
                 juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, sourceID, row->source);

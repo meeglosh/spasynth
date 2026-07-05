@@ -1057,6 +1057,64 @@ namespace
         arsenal::ui::setDarkTheme (previousPreference);  // don't pollute user settings
     }
 
+    static void midiLearnTest()
+    {
+        std::cout << "midiLearnTest\n";
+
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        auto& learn = proc.getMidiLearn();
+        auto* cutoff = proc.getAPVTS().getParameter (id::filter1Cutoff);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        // Arm learn on cutoff; the first CC heard (74) captures the binding.
+        learn.armLearn (id::filter1Cutoff);
+        expect (learn.isArmed(), "learn arms for a parameter");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 64), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+
+        expect (! learn.isArmed(), "first CC captures the binding");
+        expect (learn.getAssignedCC (id::filter1Cutoff) == 74,
+                "CC 74 assigned to cutoff");
+
+        // Mapped CC moves the parameter.
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 0), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+        expect (cutoff->getValue() < 0.01f, "CC value 0 slams cutoff to min");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 127), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+        expect (cutoff->getValue() > 0.99f, "CC value 127 opens cutoff fully");
+
+        // Mapping survives a host save/restore round-trip...
+        const auto sessionState = proc.buildStateTree (true);
+        learn.clearAll();
+        expect (learn.getAssignedCC (id::filter1Cutoff) == -1, "clearAll clears");
+        proc.restoreStateTree (sessionState);
+        expect (learn.getAssignedCC (id::filter1Cutoff) == 74,
+                "MIDI map restores with the session");
+
+        // ...but presets don't carry (or clobber) it.
+        const auto presetState = proc.buildStateTree (false);
+        expect (! presetState.getChildWithName (
+                    arsenal::MidiLearnManager::mapTreeType).isValid(),
+                "preset state excludes the MIDI map");
+        proc.restoreStateTree (presetState);
+        expect (learn.getAssignedCC (id::filter1Cutoff) == 74,
+                "loading a preset keeps hardware mappings");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1082,6 +1140,7 @@ int main (int argc, char* argv[])
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();
+    midiLearnTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

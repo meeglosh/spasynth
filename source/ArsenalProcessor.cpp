@@ -130,6 +130,7 @@ ArsenalProcessor::ArsenalProcessor()
     }
 
     shared.telemetry = &telemetry;
+    midiLearn = std::make_unique<MidiLearnManager> (apvts);
 
     synth.addSound (new dsp::ArsenalSound());
     for (int i = 0; i < numVoices; ++i)
@@ -137,7 +138,7 @@ ArsenalProcessor::ArsenalProcessor()
 
     presetManager = std::make_unique<library::PresetManager> (
         apvts,
-        [this] { return buildStateTree(); },
+        [this] { return buildStateTree (false); },   // presets carry no MIDI map
         [this] (const juce::ValueTree& state) { restoreStateTree (state); },
         library::defaultPresetsRoot());
 
@@ -506,6 +507,7 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     buffer.clear();
 
     scanMidiControllers (midi);
+    midiLearn->processMidi (midi);
     updateSharedState (buffer.getNumSamples());
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
 
@@ -529,10 +531,13 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                            std::memory_order_relaxed);
 }
 
-juce::ValueTree ArsenalProcessor::buildStateTree()
+juce::ValueTree ArsenalProcessor::buildStateTree (bool includeMidiMap)
 {
     const auto libraryRoot = library::findLibraryRoot();
     auto state = apvts.copyState();
+
+    if (includeMidiMap)
+        state.appendChild (midiLearn->toValueTree(), nullptr);
 
     auto wavetables = state.getOrCreateChildWithName (wavetableStateType, nullptr);
     auto samples = state.getOrCreateChildWithName (sampleStateType, nullptr);
@@ -569,6 +574,15 @@ void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
     auto samples = state.getChildWithName (sampleStateType);
     if (samples.isValid())
         state.removeChild (samples, nullptr);
+
+    // MIDI map: restore when present (host sessions); presets omit it and
+    // leave the current hardware mapping untouched.
+    auto midiMap = state.getChildWithName (MidiLearnManager::mapTreeType);
+    if (midiMap.isValid())
+    {
+        state.removeChild (midiMap, nullptr);
+        midiLearn->restoreFromValueTree (midiMap);
+    }
 
     apvts.replaceState (state);
 

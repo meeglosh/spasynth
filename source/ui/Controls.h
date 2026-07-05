@@ -17,6 +17,7 @@ public:
         slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         slider.setPopupDisplayEnabled (true, false, this);   // value on drag; hover gets a glow
+        slider.getProperties().set ("paramID", paramID);      // for MIDI Learn
         if (modColoured)
             slider.setComponentID ("mod");
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
@@ -50,6 +51,7 @@ class Choice : public juce::Component
 public:
     Choice (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramID)
     {
+        combo.getProperties().set ("paramID", paramID);
         if (const auto* def = params::find (paramID))
             combo.addItemList (def->choices, 1);
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
@@ -73,6 +75,7 @@ public:
             const juce::String& text)
         : button (text)
     {
+        button.getProperties().set ("paramID", paramID);
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
             apvts, paramID, button);
         addAndMakeVisible (button);

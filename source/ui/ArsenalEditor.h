@@ -28,6 +28,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;   // right-click = MIDI Learn
     void refreshAll();
 
 private:

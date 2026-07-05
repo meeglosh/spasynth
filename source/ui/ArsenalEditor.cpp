@@ -73,6 +73,7 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     masterSlider.setPopupDisplayEnabled (true, false, this);
     masterSlider.setTooltip ("Master volume");
+    masterSlider.getProperties().set ("paramID", juce::String (params::id::masterGain));
     masterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         processor.getAPVTS(), params::id::masterGain, masterSlider);
     addAndMakeVisible (masterSlider);
@@ -131,7 +132,59 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
     processor.getPresetManager().addChangeListener (this);
     refreshAll();
 
+    // Right-clicks anywhere inside get routed here for MIDI Learn.
+    addMouseListener (this, true);
+
     setSize (metrics::baseWidth, metrics::baseHeight);
+}
+
+void ContentComponent::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+        return;
+
+    // Find the parameter under the click (the control or an ancestor).
+    juce::String paramID;
+    for (auto* c = e.eventComponent; c != nullptr && c != this; c = c->getParentComponent())
+    {
+        const auto value = c->getProperties()["paramID"];
+        if (! value.isVoid())
+        {
+            paramID = value.toString();
+            break;
+        }
+    }
+
+    if (paramID.isEmpty())
+        return;
+
+    auto& learn = processor.getMidiLearn();
+    auto* param = processor.getAPVTS().getParameter (paramID);
+    const auto assignedCC = learn.getAssignedCC (paramID);
+    const auto armedHere = learn.isArmed() && learn.getArmedParamID() == paramID;
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader (param != nullptr ? param->getName (48) : paramID);
+
+    if (armedHere)
+        menu.addItem (3, "Cancel MIDI Learn (move a hardware control...)");
+    else
+        menu.addItem (1, "MIDI Learn");
+
+    if (assignedCC >= 0)
+        menu.addItem (2, "Remove assignment (CC " + juce::String (assignedCC) + ")");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                        [this, paramID] (int result)
+    {
+        auto& midiLearn = processor.getMidiLearn();
+        if (result == 1)
+            midiLearn.armLearn (paramID);
+        else if (result == 2)
+            midiLearn.clearAssignment (paramID);
+        else if (result == 3)
+            midiLearn.cancelLearn();
+    });
 }
 
 ContentComponent::~ContentComponent()

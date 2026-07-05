@@ -235,14 +235,27 @@ void ContentComponent::paint (juce::Graphics& g)
     auto band = getLocalBounds().removeFromTop (metrics::brandBandHeight);
     g.setColour (t.header.darker (0.25f));
     g.fillRect (band);
+    // Tracked text carries trailing kern space, so plain centred drawText
+    // shifts the visible glyphs off-centre (worse the bigger the tracking).
+    // Centre on the actual glyph bounding box instead.
+    const auto drawTrackedCentred = [&g] (const juce::Font& font, const juce::String& text,
+                                          juce::Rectangle<int> area, juce::Colour colour)
+    {
+        juce::GlyphArrangement glyphs;
+        glyphs.addLineOfText (font, text, 0.0f, 0.0f);
+        const auto box = glyphs.getBoundingBox (0, -1, true);
+        glyphs.moveRangeOfGlyphs (0, -1,
+                                  (float) area.getCentreX() - box.getCentreX(),
+                                  (float) area.getCentreY() - box.getCentreY());
+        g.setColour (colour);
+        glyphs.draw (g);
+    };
+
     // The brand band is always dark, so its ink is always light.
-    g.setColour (juce::Colour (0xffe7ecef));
-    g.setFont (metrics::wordmarkFont());
-    g.drawText ("SPASYNTH", band.withTrimmedBottom (9), juce::Justification::centred);
-    g.setColour (juce::Colour (0xff7f8d97));
-    g.setFont (metrics::brandSubFont());
-    g.drawText ("SILVERPLATTER AUDIO", band.withTrimmedTop (21),
-                juce::Justification::centred);
+    drawTrackedCentred (metrics::wordmarkFont(), "SPASYNTH",
+                        band.withTrimmedBottom (9), juce::Colour (0xffe7ecef));
+    drawTrackedCentred (metrics::brandSubFont(), "SILVERPLATTER AUDIO",
+                        band.withTrimmedTop (21), juce::Colour (0xff7f8d97));
 
     // Header is always dark (Massive X does this in its light theme too).
     auto header = getLocalBounds().withTrimmedTop (metrics::brandBandHeight)

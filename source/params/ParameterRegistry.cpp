@@ -343,10 +343,13 @@ static std::vector<ParamDef> buildCoreDefs()
     for (int i = 0; i < numLFOs; ++i)
         addLFOParams (p, i);
 
+    // Macros have no dedicated panel (the arp took it); they remain matrix
+    // sources + host-automation targets but must NOT randomize — an invisible
+    // parameter shifting under RANDOMIZE ALL is undiagnosable from the UI.
     for (int m = 0; m < numMacros; ++m)
         p.push_back ({ id::macro (m), "Macro " + juce::String (m + 1), Section::macros,
                        ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                       false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
+                       false, { .enabled = false } });
 
     // --- Arpeggiator ----------------------------------------------------
     namespace arpid = id::arp;

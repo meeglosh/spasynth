@@ -90,6 +90,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
             processor.setLockGroupLocked (g, lockButtons[(size_t) g].getToggleState());
         };
         addAndMakeVisible (button);
+
+        // Macros have no panel to lock; the enum slot stays (persisted lock
+        // masks keep their bit layout) but the button is hidden.
+        if ((params::LockGroup) g == params::LockGroup::macros)
+            button.setVisible (false);
     }
 
     for (int s = 0; s < params::numOscSlots; ++s)
@@ -304,9 +309,13 @@ void ContentComponent::resized()
     // --- Lock strip -----------------------------------------------------------
     auto lockRow = bounds.removeFromTop (metrics::lockRowHeight).reduced (metrics::unit, 2);
     lockRow.removeFromLeft (46);  // "LOCKS" caption painted behind
-    const auto lockWidth = lockRow.getWidth() / params::numLockGroups;
+    int visibleLocks = 0;
     for (auto& button : lockButtons)
-        button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 1));
+        visibleLocks += button.isVisible() ? 1 : 0;
+    const auto lockWidth = lockRow.getWidth() / juce::jmax (1, visibleLocks);
+    for (auto& button : lockButtons)
+        if (button.isVisible())
+            button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 1));
 
     bounds.removeFromBottom (metrics::footerHeight);
 

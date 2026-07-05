@@ -3,7 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // MIDI-transforming arpeggiator: sits between the host's MIDI and the synth.
@@ -81,4 +81,4 @@ private:
     double currentSampleRate = 48000.0;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

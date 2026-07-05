@@ -2,7 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace arsenal::library
+namespace spa::library
 {
 
 namespace
@@ -24,8 +24,8 @@ namespace
         juce::PropertiesFile file { []
         {
             juce::PropertiesFile::Options options;
-            options.applicationName = "Arsenal";
-            options.folderName = "Silverplatter Audio/Arsenal";
+            options.applicationName = "SPASynth";
+            options.folderName = "Silverplatter Audio/SPASynth";
             options.filenameSuffix = "settings";
             options.osxLibrarySubFolder = "Application Support";
             return options;
@@ -94,7 +94,7 @@ bool looksLikeLibrary (const juce::File& root)
 std::vector<juce::File> defaultLibraryLocations()
 {
     const juce::String company = "Silverplatter Audio";
-    const juce::String libraryName = "Arsenal Library";
+    const juce::String libraryName = "SPASynth Library";
 
     std::vector<juce::File> candidates;
 
@@ -168,7 +168,7 @@ void setDarkThemeEnabled (bool dark)
 juce::File defaultPresetsRoot()
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-        .getChildFile ("Silverplatter Audio").getChildFile ("Arsenal")
+        .getChildFile ("Silverplatter Audio").getChildFile ("SPASynth")
         .getChildFile ("Presets");
 }
 
@@ -189,4 +189,4 @@ juce::File fromPortable (const juce::String& s, const juce::File& libraryRoot)
     return juce::File (s);
 }
 
-} // namespace arsenal::library
+} // namespace spa::library

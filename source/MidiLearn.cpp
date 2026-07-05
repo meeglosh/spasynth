@@ -1,6 +1,6 @@
 #include "MidiLearn.h"
 
-namespace arsenal
+namespace spa
 {
 
 MidiLearnManager::MidiLearnManager (juce::AudioProcessorValueTreeState& state)
@@ -141,4 +141,4 @@ void MidiLearnManager::processMidi (const juce::MidiBuffer& midi)
     }
 }
 
-} // namespace arsenal
+} // namespace spa

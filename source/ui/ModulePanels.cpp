@@ -1,15 +1,15 @@
 #include "ModulePanels.h"
-#include "../ArsenalProcessor.h"
+#include "../SPASynthProcessor.h"
 #include "../library/Library.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 namespace id = params::id;
 
 // ============================== OscStrip ===================================
 
-OscStrip::OscStrip (ArsenalProcessor& p, int slotIndex)
+OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     : processor (p), slot (slotIndex),
       display (p, slotIndex),
       enable (p.getAPVTS(), id::oscSlot (slotIndex, id::osc::enable), "ON"),
@@ -252,7 +252,7 @@ void OscStrip::resized()
 
 // ============================= FilterPanel =================================
 
-FilterPanel::FilterPanel (ArsenalProcessor& p)
+FilterPanel::FilterPanel (SPASynthProcessor& p)
     : display (p),
       type (p.getAPVTS(), id::filter1Type),
       cutoff (p.getAPVTS(), id::filter1Cutoff, "CUTOFF"),
@@ -288,7 +288,7 @@ void FilterPanel::resized()
 
 // =============================== EnvPanel ==================================
 
-EnvPanel::EnvPanel (ArsenalProcessor& p, const juce::String& idPrefix, int envIndex)
+EnvPanel::EnvPanel (SPASynthProcessor& p, const juce::String& idPrefix, int envIndex)
     : display (p, idPrefix, envIndex),
       attack (p.getAPVTS(), idPrefix + ".attack", "ATTACK", true),
       decay (p.getAPVTS(), idPrefix + ".decay", "DECAY", true),
@@ -317,7 +317,7 @@ void EnvPanel::resized()
 
 // =============================== LFOPanel ==================================
 
-LFOPanel::LFOPanel (ArsenalProcessor& p, int lfoIndex)
+LFOPanel::LFOPanel (SPASynthProcessor& p, int lfoIndex)
     : display (p, lfoIndex),
       shape (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::shape)),
       division (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::division)),
@@ -358,7 +358,7 @@ void LFOPanel::resized()
 
 // ============================== ChaosPanel =================================
 
-ChaosPanel::ChaosPanel (ArsenalProcessor& p)
+ChaosPanel::ChaosPanel (SPASynthProcessor& p)
     : display (p),
       enable (p.getAPVTS(), id::chaos::enable, "ON"),
       depth (p.getAPVTS(), id::chaos::depth, "DEPTH", true),
@@ -512,4 +512,4 @@ void FXPanel::resized()
     display.setBounds (area);
 }
 
-} // namespace arsenal::ui
+} // namespace spa::ui

@@ -2,7 +2,7 @@
 
 #include "ParameterRegistry.h"
 
-namespace arsenal::params
+namespace spa::params
 {
 
 // Lock groups for RANDOMIZE ALL — coarser than sections so the UI stays
@@ -36,4 +36,4 @@ float sampleRandomValue (const RandomSpec&, float wildness, juce::Random&);
 void randomizeAll (juce::AudioProcessorValueTreeState&, float wildness,
                    juce::uint32 lockedMask, juce::Random&);
 
-} // namespace arsenal::params
+} // namespace spa::params

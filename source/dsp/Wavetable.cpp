@@ -3,7 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 int Wavetable::mipLevelForFrequency (float frequencyHz, double sampleRate) const noexcept
@@ -151,4 +151,4 @@ Wavetable Wavetable::createBasicShapes()
     return fromHarmonics ("Basic Shapes", { sine, triangle, saw, square });
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

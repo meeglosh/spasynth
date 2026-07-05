@@ -1,16 +1,16 @@
-#include "ArsenalEditor.h"
-#include "../ArsenalProcessor.h"
+#include "SPASynthEditor.h"
+#include "../SPASynthProcessor.h"
 #include "../library/Library.h"
 
 #include "BinaryData.h"
 
-namespace arsenal
+namespace spa
 {
 
 namespace ui
 {
 
-ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> themeToggled)
+ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeToggled)
     : processor (p), onThemeToggled (std::move (themeToggled)),
       filterPanel (p),
       chaosPanel (p),
@@ -18,12 +18,12 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
       matrixPanel (p.getAPVTS()),
       outputMeter (p.getTelemetry())
 {
-    logoDark = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_white_svg,
-                                                    ArsenalAssets::SPAudio_logo_white_svgSize);
-    logoLight = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_white_svg,
-                                                     ArsenalAssets::SPAudio_logo_white_svgSize);
+    logoDark = juce::Drawable::createFromImageData (SPAAssets::SPAudio_logo_white_svg,
+                                                    SPAAssets::SPAudio_logo_white_svgSize);
+    logoLight = juce::Drawable::createFromImageData (SPAAssets::SPAudio_logo_white_svg,
+                                                     SPAAssets::SPAudio_logo_white_svgSize);
 
-    title.setText ("ARSENAL", juce::dontSendNotification);
+    title.setText ("SPASYNTH", juce::dontSendNotification);
     title.setFont (metrics::titleFont());
     addAndMakeVisible (title);
 
@@ -233,7 +233,7 @@ void ContentComponent::paint (juce::Graphics& g)
     // The brand band is always dark, so its ink is always light.
     g.setColour (juce::Colour (0xffe7ecef));
     g.setFont (metrics::wordmarkFont());
-    g.drawText ("ARSENAL", band.withTrimmedBottom (9), juce::Justification::centred);
+    g.drawText ("SPASYNTH", band.withTrimmedBottom (9), juce::Justification::centred);
     g.setColour (juce::Colour (0xff7f8d97));
     g.setFont (metrics::brandSubFont());
     g.drawText ("SILVERPLATTER AUDIO", band.withTrimmedTop (21),
@@ -255,12 +255,12 @@ void ContentComponent::paint (juce::Graphics& g)
     g.fillRect (footer);
     g.setColour (t.textSecondary);
     g.setFont (metrics::smallFont());
-    g.drawText (juce::String::fromUTF8 ("ARSENAL  \xc2\xb7  SILVERPLATTER AUDIO"),
+    g.drawText (juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
                 footer.reduced (10, 0), juce::Justification::centredRight);
     g.drawText ("v0.1", footer.reduced (10, 0), juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));
     g.setFont (metrics::labelFont());
-    g.drawText ("Arsenal", footer, juce::Justification::centred);
+    g.drawText ("SPASynth", footer, juce::Justification::centred);
 
     // Caption for the randomizer lock strip.
     auto lockCaption = getLocalBounds()
@@ -424,9 +424,9 @@ void ContentComponent::saveUserPreset()
 
 } // namespace ui
 
-// ============================ ArsenalEditor ================================
+// ============================ SPASynthEditor ================================
 
-ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
+SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
     : juce::AudioProcessorEditor (p), arsenalProcessor (p)
 {
     setLookAndFeel (&lookAndFeel);
@@ -463,12 +463,12 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
     setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
 }
 
-ArsenalEditor::~ArsenalEditor()
+SPASynthEditor::~SPASynthEditor()
 {
     setLookAndFeel (nullptr);
 }
 
-void ArsenalEditor::applyTheme()
+void SPASynthEditor::applyTheme()
 {
     lookAndFeel.refreshPalette();
     sendLookAndFeelChange();
@@ -476,7 +476,7 @@ void ArsenalEditor::applyTheme()
     repaint();
 }
 
-void ArsenalEditor::resized()
+void SPASynthEditor::resized()
 {
     if (content == nullptr)
         return;
@@ -488,4 +488,4 @@ void ArsenalEditor::resized()
     arsenalProcessor.getAPVTS().state.setProperty ("uiScale", (double) scale, nullptr);
 }
 
-} // namespace arsenal
+} // namespace spa

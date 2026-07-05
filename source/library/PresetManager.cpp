@@ -1,12 +1,12 @@
 #include "PresetManager.h"
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::library
+namespace spa::library
 {
 
 namespace
 {
-    constexpr const char* presetTag = "ArsenalPreset";
+    constexpr const char* presetTag = "SPASynthPreset";
 
     // Sets a raw (real-world) parameter value inside a captured state tree.
     void writeParam (juce::ValueTree& state, const juce::String& paramID, float realValue)
@@ -262,4 +262,4 @@ int PresetManager::generateFactoryPresets (const std::vector<Pack>& packs,
     return written;
 }
 
-} // namespace arsenal::library
+} // namespace spa::library

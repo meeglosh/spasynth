@@ -20,7 +20,7 @@ jobs:
         include:
           - name: macOS (universal)
             os: macos-14
-            cmake_extra: -DARSENAL_UNIVERSAL_BINARY=ON
+            cmake_extra: -DSPASYNTH_UNIVERSAL_BINARY=ON
           - name: Windows (x64)
             os: windows-2022
             cmake_extra: ""
@@ -30,7 +30,7 @@ jobs:
           submodules: recursive
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DARSENAL_COPY_PLUGIN=OFF ${{ matrix.cmake_extra }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSPASYNTH_COPY_PLUGIN=OFF ${{ matrix.cmake_extra }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -38,9 +38,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: arsenal-${{ runner.os }}
+          name: spasynth-${{ runner.os }}
           path: |
-            build/Arsenal_artefacts/**/VST3/**
-            build/Arsenal_artefacts/**/AU/**
-            build/Arsenal_artefacts/**/Standalone/**
+            build/SPASynth_artefacts/**/VST3/**
+            build/SPASynth_artefacts/**/AU/**
+            build/SPASynth_artefacts/**/Standalone/**
           if-no-files-found: error

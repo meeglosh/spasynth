@@ -4,7 +4,7 @@
 #include <complex>
 #include <vector>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // A wavetable: N morph frames, each stored at several band-limited mip levels
@@ -56,4 +56,4 @@ private:
     std::vector<std::vector<std::vector<float>>> levels;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // An SFX/sample loaded into an oscillator slot, plus the offline follower
@@ -58,4 +58,4 @@ struct LoadedSample
 // YIN pitch track). Synchronous and allocating — background thread only.
 LoadedSample loadSampleFromFile (const juce::File& file);
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

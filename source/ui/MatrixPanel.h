@@ -3,7 +3,7 @@
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // The mod matrix as a compact routing table: 16 rows of source -> dest with
@@ -95,4 +95,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)
 };
 
-} // namespace arsenal::ui
+} // namespace spa::ui

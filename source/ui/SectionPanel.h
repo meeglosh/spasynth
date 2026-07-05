@@ -3,7 +3,7 @@
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // A titled panel that builds its controls straight from the parameter
@@ -49,4 +49,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SectionPanel)
 };
 
-} // namespace arsenal::ui
+} // namespace spa::ui

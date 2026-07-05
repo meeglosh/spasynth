@@ -4,15 +4,15 @@
 
 #include "../params/ParameterRegistry.h"
 #include "../params/Randomizer.h"
-#include "ArsenalLookAndFeel.h"
+#include "SPASynthLookAndFeel.h"
 #include "ModulePanels.h"
 #include "SectionPanel.h"
 #include "MatrixPanel.h"
 
-namespace arsenal
+namespace spa
 {
 
-class ArsenalProcessor;
+class SPASynthProcessor;
 
 namespace ui
 {
@@ -23,7 +23,7 @@ class ContentComponent : public juce::Component,
                          private juce::ChangeListener
 {
 public:
-    ContentComponent (ArsenalProcessor&, std::function<void()> onThemeToggled);
+    ContentComponent (SPASynthProcessor&, std::function<void()> onThemeToggled);
     ~ContentComponent() override;
 
     void paint (juce::Graphics&) override;
@@ -37,7 +37,7 @@ private:
     void chooseLibraryFolder();
     void saveUserPreset();
 
-    ArsenalProcessor& processor;
+    SPASynthProcessor& processor;
     std::function<void()> onThemeToggled;
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
@@ -75,23 +75,23 @@ private:
 // Shell: hosts the fixed-layout content at base size and scales it
 // proportionally — industry-standard plugin resizing. Window scale is
 // remembered across sessions.
-class ArsenalEditor : public juce::AudioProcessorEditor
+class SPASynthEditor : public juce::AudioProcessorEditor
 {
 public:
-    explicit ArsenalEditor (ArsenalProcessor&);
-    ~ArsenalEditor() override;
+    explicit SPASynthEditor (SPASynthProcessor&);
+    ~SPASynthEditor() override;
 
     void resized() override;
 
 private:
     void applyTheme();
 
-    ArsenalProcessor& arsenalProcessor;
-    ui::ArsenalLookAndFeel lookAndFeel;
+    SPASynthProcessor& arsenalProcessor;
+    ui::SPASynthLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this };
     std::unique_ptr<ui::ContentComponent> content;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthEditor)
 };
 
-} // namespace arsenal
+} // namespace spa

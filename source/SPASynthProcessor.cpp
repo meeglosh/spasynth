@@ -1,9 +1,9 @@
-#include "ArsenalProcessor.h"
+#include "SPASynthProcessor.h"
 #include "dsp/WavetableLoader.h"
 #include "params/Randomizer.h"
-#include "ui/ArsenalEditor.h"
+#include "ui/SPASynthEditor.h"
 
-namespace arsenal
+namespace spa
 {
 
 namespace
@@ -20,7 +20,7 @@ namespace
     const juce::Identifier lockMaskProperty { "randomLockMask" };
 }
 
-ArsenalProcessor::ArsenalProcessor()
+SPASynthProcessor::SPASynthProcessor()
     : juce::AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", params::createLayout())
 {
@@ -148,9 +148,9 @@ ArsenalProcessor::ArsenalProcessor()
     shared.telemetry = &telemetry;
     midiLearn = std::make_unique<MidiLearnManager> (apvts);
 
-    synth.addSound (new dsp::ArsenalSound());
+    synth.addSound (new dsp::SPASynthSound());
     for (int i = 0; i < numVoices; ++i)
-        synth.addVoice (new dsp::ArsenalVoice (shared));
+        synth.addVoice (new dsp::SPASynthVoice (shared));
 
     presetManager = std::make_unique<library::PresetManager> (
         apvts,
@@ -160,7 +160,7 @@ ArsenalProcessor::ArsenalProcessor()
 
     // Auto-discover the library and make sure factory presets exist — no
     // user setup required when content sits in a standard install location.
-    juce::MessageManager::callAsync ([weak = juce::WeakReference<ArsenalProcessor> (this)]
+    juce::MessageManager::callAsync ([weak = juce::WeakReference<SPASynthProcessor> (this)]
     {
         if (weak != nullptr)
             weak->refreshLibrary();
@@ -169,12 +169,12 @@ ArsenalProcessor::ArsenalProcessor()
     startTimer (1000);  // purges retired wavetables
 }
 
-ArsenalProcessor::~ArsenalProcessor()
+SPASynthProcessor::~SPASynthProcessor()
 {
     stopTimer();
 }
 
-void ArsenalProcessor::timerCallback()
+void SPASynthProcessor::timerCallback()
 {
     // Anything retired more than one timer period ago can no longer be in
     // use by the audio thread (it re-reads `live` every block).
@@ -182,7 +182,7 @@ void ArsenalProcessor::timerCallback()
     retiredSamples.clear();
 }
 
-void ArsenalProcessor::installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
+void SPASynthProcessor::installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
                                       juce::String path, juce::String error)
 {
     auto& ss = slotSamples[(size_t) slot];
@@ -200,7 +200,7 @@ void ArsenalProcessor::installSample (int slot, std::shared_ptr<const dsp::Sampl
     sendChangeMessage();
 }
 
-void ArsenalProcessor::loadSampleFromFile (int slot, const juce::File& file)
+void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
 {
     juce::Thread::launch ([this, slot, file]
     {
@@ -214,41 +214,41 @@ void ArsenalProcessor::loadSampleFromFile (int slot, const juce::File& file)
     });
 }
 
-juce::String ArsenalProcessor::getSampleName (int slot) const
+juce::String SPASynthProcessor::getSampleName (int slot) const
 {
     const auto& current = slotSamples[(size_t) slot].current;
     return current != nullptr ? current->name : juce::String();
 }
 
-juce::String ArsenalProcessor::getSampleError (int slot) const
+juce::String SPASynthProcessor::getSampleError (int slot) const
 {
     return slotSamples[(size_t) slot].error;
 }
 
-float ArsenalProcessor::getRandomWildness() const
+float SPASynthProcessor::getRandomWildness() const
 {
     return (float) (double) apvts.state.getProperty (wildnessProperty, 0.5);
 }
 
-void ArsenalProcessor::setRandomWildness (float wildness)
+void SPASynthProcessor::setRandomWildness (float wildness)
 {
     apvts.state.setProperty (wildnessProperty, (double) wildness, nullptr);
 }
 
-bool ArsenalProcessor::isLockGroupLocked (int group) const
+bool SPASynthProcessor::isLockGroupLocked (int group) const
 {
     const auto mask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);
     return (mask & (1u << group)) != 0;
 }
 
-void ArsenalProcessor::setLockGroupLocked (int group, bool locked)
+void SPASynthProcessor::setLockGroupLocked (int group, bool locked)
 {
     auto mask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);
     mask = locked ? (mask | (1u << group)) : (mask & ~(1u << group));
     apvts.state.setProperty (lockMaskProperty, (int) mask, nullptr);
 }
 
-void ArsenalProcessor::randomizeAll()
+void SPASynthProcessor::randomizeAll()
 {
     auto& rng = juce::Random::getSystemRandom();
     const auto wildness = getRandomWildness();
@@ -313,7 +313,7 @@ void ArsenalProcessor::randomizeAll()
     sendChangeMessage();
 }
 
-void ArsenalProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
+void SPASynthProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
                                      juce::String path, juce::String error)
 {
     auto& st = slotTables[(size_t) slot];
@@ -330,7 +330,7 @@ void ArsenalProcessor::installTable (int slot, std::shared_ptr<const dsp::Waveta
     sendChangeMessage();
 }
 
-void ArsenalProcessor::loadWavetableFromFile (int slot, const juce::File& file)
+void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
 {
     juce::Thread::launch ([this, slot, file]
     {
@@ -344,23 +344,23 @@ void ArsenalProcessor::loadWavetableFromFile (int slot, const juce::File& file)
     });
 }
 
-void ArsenalProcessor::setFactoryWavetable (int slot)
+void SPASynthProcessor::setFactoryWavetable (int slot)
 {
     installTable (slot, factoryTable, {}, {});
 }
 
-juce::String ArsenalProcessor::getWavetableName (int slot) const
+juce::String SPASynthProcessor::getWavetableName (int slot) const
 {
     const auto& current = slotTables[(size_t) slot].current;
     return current != nullptr ? current->getName() : juce::String();
 }
 
-juce::String ArsenalProcessor::getWavetableError (int slot) const
+juce::String SPASynthProcessor::getWavetableError (int slot) const
 {
     return slotTables[(size_t) slot].error;
 }
 
-void ArsenalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void SPASynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
@@ -371,7 +371,7 @@ void ArsenalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
 }
 
-void ArsenalProcessor::updateFXParams()
+void SPASynthProcessor::updateFXParams()
 {
     const auto& rf = raw.fx;
     auto& p = fxParams;
@@ -406,13 +406,13 @@ void ArsenalProcessor::updateFXParams()
     p.bpm            = shared.bpm;
 }
 
-bool ArsenalProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool SPASynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
         || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::mono();
 }
 
-void ArsenalProcessor::scanMidiControllers (const juce::MidiBuffer& midi)
+void SPASynthProcessor::scanMidiControllers (const juce::MidiBuffer& midi)
 {
     for (const auto metadata : midi)
     {
@@ -428,7 +428,7 @@ void ArsenalProcessor::scanMidiControllers (const juce::MidiBuffer& midi)
     shared.aftertouch = lastAftertouch;
 }
 
-void ArsenalProcessor::updateSharedState (int blockLength)
+void SPASynthProcessor::updateSharedState (int blockLength)
 {
     for (int s = 0; s < params::numOscSlots; ++s)
     {
@@ -525,7 +525,7 @@ void ArsenalProcessor::updateSharedState (int blockLength)
     ch.distortion       = raw.chaos.distortion->load();
 }
 
-void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
@@ -586,7 +586,7 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                            std::memory_order_relaxed);
 }
 
-juce::ValueTree ArsenalProcessor::buildStateTree (bool includeMidiMap)
+juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)
 {
     const auto libraryRoot = library::findLibraryRoot();
     auto state = apvts.copyState();
@@ -613,7 +613,7 @@ juce::ValueTree ArsenalProcessor::buildStateTree (bool includeMidiMap)
     return state;
 }
 
-void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
+void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
 {
     if (! incoming.hasType (apvts.state.getType()))
         return;
@@ -663,7 +663,7 @@ void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
     }
 }
 
-void ArsenalProcessor::refreshLibrary()
+void SPASynthProcessor::refreshLibrary()
 {
     const auto root = library::findLibraryRoot();
     if (! root.isDirectory())
@@ -674,27 +674,27 @@ void ArsenalProcessor::refreshLibrary()
     presetManager->rescan();
 }
 
-void ArsenalProcessor::getStateInformation (juce::MemoryBlock& destData)
+void SPASynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = buildStateTree().createXml())
         copyXmlToBinary (*xml, destData);
 }
 
-void ArsenalProcessor::setStateInformation (const void* data, int sizeInBytes)
+void SPASynthProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         restoreStateTree (juce::ValueTree::fromXml (*xml));
 }
 
-juce::AudioProcessorEditor* ArsenalProcessor::createEditor()
+juce::AudioProcessorEditor* SPASynthProcessor::createEditor()
 {
-    return new ArsenalEditor (*this);
+    return new SPASynthEditor (*this);
 }
 
-} // namespace arsenal
+} // namespace spa
 
 // This creates new instances of the plugin.
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new arsenal::ArsenalProcessor();
+    return new spa::SPASynthProcessor();
 }

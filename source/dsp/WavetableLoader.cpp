@@ -1,6 +1,6 @@
 #include "WavetableLoader.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 LoadedWavetable loadWavetableFromFile (const juce::File& file)
@@ -42,4 +42,4 @@ LoadedWavetable loadWavetableFromFile (const juce::File& file)
     return { std::move (table), {} };
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

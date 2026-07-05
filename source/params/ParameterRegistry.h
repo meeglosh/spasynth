@@ -3,7 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
 
-namespace arsenal::params
+namespace spa::params
 {
 
 // Voice architecture is sized for 4 oscillator slots; v1 exposes 3.
@@ -340,4 +340,4 @@ const ParamDef* find (const juce::String& paramID);
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
-} // namespace arsenal::params
+} // namespace spa::params

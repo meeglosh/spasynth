@@ -1,14 +1,14 @@
 // Headless test suite: exercises the real processor and the wavetable
 // pipeline without a host.
 
-#include "ArsenalProcessor.h"
+#include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
 #include "dsp/WavetableLoader.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
 #include "params/ParameterRegistry.h"
 #include "params/Randomizer.h"
-#include "ui/ArsenalEditor.h"
+#include "ui/SPASynthEditor.h"
 
 #include <iostream>
 
@@ -23,7 +23,7 @@ namespace
             ++failures;
     }
 
-    float renderBlocks (arsenal::ArsenalProcessor& proc,
+    float renderBlocks (spa::SPASynthProcessor& proc,
                         juce::AudioBuffer<float>& buffer,
                         juce::MidiBuffer& midi,
                         int numBlocks)
@@ -38,7 +38,7 @@ namespace
         return peak;
     }
 
-    void setParam (arsenal::ArsenalProcessor& proc, const juce::String& id, float realValue)
+    void setParam (spa::SPASynthProcessor& proc, const juce::String& id, float realValue)
     {
         auto* param = proc.getAPVTS().getParameter (id);
         jassert (param != nullptr);
@@ -52,7 +52,7 @@ namespace
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         juce::AudioBuffer<float> buffer (2, blockSize);
@@ -79,10 +79,10 @@ namespace
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
-        namespace id = arsenal::params::id;
+        namespace id = spa::params::id;
         setParam (proc, id::oscSlot (1, id::osc::enable), 1.0f);
         setParam (proc, id::oscSlot (1, id::osc::coarse), 12.0f);
         setParam (proc, id::oscSlot (0, id::osc::unisonCount), 5.0f);
@@ -111,7 +111,7 @@ namespace
         std::cout << "wavetableLoaderTest\n";
 
         // Build a 4-frame Serum-convention WAV (frames of 2048 samples).
-        constexpr int frameSize = arsenal::dsp::Wavetable::tableSize;
+        constexpr int frameSize = spa::dsp::Wavetable::tableSize;
         constexpr int numFrames = 4;
 
         juce::AudioBuffer<float> buffer (1, frameSize * numFrames);
@@ -124,7 +124,7 @@ namespace
             }
 
         const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                              .getNonexistentChildFile ("arsenal-wt-test", ".wav");
+                              .getNonexistentChildFile ("spasynth-wt-test", ".wav");
 
         {
             juce::WavAudioFormat wav;
@@ -140,7 +140,7 @@ namespace
             writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
         }
 
-        auto result = arsenal::dsp::loadWavetableFromFile (file);
+        auto result = spa::dsp::loadWavetableFromFile (file);
         expect (result.table != nullptr, "wavetable loads: " + result.error);
 
         if (result.table != nullptr)
@@ -149,7 +149,7 @@ namespace
 
             // Frame 0 (pure fundamental) must survive even the last mip level.
             const auto* frame0 = result.table->getFrame (
-                arsenal::dsp::Wavetable::numMipLevels - 1, 0);
+                spa::dsp::Wavetable::numMipLevels - 1, 0);
             float peak = 0.0f;
             for (int i = 0; i < frameSize; ++i)
                 peak = juce::jmax (peak, std::abs (frame0[i]));
@@ -160,12 +160,12 @@ namespace
     }
 }
 
-    static void setRouteParams (arsenal::ArsenalProcessor& proc, int route,
-                         arsenal::params::ModSource source,
+    static void setRouteParams (spa::SPASynthProcessor& proc, int route,
+                         spa::params::ModSource source,
                          const juce::String& destParamID, float depth)
     {
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         // Destination choice index = dense mod-dest index + 1 ("None" is 0).
         const auto destChoice = (float) (params::modDestIndex (destParamID) + 1);
@@ -179,8 +179,8 @@ namespace
     {
         std::cout << "modMatrixMacroTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
@@ -191,7 +191,7 @@ namespace
         // Baseline: no modulation.
         float basePeak = 0.0f;
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
             basePeak = renderBlocks (proc, buffer, midi, 32);
@@ -199,7 +199,7 @@ namespace
 
         // Macro 1 at full, routed to Osc A level with depth -1 -> much quieter.
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setRouteParams (proc, 0, params::ModSource::macro1,
                             id::oscSlot (0, id::osc::level), -1.0f);
@@ -219,13 +219,13 @@ namespace
     {
         std::cout << "lfoModulationTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         // LFO 1: 4 Hz square, routed hard to Osc A level -> output pulses.
@@ -263,13 +263,13 @@ namespace
     {
         std::cout << "velocityRouteTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         // Velocity opens the filter: base cutoff low, velocity routed up.
@@ -305,7 +305,7 @@ namespace
     {
         std::cout << "chaosMixBypassTest\n";
 
-        namespace id = arsenal::params::id;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
@@ -317,7 +317,7 @@ namespace
         // render (phase mode Reset is deterministic).
         auto render = [&] (float mix)
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::chaos::depth, 1.0f);
             setParam (proc, id::chaos::rate, 10.0f);
@@ -338,7 +338,7 @@ namespace
             return capture;
         };
 
-        arsenal::ArsenalProcessor clean;
+        spa::SPASynthProcessor clean;
         clean.prepareToPlay (sampleRate, blockSize);
         setParam (clean, id::chaos::enable, 0.0f);
         juce::AudioBuffer<float> cleanBuf (2, blockSize);
@@ -371,13 +371,13 @@ namespace
     {
         std::cout << "chaosMatrixSourceTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         // Chaos as a matrix source hammering oscillator level. Fast rate and
@@ -422,7 +422,7 @@ namespace
         }
 
         const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                              .getNonexistentChildFile ("arsenal-sfx-test", ".wav");
+                              .getNonexistentChildFile ("spasynth-sfx-test", ".wav");
         juce::WavAudioFormat wav;
         std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
         auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
@@ -435,7 +435,7 @@ namespace
     }
 
     // Pumps the message loop until the sample lands in the slot.
-    static bool waitForSample (arsenal::ArsenalProcessor& proc, int slot, int timeoutMs)
+    static bool waitForSample (spa::SPASynthProcessor& proc, int slot, int timeoutMs)
     {
         const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
         while (juce::Time::getMillisecondCounter() < deadline)
@@ -451,15 +451,15 @@ namespace
     {
         std::cout << "samplePlaybackTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
         const auto file = writeRampSine (2.0, sampleRate);
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         proc.loadSampleFromFile (0, file);
         expect (waitForSample (proc, 0, 15000), "sample loads with analysis");
@@ -491,15 +491,15 @@ namespace
     {
         std::cout << "granularTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
         const auto file = writeRampSine (2.0, sampleRate);
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         proc.loadSampleFromFile (0, file);
         expect (waitForSample (proc, 0, 15000), "sample loads for granular");
@@ -522,15 +522,15 @@ namespace
     {
         std::cout << "sfxFollowerTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
         const auto file = writeRampSine (2.0, sampleRate);
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         proc.loadSampleFromFile (0, file);
         expect (waitForSample (proc, 0, 15000), "sample loads for follower");
@@ -578,7 +578,7 @@ namespace
     {
         std::cout << "fxDelayReverbTest\n";
 
-        namespace id = arsenal::params::id;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
@@ -587,7 +587,7 @@ namespace
         // note-off, with and without delay+reverb.
         auto tailEnergy = [&] (bool fxOn)
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::ampRelease, 0.02f);
             setParam (proc, id::chaos::enable, 0.0f);
@@ -632,14 +632,14 @@ namespace
     {
         std::cout << "fxEQDistortionTest\n";
 
-        namespace id = arsenal::params::id;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
         auto brightnessWith = [&] (auto configure)
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::chaos::enable, 0.0f);
             setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);  // saw-ish
@@ -672,7 +672,7 @@ namespace
         // Distortion flattens peaks: crest factor (peak/RMS) must drop.
         auto crestWith = [&] (auto configure)
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::chaos::enable, 0.0f);
             setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);
@@ -705,13 +705,13 @@ namespace
     {
         std::cout << "randomizerTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         auto& apvts = proc.getAPVTS();
 
@@ -785,12 +785,12 @@ namespace
     {
         std::cout << "randomizerProducesSoundTest\n";
 
-        namespace params = arsenal::params;
+        namespace params = spa::params;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         // The matrix can legitimately duck levels (that's its job); lock it so
@@ -823,7 +823,7 @@ namespace
     static juce::File makeFakeLibrary()
     {
         const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                              .getNonexistentChildFile ("arsenal-lib-test", "");
+                              .getNonexistentChildFile ("spasynth-lib-test", "");
         for (auto* pack : { "Alpha Pack", "Beta Pack" })
             for (auto* wav : { "one.wav", "two.wav", "three.wav" })
             {
@@ -848,7 +848,7 @@ namespace
     {
         std::cout << "libraryScanTest\n";
 
-        namespace lib = arsenal::library;
+        namespace lib = spa::library;
 
         const auto root = makeFakeLibrary();
         const auto packs = lib::scanLibrary (root);
@@ -871,13 +871,13 @@ namespace
     {
         std::cout << "libraryDiscoveryTest\n";
 
-        namespace lib = arsenal::library;
+        namespace lib = spa::library;
 
         const auto realLib = makeFakeLibrary();
         const auto emptyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                  .getNonexistentChildFile ("arsenal-empty", "");
+                                  .getNonexistentChildFile ("spasynth-empty", "");
         emptyDir.createDirectory();
-        const auto missing = juce::File ("/nonexistent/arsenal-lib");
+        const auto missing = juce::File ("/nonexistent/spasynth-lib");
 
         expect (lib::looksLikeLibrary (realLib), "pack folders identify a library");
         expect (! lib::looksLikeLibrary (emptyDir), "empty folder is not a library");
@@ -897,15 +897,15 @@ namespace
     {
         std::cout << "presetRoundTripTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
-        namespace lib = arsenal::library;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        namespace lib = spa::library;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (48000.0, 512);
 
         const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                     .getNonexistentChildFile ("arsenal-presets-test", "");
+                                     .getNonexistentChildFile ("spasynth-presets-test", "");
         lib::PresetManager pm (proc.getAPVTS(),
                                [&] { return proc.buildStateTree(); },
                                [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); },
@@ -939,19 +939,19 @@ namespace
     {
         std::cout << "factoryPresetGenerationTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
-        namespace lib = arsenal::library;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        namespace lib = spa::library;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
 
         const auto libRoot = makeFakeLibrary();
         const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                     .getNonexistentChildFile ("arsenal-factory-test", "");
+                                     .getNonexistentChildFile ("spasynth-factory-test", "");
 
         lib::PresetManager pm (proc.getAPVTS(),
                                [&] { return proc.buildStateTree(); },
@@ -1007,15 +1007,15 @@ namespace
         presetsRoot.deleteRecursively();
     }
 
-    // Renders the editor offscreen for visual review: ArsenalTests --snapshot <dir>
+    // Renders the editor offscreen for visual review: SPASynthTests --snapshot <dir>
     static void renderEditorSnapshots (const juce::File& outDir)
     {
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (48000.0, 512);
 
         // Reproduce the long-content-name case in osc A's header.
         {
-            namespace id = arsenal::params::id;
+            namespace id = spa::params::id;
             const auto longName = juce::File::getSpecialLocation (juce::File::tempDirectory)
                 .getChildFile ("1965 Brother Typewriter Platen Knob Turn Long Name 01_SP.wav");
             const auto src = writeRampSine (0.5, 48000.0);
@@ -1024,16 +1024,16 @@ namespace
             proc.loadSampleFromFile (0, longName);
             waitForSample (proc, 0, 15000);
             setParam (proc, id::oscSlot (0, id::osc::mode),
-                      (float) (int) arsenal::params::OscMode::sample);
+                      (float) (int) spa::params::OscMode::sample);
         }
 
-        const auto previousPreference = arsenal::library::getDarkThemeEnabled();
+        const auto previousPreference = spa::library::getDarkThemeEnabled();
 
         for (const bool dark : { true, false })
         {
-            arsenal::ui::setDarkTheme (dark);
+            spa::ui::setDarkTheme (dark);
             std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
-            editor->setSize (arsenal::ui::metrics::baseWidth, arsenal::ui::metrics::baseHeight);
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
 
             // Front the delay FX tab in dark mode so wrap-heavy layouts get
             // visual review too.
@@ -1052,7 +1052,7 @@ namespace
             }
 
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
-            const auto file = outDir.getChildFile (dark ? "arsenal-dark.png" : "arsenal-light.png");
+            const auto file = outDir.getChildFile (dark ? "spasynth-dark.png" : "spasynth-light.png");
             file.deleteFile();
             juce::PNGImageFormat png;
             juce::FileOutputStream stream (file);
@@ -1061,19 +1061,19 @@ namespace
             std::cout << "snapshot: " << file.getFullPathName() << "\n";
         }
 
-        arsenal::ui::setDarkTheme (previousPreference);  // don't pollute user settings
+        spa::ui::setDarkTheme (previousPreference);  // don't pollute user settings
     }
 
     static void midiLearnTest()
     {
         std::cout << "midiLearnTest\n";
 
-        namespace id = arsenal::params::id;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
-        arsenal::ArsenalProcessor proc;
+        spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         auto& learn = proc.getMidiLearn();
         auto* cutoff = proc.getAPVTS().getParameter (id::filter1Cutoff);
@@ -1115,7 +1115,7 @@ namespace
         // ...but presets don't carry (or clobber) it.
         const auto presetState = proc.buildStateTree (false);
         expect (! presetState.getChildWithName (
-                    arsenal::MidiLearnManager::mapTreeType).isValid(),
+                    spa::MidiLearnManager::mapTreeType).isValid(),
                 "preset state excludes the MIDI map");
         proc.restoreStateTree (presetState);
         expect (learn.getAssignedCC (id::filter1Cutoff) == 74,
@@ -1126,8 +1126,8 @@ namespace
     {
         std::cout << "arpeggiatorTest\n";
 
-        namespace params = arsenal::params;
-        using Arp = arsenal::dsp::Arpeggiator;
+        namespace params = spa::params;
+        using Arp = spa::dsp::Arpeggiator;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
@@ -1236,17 +1236,17 @@ namespace
     {
         std::cout << "extraEnginesTest\n";
 
-        namespace params = arsenal::params;
-        namespace id = arsenal::params::id;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 512;
 
         const auto renderWith = [&] (params::OscMode mode,
-                                     std::function<void (arsenal::ArsenalProcessor&)> configure,
+                                     std::function<void (spa::SPASynthProcessor&)> configure,
                                      int note, int blocks, juce::AudioBuffer<float>& capture)
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::chaos::enable, 0.0f);
             setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) mode);
@@ -1310,7 +1310,7 @@ namespace
 
         // Pluck: strikes then decays while the key is held.
         {
-            arsenal::ArsenalProcessor proc;
+            spa::SPASynthProcessor proc;
             proc.prepareToPlay (sampleRate, blockSize);
             setParam (proc, id::chaos::enable, 0.0f);
             setParam (proc, id::oscSlot (0, id::osc::mode),

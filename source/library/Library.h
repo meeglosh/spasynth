@@ -3,7 +3,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <vector>
 
-namespace arsenal::library
+namespace spa::library
 {
 
 // One pack folder = one preset category (the Silverplatter convention).
@@ -25,25 +25,25 @@ void setLibraryRoot (const juce::File&);
 bool getDarkThemeEnabled();
 void setDarkThemeEnabled (bool dark);
 
-// Quick structural check: does this folder look like an Arsenal library
+// Quick structural check: does this folder look like an SPASynth library
 // (at least one pack subfolder containing WAVs)?
 bool looksLikeLibrary (const juce::File&);
 
 // The standard install locations the content installers write to, most
 // preferred first. The plugin probes these so users never have to point
-// Arsenal at the library manually.
+// SPASynth at the library manually.
 std::vector<juce::File> defaultLibraryLocations();
 
 // Pure discovery over a candidate list (testable).
 juce::File discoverLibrary (const std::vector<juce::File>& candidates);
 
-// The library root Arsenal should use right now: the configured root if it
+// The library root SPASynth should use right now: the configured root if it
 // is still valid, otherwise the first valid default location (which is then
 // persisted). Returns an invalid File only if nothing is found — the manual
 // "Set Library Folder..." fallback covers that case.
 juce::File findLibraryRoot();
 
-// Where presets live: <app data>/Silverplatter Audio/Arsenal/Presets with
+// Where presets live: <app data>/Silverplatter Audio/SPASynth/Presets with
 // Factory/<Category>/ and User/ underneath.
 juce::File defaultPresetsRoot();
 
@@ -54,4 +54,4 @@ juce::File defaultPresetsRoot();
 juce::String toPortable (const juce::File&, const juce::File& libraryRoot);
 juce::File fromPortable (const juce::String&, const juce::File& libraryRoot);
 
-} // namespace arsenal::library
+} // namespace spa::library

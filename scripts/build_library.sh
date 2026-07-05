@@ -1,12 +1,12 @@
 #!/bin/zsh
-# Builds the shippable Arsenal library from the raw Silverplatter pack zips.
+# Builds the shippable SPASynth library from the raw Silverplatter pack zips.
 #
 #   ./scripts/build_library.sh "<zips folder>" "<output library folder>"
 #
 # For each zip: extracts WAVs (skipping __MACOSX junk, resource forks, and
 # docs), converts them to 24-bit/48kHz WAV (the distribution format — film/TV
 # ready; keep the 24/96 originals archived), and writes them into one folder
-# per pack. Pack folders map 1:1 to Arsenal preset categories.
+# per pack. Pack folders map 1:1 to SPASynth preset categories.
 # Idempotent: packs with a non-empty output folder are skipped.
 
 set -u

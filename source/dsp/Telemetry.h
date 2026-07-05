@@ -5,7 +5,7 @@
 #include <array>
 #include <atomic>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // Lock-free audio -> UI channel. The most recently started active voice
@@ -39,4 +39,4 @@ struct Telemetry
     std::atomic<float> peakR { 0.0f };
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

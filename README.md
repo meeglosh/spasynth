@@ -1,10 +1,10 @@
-# Arsenal
+# SPASynth
 
 Hybrid wavetable + SFX library soft synth by Silverplatter Audio.
 
 Wavetable synthesis with an organic-chaos modulation layer, plus a sample/SFX
 engine where the Silverplatter Audio library acts as both oscillator and
-modulation source. See `arsenal-claude-code-brief.md` for the full spec.
+modulation source. See `spasynth-claude-code-brief.md` for the full spec.
 
 ## Building
 
@@ -18,15 +18,15 @@ cmake --build build
 ```
 
 Formats: Standalone, VST3 (macOS + Windows), AU (macOS). AAX is deliberately
-out for v1. Release/universal builds: add `-DARSENAL_UNIVERSAL_BINARY=ON`.
+out for v1. Release/universal builds: add `-DSPASYNTH_UNIVERSAL_BINARY=ON`.
 
 Built plugins are copied to the user plugin folders automatically
-(disable with `-DARSENAL_COPY_PLUGIN=OFF`).
+(disable with `-DSPASYNTH_COPY_PLUGIN=OFF`).
 
 ## Tests
 
 ```sh
-cmake --build build --target ArsenalTests && ctest --test-dir build
+cmake --build build --target SPASynthTests && ctest --test-dir build
 ```
 
 ## Layout

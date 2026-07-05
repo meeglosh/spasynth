@@ -5,7 +5,7 @@
 #include <array>
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // Granular playback for one slot within a voice. A fixed pool of grains reads
@@ -150,4 +150,4 @@ private:
     double samplesToNextGrain = 0.0;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

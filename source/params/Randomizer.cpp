@@ -1,6 +1,6 @@
 #include "Randomizer.h"
 
-namespace arsenal::params
+namespace spa::params
 {
 
 juce::String lockGroupName (LockGroup g)
@@ -103,4 +103,4 @@ void randomizeAll (juce::AudioProcessorValueTreeState& apvts, float wildness,
     }
 }
 
-} // namespace arsenal::params
+} // namespace spa::params

@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 struct LoadedWavetable
@@ -21,4 +21,4 @@ struct LoadedWavetable
 // audio thread.
 LoadedWavetable loadWavetableFromFile (const juce::File& file);
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

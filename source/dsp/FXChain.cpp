@@ -1,6 +1,6 @@
 #include "FXChain.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 void FXChain::prepare (double newSampleRate, int maxBlockSize)
@@ -219,4 +219,4 @@ void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)
     }
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

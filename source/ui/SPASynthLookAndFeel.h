@@ -2,16 +2,16 @@
 
 #include "Theme.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // Bespoke control rendering: minimal arc knobs, pill toggles, soft rounded
 // surfaces. All colours come from the active Theme so light/dark switching
 // is a palette refresh.
-class ArsenalLookAndFeel : public juce::LookAndFeel_V4
+class SPASynthLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    ArsenalLookAndFeel();
+    SPASynthLookAndFeel();
 
     // Re-reads the active theme into the LookAndFeel colour palette.
     void refreshPalette();
@@ -45,7 +45,7 @@ public:
                         bool isMouseOver, bool isMouseDown) override;
     void drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&) override;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalLookAndFeel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthLookAndFeel)
 };
 
-} // namespace arsenal::ui
+} // namespace spa::ui

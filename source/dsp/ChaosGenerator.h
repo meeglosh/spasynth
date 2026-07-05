@@ -5,7 +5,7 @@
 #include <array>
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // The Organic Chaos core: a bank of independent band-limited random walkers.
@@ -86,4 +86,4 @@ private:
     std::array<Walker, numWalkers> walkers {};
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

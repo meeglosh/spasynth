@@ -12,10 +12,10 @@
 #include "ExtraOscillators.h"
 #include "Telemetry.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
-struct ArsenalSound : public juce::SynthesiserSound
+struct SPASynthSound : public juce::SynthesiserSound
 {
     bool appliesToNote (int) override { return true; }
     bool appliesToChannel (int) override { return true; }
@@ -95,13 +95,13 @@ struct SharedState
     } chaos;
 };
 
-class ArsenalVoice : public juce::SynthesiserVoice
+class SPASynthVoice : public juce::SynthesiserVoice
 {
 public:
     // Modulation is evaluated at this granularity within a block.
     static constexpr int chunkSize = 64;
 
-    explicit ArsenalVoice (const SharedState& shared);
+    explicit SPASynthVoice (const SharedState& shared);
 
     bool canPlaySound (juce::SynthesiserSound* sound) override;
     void startNote (int midiNoteNumber, float velocity,
@@ -157,7 +157,7 @@ private:
     std::array<float, params::maxOscSlots> slotPanL {}, slotPanR {};
     std::array<float, params::maxOscSlots> lastGrainPos {};
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalVoice)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthVoice)
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

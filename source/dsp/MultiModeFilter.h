@@ -6,7 +6,7 @@
 #include <array>
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // TPT state-variable filter (Zavalishin) computing LP/BP/HP simultaneously so
@@ -93,4 +93,4 @@ private:
     std::array<State, 4> stages {};  // 2 channels x 2 cascade stages
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

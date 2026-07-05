@@ -1,6 +1,6 @@
 #include "SectionPanel.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 namespace
@@ -143,4 +143,4 @@ void SectionPanel::resized()
     }
 }
 
-} // namespace arsenal::ui
+} // namespace spa::ui

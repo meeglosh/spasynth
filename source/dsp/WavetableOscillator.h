@@ -5,7 +5,7 @@
 
 #include <array>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // One oscillator slot within a voice: up to 8 unison sub-oscillators reading
@@ -148,4 +148,4 @@ private:
     std::array<float, maxUnison> gainR {};
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

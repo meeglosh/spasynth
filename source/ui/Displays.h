@@ -4,9 +4,9 @@
 #include "../params/ParameterRegistry.h"
 #include "../dsp/Telemetry.h"
 
-namespace arsenal
+namespace spa
 {
-class ArsenalProcessor;
+class SPASynthProcessor;
 
 namespace ui
 {
@@ -51,14 +51,14 @@ class WaveDisplay : public DisplayComponent,
                     private juce::ChangeListener
 {
 public:
-    WaveDisplay (ArsenalProcessor&, int slot);
+    WaveDisplay (SPASynthProcessor&, int slot);
     ~WaveDisplay() override;
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
-    ArsenalProcessor& processor;
+    SPASynthProcessor& processor;
     const int slot;
 };
 
@@ -66,7 +66,7 @@ private:
 class EnvDisplay : public DisplayComponent
 {
 public:
-    EnvDisplay (ArsenalProcessor&, juce::String idPrefix, int envIndex);
+    EnvDisplay (SPASynthProcessor&, juce::String idPrefix, int envIndex);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
@@ -78,7 +78,7 @@ private:
 class LFODisplay : public DisplayComponent
 {
 public:
-    LFODisplay (ArsenalProcessor&, int lfoIndex);
+    LFODisplay (SPASynthProcessor&, int lfoIndex);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
@@ -89,7 +89,7 @@ private:
 class FilterDisplay : public DisplayComponent
 {
 public:
-    explicit FilterDisplay (ArsenalProcessor&);
+    explicit FilterDisplay (SPASynthProcessor&);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
@@ -99,7 +99,7 @@ private:
 class ChaosDisplay : public DisplayComponent
 {
 public:
-    explicit ChaosDisplay (ArsenalProcessor&);
+    explicit ChaosDisplay (SPASynthProcessor&);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
@@ -137,4 +137,4 @@ private:
 };
 
 } // namespace ui
-} // namespace arsenal
+} // namespace spa

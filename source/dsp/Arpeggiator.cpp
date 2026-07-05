@@ -1,6 +1,6 @@
 #include "Arpeggiator.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 void Arpeggiator::prepare (double sampleRate)
@@ -367,4 +367,4 @@ void Arpeggiator::process (juce::MidiBuffer& midi, int numSamples, const Params&
     midi.swapWith (out);
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

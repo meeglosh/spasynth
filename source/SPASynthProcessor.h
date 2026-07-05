@@ -3,22 +3,22 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "params/ParameterRegistry.h"
-#include "dsp/ArsenalVoice.h"
+#include "dsp/SPASynthVoice.h"
 #include "dsp/FXChain.h"
 #include "dsp/Arpeggiator.h"
 #include "library/PresetManager.h"
 #include "MidiLearn.h"
 
-namespace arsenal
+namespace spa
 {
 
-class ArsenalProcessor : public juce::AudioProcessor,
+class SPASynthProcessor : public juce::AudioProcessor,
                          public juce::ChangeBroadcaster,
                          private juce::Timer
 {
 public:
-    ArsenalProcessor();
-    ~ArsenalProcessor() override;
+    SPASynthProcessor();
+    ~SPASynthProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -28,7 +28,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Arsenal"; }
+    const juce::String getName() const override { return "SPASynth"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -265,8 +265,8 @@ private:
 
     static constexpr int numVoices = 16;
 
-    JUCE_DECLARE_WEAK_REFERENCEABLE (ArsenalProcessor)
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalProcessor)
+    JUCE_DECLARE_WEAK_REFERENCEABLE (SPASynthProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthProcessor)
 };
 
-} // namespace arsenal
+} // namespace spa

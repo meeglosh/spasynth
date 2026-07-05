@@ -5,7 +5,7 @@
 #include <array>
 #include <atomic>
 
-namespace arsenal
+namespace spa
 {
 
 // MIDI Learn: binds hardware CCs to plugin parameters.
@@ -50,4 +50,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiLearnManager)
 };
 
-} // namespace arsenal
+} // namespace spa

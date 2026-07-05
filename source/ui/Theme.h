@@ -2,7 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // Runtime design tokens. Every colour, font and metric the UI uses comes
@@ -128,4 +128,4 @@ namespace draw
     void glowStroke (juce::Graphics&, const juce::Path&, juce::Colour, float thickness = 1.8f);
 }
 
-} // namespace arsenal::ui
+} // namespace spa::ui

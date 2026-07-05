@@ -5,7 +5,7 @@
 
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // Per-voice LFO. Retriggered LFOs own their phase; free-running LFOs read a
@@ -118,4 +118,4 @@ private:
     bool shPrimed = false;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

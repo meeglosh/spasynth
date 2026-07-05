@@ -4,9 +4,9 @@
 #include "Displays.h"
 #include "SectionPanel.h"
 
-namespace arsenal
+namespace spa
 {
-class ArsenalProcessor;
+class SPASynthProcessor;
 
 namespace ui
 {
@@ -20,7 +20,7 @@ class OscStrip : public juce::Component,
                  private juce::ChangeListener
 {
 public:
-    OscStrip (ArsenalProcessor&, int slot);
+    OscStrip (SPASynthProcessor&, int slot);
     ~OscStrip() override;
 
     void paint (juce::Graphics&) override;
@@ -34,7 +34,7 @@ private:
     params::OscMode currentMode() const;
     juce::String contentName() const;
 
-    ArsenalProcessor& processor;
+    SPASynthProcessor& processor;
     const int slot;
 
     WaveDisplay display;
@@ -60,7 +60,7 @@ private:
 class FilterPanel : public juce::Component
 {
 public:
-    explicit FilterPanel (ArsenalProcessor&);
+    explicit FilterPanel (SPASynthProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -74,7 +74,7 @@ private:
 class EnvPanel : public juce::Component
 {
 public:
-    EnvPanel (ArsenalProcessor&, const juce::String& idPrefix, int envIndex);
+    EnvPanel (SPASynthProcessor&, const juce::String& idPrefix, int envIndex);
     void resized() override;
 
 private:
@@ -86,7 +86,7 @@ private:
 class LFOPanel : public juce::Component
 {
 public:
-    LFOPanel (ArsenalProcessor&, int lfoIndex);
+    LFOPanel (SPASynthProcessor&, int lfoIndex);
     void resized() override;
 
 private:
@@ -100,7 +100,7 @@ private:
 class ChaosPanel : public juce::Component
 {
 public:
-    explicit ChaosPanel (ArsenalProcessor&);
+    explicit ChaosPanel (SPASynthProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -149,4 +149,4 @@ private:
 };
 
 } // namespace ui
-} // namespace arsenal
+} // namespace spa

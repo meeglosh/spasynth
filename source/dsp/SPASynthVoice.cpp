@@ -1,6 +1,6 @@
-#include "ArsenalVoice.h"
+#include "SPASynthVoice.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 namespace
@@ -91,18 +91,18 @@ namespace
     }
 }
 
-ArsenalVoice::ArsenalVoice (const SharedState& sharedState)
+SPASynthVoice::SPASynthVoice (const SharedState& sharedState)
     : shared (sharedState)
 {
     DestLookup::get();  // resolve indices before the audio thread needs them
 }
 
-bool ArsenalVoice::canPlaySound (juce::SynthesiserSound* sound)
+bool SPASynthVoice::canPlaySound (juce::SynthesiserSound* sound)
 {
-    return dynamic_cast<ArsenalSound*> (sound) != nullptr;
+    return dynamic_cast<SPASynthSound*> (sound) != nullptr;
 }
 
-void ArsenalVoice::setCurrentPlaybackSampleRate (double newRate)
+void SPASynthVoice::setCurrentPlaybackSampleRate (double newRate)
 {
     juce::SynthesiserVoice::setCurrentPlaybackSampleRate (newRate);
 
@@ -127,12 +127,12 @@ void ArsenalVoice::setCurrentPlaybackSampleRate (double newRate)
     }
 }
 
-float ArsenalVoice::baseValue (int destIndex) const
+float SPASynthVoice::baseValue (int destIndex) const
 {
     return denorm (shared.baseNorm.data(), destIndex);
 }
 
-void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
+void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
                               juce::SynthesiserSound*, int currentPitchWheelPosition)
 {
     const auto& lookup = DestLookup::get();
@@ -187,7 +187,7 @@ void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
     ampEnvLast = 0.0f;
 }
 
-void ArsenalVoice::stopNote (float, bool allowTailOff)
+void SPASynthVoice::stopNote (float, bool allowTailOff)
 {
     if (allowTailOff)
     {
@@ -204,12 +204,12 @@ void ArsenalVoice::stopNote (float, bool allowTailOff)
     }
 }
 
-void ArsenalVoice::pitchWheelMoved (int newPitchWheelValue)
+void SPASynthVoice::pitchWheelMoved (int newPitchWheelValue)
 {
     pitchBendSemitones = 2.0f * ((float) newPitchWheelValue - 8192.0f) / 8192.0f;
 }
 
-void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
+void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
 {
     const auto& lookup = DestLookup::get();
     const auto sampleRate = getSampleRate();
@@ -469,7 +469,7 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
     }
 }
 
-void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
+void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                                     int startSample, int numSamples)
 {
     if (! ampEnv.isActive())
@@ -607,4 +607,4 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
     }
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

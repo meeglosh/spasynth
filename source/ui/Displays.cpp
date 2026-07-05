@@ -1,7 +1,7 @@
 #include "Displays.h"
-#include "../ArsenalProcessor.h"
+#include "../SPASynthProcessor.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // ========================== DisplayComponent ===============================
@@ -50,7 +50,7 @@ void DisplayComponent::paint (juce::Graphics& g)
 
 // ============================ WaveDisplay ==================================
 
-WaveDisplay::WaveDisplay (ArsenalProcessor& p, int slotIndex)
+WaveDisplay::WaveDisplay (SPASynthProcessor& p, int slotIndex)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::oscSlot (slotIndex, params::id::osc::mode),
                           params::id::oscSlot (slotIndex, params::id::osc::position),
@@ -243,7 +243,7 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // ============================ EnvDisplay ===================================
 
-EnvDisplay::EnvDisplay (ArsenalProcessor& p, juce::String idPrefix, int envIndex)
+EnvDisplay::EnvDisplay (SPASynthProcessor& p, juce::String idPrefix, int envIndex)
     : DisplayComponent (p.getAPVTS(),
                         { idPrefix + ".attack", idPrefix + ".decay",
                           idPrefix + ".sustain", idPrefix + ".release" },
@@ -298,7 +298,7 @@ void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // ============================ LFODisplay ===================================
 
-LFODisplay::LFODisplay (ArsenalProcessor& p, int lfoIndex)
+LFODisplay::LFODisplay (SPASynthProcessor& p, int lfoIndex)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::lfoParam (lfoIndex, params::id::lfo::shape),
                           params::id::lfoParam (lfoIndex, params::id::lfo::phase),
@@ -375,7 +375,7 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // =========================== FilterDisplay =================================
 
-FilterDisplay::FilterDisplay (ArsenalProcessor& p)
+FilterDisplay::FilterDisplay (SPASynthProcessor& p)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::filter1Type, params::id::filter1Cutoff,
                           params::id::filter1Resonance },
@@ -441,7 +441,7 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
 
 // ============================ ChaosDisplay =================================
 
-ChaosDisplay::ChaosDisplay (ArsenalProcessor& p)
+ChaosDisplay::ChaosDisplay (SPASynthProcessor& p)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::chaos::depth, params::id::chaos::rate,
                           params::id::chaos::mix, params::id::chaos::enable },
@@ -745,4 +745,4 @@ void OutputMeter::paint (juce::Graphics& g)
     drawBar (bounds, levelR);
 }
 
-} // namespace arsenal::ui
+} // namespace spa::ui

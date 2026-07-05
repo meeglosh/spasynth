@@ -5,7 +5,7 @@
 #include <cmath>
 #include <vector>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // ============================ Virtual analog ================================
@@ -227,4 +227,4 @@ private:
     int writePos = 0;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

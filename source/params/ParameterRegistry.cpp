@@ -1,6 +1,6 @@
 #include "ParameterRegistry.h"
 
-namespace arsenal::params
+namespace spa::params
 {
 
 juce::String sectionName (Section s)
@@ -672,4 +672,4 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     return layout;
 }
 
-} // namespace arsenal::params
+} // namespace spa::params

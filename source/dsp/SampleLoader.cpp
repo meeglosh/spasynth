@@ -3,7 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <cmath>
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 namespace
@@ -152,4 +152,4 @@ LoadedSample loadSampleFromFile (const juce::File& file)
     return { std::move (data), {} };
 }
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

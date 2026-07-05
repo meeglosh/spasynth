@@ -3,7 +3,7 @@
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 // A thin-ring knob with its label underneath — the atomic control of the UI.
@@ -89,4 +89,4 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachment;
 };
 
-} // namespace arsenal::ui
+} // namespace spa::ui

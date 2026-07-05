@@ -3,7 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "../params/ParameterRegistry.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // Global stereo FX chain, processed after the synth mix and before master
@@ -96,4 +96,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FXChain)
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

@@ -1,7 +1,7 @@
-#include "ArsenalLookAndFeel.h"
+#include "SPASynthLookAndFeel.h"
 #include "../library/Library.h"
 
-namespace arsenal::ui
+namespace spa::ui
 {
 
 namespace
@@ -160,12 +160,12 @@ void glowStroke (juce::Graphics& g, const juce::Path& path, juce::Colour colour,
 
 } // namespace draw
 
-ArsenalLookAndFeel::ArsenalLookAndFeel()
+SPASynthLookAndFeel::SPASynthLookAndFeel()
 {
     refreshPalette();
 }
 
-void ArsenalLookAndFeel::refreshPalette()
+void SPASynthLookAndFeel::refreshPalette()
 {
     const auto& t = currentTheme();
 
@@ -199,7 +199,7 @@ void ArsenalLookAndFeel::refreshPalette()
     setColour (juce::AlertWindow::textColourId, t.textPrimary);
 }
 
-void ArsenalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float sliderPos, float rotaryStartAngle,
                                            float rotaryEndAngle, juce::Slider& slider)
 {
@@ -297,7 +297,7 @@ void ArsenalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW * 0.9f);
 }
 
-void ArsenalLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+void SPASynthLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float sliderPos, float, float,
                                            juce::Slider::SliderStyle style, juce::Slider& slider)
 {
@@ -327,7 +327,7 @@ void ArsenalLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
     LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, 0, 0, style, slider);
 }
 
-void ArsenalLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+void SPASynthLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
                                                const juce::Colour& backgroundColour,
                                                bool highlighted, bool down)
 {
@@ -367,7 +367,7 @@ void ArsenalLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
     g.drawRoundedRectangle (bounds, metrics::cornerRadius, 1.0f);
 }
 
-void ArsenalLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
+void SPASynthLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
                                            bool highlighted, bool)
 {
     const auto& t = currentTheme();
@@ -394,7 +394,7 @@ void ArsenalLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton
                 juce::Justification::centredLeft);
 }
 
-void ArsenalLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool,
+void SPASynthLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool,
                                        int, int, int, int, juce::ComboBox&)
 {
     const auto& t = currentTheme();
@@ -416,14 +416,14 @@ void ArsenalLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
     g.strokePath (chevron, juce::PathStrokeType (1.4f));
 }
 
-int ArsenalLookAndFeel::getTabButtonBestWidth (juce::TabBarButton& button, int)
+int SPASynthLookAndFeel::getTabButtonBestWidth (juce::TabBarButton& button, int)
 {
     juce::GlyphArrangement glyphs;
     glyphs.addLineOfText (metrics::smallFont(), button.getButtonText(), 0.0f, 0.0f);
     return juce::jmax (36, (int) std::ceil (glyphs.getBoundingBox (0, -1, true).getWidth()) + 16);
 }
 
-void ArsenalLookAndFeel::drawTabButton (juce::TabBarButton& button, juce::Graphics& g,
+void SPASynthLookAndFeel::drawTabButton (juce::TabBarButton& button, juce::Graphics& g,
                                         bool isMouseOver, bool)
 {
     const auto& t = currentTheme();
@@ -450,8 +450,8 @@ void ArsenalLookAndFeel::drawTabButton (juce::TabBarButton& button, juce::Graphi
                 juce::Justification::centred);
 }
 
-void ArsenalLookAndFeel::drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&)
+void SPASynthLookAndFeel::drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&)
 {
 }
 
-} // namespace arsenal::ui
+} // namespace spa::ui

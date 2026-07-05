@@ -5,7 +5,7 @@
 
 #include <functional>
 
-namespace arsenal::library
+namespace spa::library
 {
 
 // Preset save/load and the factory-preset generator. Presets are
@@ -13,12 +13,12 @@ namespace arsenal::library
 // sample paths inside are portable ("$LIB$/...").
 //
 // Directory layout under the presets root:
-//   Factory/<Category>/<Name>.arsenal   (generated from library packs)
-//   User/<Name>.arsenal
+//   Factory/<Category>/<Name>.spasynth   (generated from library packs)
+//   User/<Name>.spasynth
 class PresetManager : public juce::ChangeBroadcaster
 {
 public:
-    static constexpr const char* presetExtension = ".arsenal";
+    static constexpr const char* presetExtension = ".spasynth";
 
     struct PresetInfo
     {
@@ -71,4 +71,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetManager)
 };
 
-} // namespace arsenal::library
+} // namespace spa::library

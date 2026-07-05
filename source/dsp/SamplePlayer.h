@@ -2,7 +2,7 @@
 
 #include "SampleData.h"
 
-namespace arsenal::dsp
+namespace spa::dsp
 {
 
 // Classic sample playback for one slot within a voice: start offset, loop
@@ -78,4 +78,4 @@ private:
     bool done = true;
 };
 
-} // namespace arsenal::dsp
+} // namespace spa::dsp

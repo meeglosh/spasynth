@@ -1,145 +1,343 @@
 #include "ArsenalEditor.h"
 #include "../ArsenalProcessor.h"
-#include "Theme.h"
+#include "../library/Library.h"
 
 #include "BinaryData.h"
 
 namespace arsenal
 {
 
-ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
-    : juce::AudioProcessorEditor (p), arsenalProcessor (p), genericPanel (p)
+namespace ui
 {
-    logo = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_banner_white_svg,
-                                                ArsenalAssets::SPAudio_logo_banner_white_svgSize);
+
+// ============================ OscPanel =====================================
+
+OscPanel::OscPanel (ArsenalProcessor& p, int slotIndex)
+    : processor (p), slot (slotIndex),
+      section (p.getAPVTS(), params::oscSection (slotIndex), "Oscillator")
+{
+    tableName.setFont (metrics::labelFont());
+    addAndMakeVisible (tableName);
+    sampleName.setFont (metrics::labelFont());
+    addAndMakeVisible (sampleName);
+
+    loadWTButton.onClick = [this] { chooseWavetable(); };
+    addAndMakeVisible (loadWTButton);
+    factoryButton.onClick = [this] { processor.setFactoryWavetable (slot); };
+    addAndMakeVisible (factoryButton);
+    loadSFXButton.onClick = [this] { chooseSample(); };
+    addAndMakeVisible (loadSFXButton);
+
+    addAndMakeVisible (section);
+    refreshNames();
+}
+
+void OscPanel::refreshNames()
+{
+    const auto wtError = processor.getWavetableError (slot);
+    tableName.setText ("WT: " + (wtError.isNotEmpty() ? "! " + wtError
+                                                      : processor.getWavetableName (slot)),
+                       juce::dontSendNotification);
+
+    const auto sfxError = processor.getSampleError (slot);
+    const auto sfx = processor.getSampleName (slot);
+    sampleName.setText ("SFX: " + (sfxError.isNotEmpty() ? "! " + sfxError
+                                   : sfx.isNotEmpty() ? sfx : "(none)"),
+                        juce::dontSendNotification);
+}
+
+void OscPanel::resized()
+{
+    auto area = getLocalBounds().reduced (4);
+
+    auto wtRow = area.removeFromTop (26);
+    factoryButton.setBounds (wtRow.removeFromRight (64).reduced (0, 2));
+    loadWTButton.setBounds (wtRow.removeFromRight (56).reduced (2, 2));
+    tableName.setBounds (wtRow);
+
+    auto sfxRow = area.removeFromTop (26);
+    loadSFXButton.setBounds (sfxRow.removeFromRight (122).reduced (2, 2));
+    sampleName.setBounds (sfxRow);
+
+    section.setBounds (area);
+}
+
+void OscPanel::chooseWavetable()
+{
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Load wavetable for Osc " + params::id::oscSlotLetter (slot),
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        "*.wav;*.aif;*.aiff;*.flac");
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+    {
+        if (fc.getResult().existsAsFile())
+            processor.loadWavetableFromFile (slot, fc.getResult());
+    });
+}
+
+void OscPanel::chooseSample()
+{
+    const auto libraryRoot = library::findLibraryRoot();
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Load SFX/sample for Osc " + params::id::oscSlotLetter (slot),
+        libraryRoot.isDirectory() ? libraryRoot
+            : juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+    {
+        if (fc.getResult().existsAsFile())
+            processor.loadSampleFromFile (slot, fc.getResult());
+    });
+}
+
+// ========================= ContentComponent ================================
+
+ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> themeToggled)
+    : processor (p), onThemeToggled (std::move (themeToggled)),
+      filterPanel (p.getAPVTS(), params::Section::filter1),
+      chaosPanel (p.getAPVTS(), params::Section::chaos, "Organic Chaos"),
+      macrosPanel (p.getAPVTS(), params::Section::macros),
+      matrixPanel (p.getAPVTS())
+{
+    logoDark = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_white_svg,
+                                                    ArsenalAssets::SPAudio_logo_white_svgSize);
+    logoLight = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_black_svg,
+                                                     ArsenalAssets::SPAudio_logo_black_svgSize);
 
     title.setText ("ARSENAL", juce::dontSendNotification);
-    title.setFont (ui::theme::titleFont());
-    title.setColour (juce::Label::textColourId, ui::theme::textPrimary);
+    title.setFont (metrics::titleFont());
     addAndMakeVisible (title);
 
-    prevPresetButton.onClick = [this] { arsenalProcessor.getPresetManager().loadPrevious(); };
+    subtitle.setText ("Silverplatter Audio", juce::dontSendNotification);
+    subtitle.setFont (metrics::smallFont());
+    addAndMakeVisible (subtitle);
+
+    prevPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); };
     addAndMakeVisible (prevPresetButton);
-
-    nextPresetButton.onClick = [this] { arsenalProcessor.getPresetManager().loadNext(); };
+    nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); };
     addAndMakeVisible (nextPresetButton);
-
     presetNameButton.onClick = [this] { showPresetMenu(); };
     addAndMakeVisible (presetNameButton);
-
     savePresetButton.onClick = [this] { saveUserPreset(); };
     addAndMakeVisible (savePresetButton);
 
-    arsenalProcessor.getPresetManager().addChangeListener (this);
-    refreshPresetName();
-
-    randomizeButton.setColour (juce::TextButton::buttonColourId, ui::theme::accent);
-    randomizeButton.onClick = [this] { arsenalProcessor.randomizeAll(); };
+    randomizeButton.onClick = [this] { processor.randomizeAll(); };
     addAndMakeVisible (randomizeButton);
-
-    // First-run: nudge toward pointing Arsenal at the Silverplatter library.
-    if (! library::findLibraryRoot().isDirectory())
-        presetNameButton.setButtonText ("Set library folder...");
 
     wildnessSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     wildnessSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     wildnessSlider.setRange (0.0, 1.0, 0.0);
-    wildnessSlider.setValue (arsenalProcessor.getRandomWildness(), juce::dontSendNotification);
+    wildnessSlider.setValue (processor.getRandomWildness(), juce::dontSendNotification);
     wildnessSlider.onValueChange = [this]
     {
-        arsenalProcessor.setRandomWildness ((float) wildnessSlider.getValue());
+        processor.setRandomWildness ((float) wildnessSlider.getValue());
     };
     wildnessSlider.setTooltip ("Chaos amount: how wild RANDOMIZE ALL rolls");
     addAndMakeVisible (wildnessSlider);
 
     wildnessLabel.setText ("WILD", juce::dontSendNotification);
-    wildnessLabel.setFont (ui::theme::labelFont());
-    wildnessLabel.setColour (juce::Label::textColourId, ui::theme::textSecondary);
+    wildnessLabel.setFont (metrics::smallFont());
     wildnessLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (wildnessLabel);
+
+    themeButton.setTooltip ("Switch light/dark theme");
+    themeButton.onClick = [this]
+    {
+        setDarkTheme (! currentTheme().isDark);
+        if (onThemeToggled)
+            onThemeToggled();
+    };
+    addAndMakeVisible (themeButton);
+
+    masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    masterSlider.setPopupDisplayEnabled (true, true, this);
+    masterSlider.setTooltip ("Master volume");
+    masterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+        processor.getAPVTS(), params::id::masterGain, masterSlider);
+    addAndMakeVisible (masterSlider);
 
     for (int g = 0; g < params::numLockGroups; ++g)
     {
         auto& button = lockButtons[(size_t) g];
         button.setButtonText (params::lockGroupName ((params::LockGroup) g));
         button.setClickingTogglesState (true);
-        button.setToggleState (arsenalProcessor.isLockGroupLocked (g), juce::dontSendNotification);
-        button.setColour (juce::TextButton::buttonOnColourId, ui::theme::accentSecondary);
+        button.setToggleState (processor.isLockGroupLocked (g), juce::dontSendNotification);
         button.setTooltip ("Lock this section: RANDOMIZE ALL keeps its current settings");
         button.onClick = [this, g]
         {
-            arsenalProcessor.setLockGroupLocked (g, lockButtons[(size_t) g].getToggleState());
+            processor.setLockGroupLocked (g, lockButtons[(size_t) g].getToggleState());
         };
         addAndMakeVisible (button);
     }
 
-    masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    masterSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
-    masterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-        arsenalProcessor.getAPVTS(), params::id::masterGain, masterSlider);
-    addAndMakeVisible (masterSlider);
-
+    const auto tabBg = juce::Colours::transparentBlack;
     for (int s = 0; s < params::numOscSlots; ++s)
     {
-        auto& sc = slotControls[(size_t) s];
-
-        sc.header.setText ("OSC " + params::id::oscSlotLetter (s), juce::dontSendNotification);
-        sc.header.setFont (ui::theme::labelFont());
-        sc.header.setColour (juce::Label::textColourId, ui::theme::accent);
-        addAndMakeVisible (sc.header);
-
-        sc.tableName.setFont (ui::theme::labelFont());
-        sc.tableName.setColour (juce::Label::textColourId, ui::theme::textSecondary);
-        addAndMakeVisible (sc.tableName);
-
-        sc.loadButton.onClick = [this, s] { chooseWavetable (s); };
-        addAndMakeVisible (sc.loadButton);
-
-        sc.factoryButton.onClick = [this, s] { arsenalProcessor.setFactoryWavetable (s); };
-        addAndMakeVisible (sc.factoryButton);
-
-        sc.sampleName.setFont (ui::theme::labelFont());
-        sc.sampleName.setColour (juce::Label::textColourId, ui::theme::textSecondary);
-        addAndMakeVisible (sc.sampleName);
-
-        sc.sfxButton.onClick = [this, s] { chooseSample (s); };
-        addAndMakeVisible (sc.sfxButton);
+        auto* panel = new OscPanel (processor, s);
+        oscPanels[(size_t) s] = panel;
+        oscTabs.addTab ("OSC " + params::id::oscSlotLetter (s), tabBg, panel, true);
     }
+    addAndMakeVisible (oscTabs);
 
-    genericViewport.setViewedComponent (&genericPanel, false);
-    genericViewport.setScrollBarsShown (true, false);
-    addAndMakeVisible (genericViewport);
+    envTabs.addTab ("AMP", tabBg, new ScrollableSection (processor.getAPVTS(),
+                    params::Section::ampEnv, "Amp Envelope"), true);
+    envTabs.addTab ("ENV 2", tabBg, new ScrollableSection (processor.getAPVTS(),
+                    params::Section::env2), true);
+    envTabs.addTab ("ENV 3", tabBg, new ScrollableSection (processor.getAPVTS(),
+                    params::Section::env3), true);
+    addAndMakeVisible (envTabs);
 
-    arsenalProcessor.addChangeListener (this);
-    refreshSlotLabels();
+    for (int i = 0; i < params::numLFOs; ++i)
+        lfoTabs.addTab ("LFO " + juce::String (i + 1), tabBg,
+                        new ScrollableSection (processor.getAPVTS(),
+                                               params::lfoSection (i)), true);
+    addAndMakeVisible (lfoTabs);
 
-    setResizable (true, true);
-    setResizeLimits (720, 480, 2400, 1600);
-    setSize (960, 700);
+    fxTabs.addTab ("DIST", tabBg, new ScrollableSection (processor.getAPVTS(),
+                   params::Section::fxDist, "Distortion"), true);
+    fxTabs.addTab ("CHORUS", tabBg, new ScrollableSection (processor.getAPVTS(),
+                   params::Section::fxChorus, "Chorus"), true);
+    fxTabs.addTab ("DELAY", tabBg, new ScrollableSection (processor.getAPVTS(),
+                   params::Section::fxDelay, "Delay"), true);
+    fxTabs.addTab ("REVERB", tabBg, new ScrollableSection (processor.getAPVTS(),
+                   params::Section::fxReverb, "Reverb"), true);
+    fxTabs.addTab ("EQ", tabBg, new ScrollableSection (processor.getAPVTS(),
+                   params::Section::fxEQ, "EQ"), true);
+    addAndMakeVisible (fxTabs);
+
+    addAndMakeVisible (filterPanel);
+    addAndMakeVisible (chaosPanel);
+    addAndMakeVisible (macrosPanel);
+    addAndMakeVisible (matrixPanel);
+
+    processor.addChangeListener (this);
+    processor.getPresetManager().addChangeListener (this);
+    refreshAll();
+
+    setSize (metrics::baseWidth, metrics::baseHeight);
 }
 
-ArsenalEditor::~ArsenalEditor()
+ContentComponent::~ContentComponent()
 {
-    arsenalProcessor.getPresetManager().removeChangeListener (this);
-    arsenalProcessor.removeChangeListener (this);
+    processor.getPresetManager().removeChangeListener (this);
+    processor.removeChangeListener (this);
 }
 
-void ArsenalEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    refreshSlotLabels();
-    refreshPresetName();
+    refreshAll();
 }
 
-void ArsenalEditor::refreshPresetName()
+void ContentComponent::refreshAll()
 {
-    if (library::findLibraryRoot().isDirectory()
-        || arsenalProcessor.getPresetManager().getCurrentName() != "Init")
-        presetNameButton.setButtonText (arsenalProcessor.getPresetManager().getCurrentName());
+    const auto& t = currentTheme();
+
+    title.setColour (juce::Label::textColourId, t.textPrimary);
+    subtitle.setColour (juce::Label::textColourId, t.textSecondary);
+    wildnessLabel.setColour (juce::Label::textColourId, t.textSecondary);
+    randomizeButton.setColour (juce::TextButton::buttonColourId, t.accent);
+    randomizeButton.setColour (juce::TextButton::textColourOffId,
+                               t.isDark ? t.background : juce::Colours::white);
+    themeButton.setButtonText (t.isDark ? juce::String::fromUTF8 ("\xe2\x98\xbc")   // sun
+                                        : juce::String::fromUTF8 ("\xe2\x98\xbe")); // moon
+
+    for (auto* panel : oscPanels)
+        if (panel != nullptr)
+            panel->refreshNames();
+
+    const auto presetName = processor.getPresetManager().getCurrentName();
+    presetNameButton.setButtonText (
+        presetName == "Init" && ! library::findLibraryRoot().isDirectory()
+            ? "Set library folder..." : presetName);
+
+    repaint();
 }
 
-void ArsenalEditor::showPresetMenu()
+void ContentComponent::paint (juce::Graphics& g)
 {
-    auto& pm = arsenalProcessor.getPresetManager();
+    const auto& t = currentTheme();
+    g.fillAll (t.background);
+
+    auto header = getLocalBounds().removeFromTop (metrics::headerHeight);
+    g.setColour (t.header);
+    g.fillRect (header);
+    g.setColour (t.outline);
+    g.drawHorizontalLine (header.getBottom(), 0.0f, (float) getWidth());
+
+    // Glyph-only logo; the wordmark stays out of the way by design.
+    auto* logo = t.isDark ? logoDark.get() : logoLight.get();
+    if (logo != nullptr)
+        logo->drawWithin (g, header.removeFromLeft (64).reduced (12).toFloat(),
+                          juce::RectanglePlacement::centred, 1.0f);
+}
+
+void ContentComponent::resized()
+{
+    auto bounds = getLocalBounds();
+
+    auto header = bounds.removeFromTop (metrics::headerHeight);
+    header.removeFromLeft (64);  // logo
+    auto titleArea = header.removeFromLeft (130).reduced (0, 8);
+    title.setBounds (titleArea.removeFromTop (26));
+    subtitle.setBounds (titleArea);
+
+    auto right = header.removeFromRight (330).reduced (0, metrics::unit);
+    masterSlider.setBounds (right.removeFromRight (48));
+    themeButton.setBounds (right.removeFromRight (34).reduced (2, 8));
+    auto wildArea = right.removeFromRight (46);
+    wildnessLabel.setBounds (wildArea.removeFromBottom (12));
+    wildnessSlider.setBounds (wildArea);
+    randomizeButton.setBounds (right.reduced (4, 4));
+
+    auto presetArea = header.reduced (metrics::unit, 14);
+    prevPresetButton.setBounds (presetArea.removeFromLeft (26));
+    savePresetButton.setBounds (presetArea.removeFromRight (48));
+    nextPresetButton.setBounds (presetArea.removeFromRight (26));
+    presetNameButton.setBounds (presetArea.reduced (3, 0));
+
+    auto lockRow = bounds.removeFromTop (metrics::lockRowHeight).reduced (metrics::unit, 3);
+    const auto lockWidth = lockRow.getWidth() / params::numLockGroups;
+    for (auto& button : lockButtons)
+        button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 0));
+
+    auto main = bounds.reduced (metrics::unit);
+    constexpr int gap = 6;
+
+    oscTabs.setBounds (main.removeFromLeft (500));
+    main.removeFromLeft (gap);
+
+    const auto rowHeight = (main.getHeight() - 2 * gap) / 3;
+
+    auto row1 = main.removeFromTop (rowHeight);
+    filterPanel.setBounds (row1.removeFromLeft (190));
+    row1.removeFromLeft (gap);
+    envTabs.setBounds (row1.removeFromLeft ((row1.getWidth() - gap) / 2));
+    row1.removeFromLeft (gap);
+    lfoTabs.setBounds (row1);
+    main.removeFromTop (gap);
+
+    auto row2 = main.removeFromTop (rowHeight);
+    macrosPanel.setBounds (row2.removeFromRight (170));
+    row2.removeFromRight (gap);
+    chaosPanel.setBounds (row2);
+    main.removeFromTop (gap);
+
+    auto row3 = main;
+    fxTabs.setBounds (row3.removeFromLeft ((row3.getWidth() - gap) * 45 / 100));
+    row3.removeFromLeft (gap);
+    matrixPanel.setBounds (row3);
+}
+
+void ContentComponent::showPresetMenu()
+{
+    auto& pm = processor.getPresetManager();
     const auto presets = pm.getPresets();  // snapshot for stable indices
 
     juce::PopupMenu menu;
@@ -169,13 +367,13 @@ void ArsenalEditor::showPresetMenu()
         if (result == chooseLibraryItem)
             chooseLibraryFolder();
         else if (result == rescanItem)
-            arsenalProcessor.refreshLibrary();
+            processor.refreshLibrary();
         else
-            arsenalProcessor.getPresetManager().loadPreset (result - 1);
+            processor.getPresetManager().loadPreset (result - 1);
     });
 }
 
-void ArsenalEditor::chooseLibraryFolder()
+void ContentComponent::chooseLibraryFolder()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
         "Locate the Silverplatter Audio library folder",
@@ -190,14 +388,14 @@ void ArsenalEditor::chooseLibraryFolder()
             return;
 
         library::setLibraryRoot (folder);
-        arsenalProcessor.refreshLibrary();
-        refreshPresetName();
+        processor.refreshLibrary();
+        refreshAll();
     });
 }
 
-void ArsenalEditor::saveUserPreset()
+void ContentComponent::saveUserPreset()
 {
-    auto& pm = arsenalProcessor.getPresetManager();
+    auto& pm = processor.getPresetManager();
     pm.getUserPresetFolder().createDirectory();
 
     fileChooser = std::make_unique<juce::FileChooser> (
@@ -210,154 +408,64 @@ void ArsenalEditor::saveUserPreset()
                             | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& fc)
     {
-        const auto file = fc.getResult();
-        if (file == juce::File())
-            return;
-
-        arsenalProcessor.getPresetManager().saveUserPreset (
-            file.getFileNameWithoutExtension());
+        if (fc.getResult() != juce::File())
+            processor.getPresetManager().saveUserPreset (
+                fc.getResult().getFileNameWithoutExtension());
     });
 }
 
-void ArsenalEditor::refreshSlotLabels()
+} // namespace ui
+
+// ============================ ArsenalEditor ================================
+
+ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
+    : juce::AudioProcessorEditor (p), arsenalProcessor (p)
 {
-    for (int s = 0; s < params::numOscSlots; ++s)
+    setLookAndFeel (&lookAndFeel);
+
+    content = std::make_unique<ui::ContentComponent> (p, [this] { applyTheme(); });
+    addAndMakeVisible (*content);
+
+    constexpr auto baseW = ui::metrics::baseWidth;
+    constexpr auto baseH = ui::metrics::baseHeight;
+
+    setResizable (true, true);
+    if (auto* constrainer = getConstrainer())
     {
-        auto& sc = slotControls[(size_t) s];
-        const auto error = arsenalProcessor.getWavetableError (s);
-
-        sc.tableName.setText (error.isNotEmpty() ? "! " + error
-                                                 : arsenalProcessor.getWavetableName (s),
-                              juce::dontSendNotification);
-        sc.tableName.setColour (juce::Label::textColourId,
-                                error.isNotEmpty() ? ui::theme::accent
-                                                   : ui::theme::textSecondary);
-
-        const auto sampleError = arsenalProcessor.getSampleError (s);
-        const auto sampleName = arsenalProcessor.getSampleName (s);
-        sc.sampleName.setText (sampleError.isNotEmpty() ? "! " + sampleError
-                               : sampleName.isNotEmpty() ? sampleName
-                                                         : "(no SFX loaded)",
-                               juce::dontSendNotification);
-        sc.sampleName.setColour (juce::Label::textColourId,
-                                 sampleError.isNotEmpty() ? ui::theme::accent
-                                                          : ui::theme::textSecondary);
+        constrainer->setFixedAspectRatio ((double) baseW / baseH);
+        constrainer->setSizeLimits (baseW * 55 / 100, baseH * 55 / 100,
+                                    baseW * 2, baseH * 2);
     }
+
+    // Restore the remembered window scale.
+    const auto scale = juce::jlimit (0.55, 2.0,
+        (double) arsenalProcessor.getAPVTS().state.getProperty ("uiScale", 1.0));
+    setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
 }
 
-void ArsenalEditor::chooseSample (int slot)
+ArsenalEditor::~ArsenalEditor()
 {
-    fileChooser = std::make_unique<juce::FileChooser> (
-        "Load SFX/sample for Osc " + params::id::oscSlotLetter (slot),
-        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.wav;*.aif;*.aiff;*.flac;*.mp3");
-
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles,
-                              [this, slot] (const juce::FileChooser& fc)
-    {
-        const auto file = fc.getResult();
-        if (file.existsAsFile())
-            arsenalProcessor.loadSampleFromFile (slot, file);
-    });
+    setLookAndFeel (nullptr);
 }
 
-void ArsenalEditor::chooseWavetable (int slot)
+void ArsenalEditor::applyTheme()
 {
-    fileChooser = std::make_unique<juce::FileChooser> (
-        "Load wavetable for Osc " + params::id::oscSlotLetter (slot),
-        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.wav;*.aif;*.aiff;*.flac");
-
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles,
-                              [this, slot] (const juce::FileChooser& fc)
-    {
-        const auto file = fc.getResult();
-        if (file.existsAsFile())
-            arsenalProcessor.loadWavetableFromFile (slot, file);
-    });
-}
-
-void ArsenalEditor::paint (juce::Graphics& g)
-{
-    g.fillAll (ui::theme::background);
-
-    auto topBar = getLocalBounds().removeFromTop (ui::theme::topBarHeight);
-    g.setColour (ui::theme::surface);
-    g.fillRect (topBar);
-
-    auto slotStrip = getLocalBounds().withTop (topBar.getBottom())
-                                     .withHeight (ui::theme::slotStripHeight);
-    g.setColour (ui::theme::surfaceRaised);
-    g.fillRect (slotStrip);
-    g.setColour (ui::theme::outline);
-    g.drawHorizontalLine (slotStrip.getBottom(), 0.0f, (float) getWidth());
-
-    if (logo != nullptr)
-    {
-        auto logoArea = topBar.reduced (ui::theme::unit * 2, ui::theme::unit)
-                              .removeFromLeft (160)
-                              .toFloat();
-        logo->drawWithin (g, logoArea, juce::RectanglePlacement::xLeft
-                                     | juce::RectanglePlacement::centred, 1.0f);
-    }
+    lookAndFeel.refreshPalette();
+    sendLookAndFeelChange();
+    content->refreshAll();
+    repaint();
 }
 
 void ArsenalEditor::resized()
 {
-    auto bounds = getLocalBounds();
-    auto topBar = bounds.removeFromTop (ui::theme::topBarHeight)
-                        .reduced (ui::theme::unit * 2, ui::theme::unit);
+    if (content == nullptr)
+        return;
 
-    topBar.removeFromLeft (160 + ui::theme::unit * 2);  // logo space
-    title.setBounds (topBar.removeFromLeft (140));
+    const auto scale = (float) getWidth() / (float) ui::metrics::baseWidth;
+    content->setTransform (juce::AffineTransform::scale (scale));
+    content->setTopLeftPosition (0, 0);
 
-    masterSlider.setBounds (topBar.removeFromRight (72));
-
-    auto wildArea = topBar.removeFromRight (48);
-    wildnessLabel.setBounds (wildArea.removeFromBottom (14));
-    wildnessSlider.setBounds (wildArea);
-
-    randomizeButton.setBounds (topBar.removeFromRight (160).reduced (0, ui::theme::unit));
-
-    // Preset cluster fills the remaining top-bar space.
-    auto presetArea = topBar.reduced (ui::theme::unit, ui::theme::unit);
-    prevPresetButton.setBounds (presetArea.removeFromLeft (26));
-    savePresetButton.setBounds (presetArea.removeFromRight (48));
-    nextPresetButton.setBounds (presetArea.removeFromRight (26));
-    presetNameButton.setBounds (presetArea.reduced (2, 0));
-
-    // Lock-group row under the top bar.
-    auto lockRow = bounds.removeFromTop (ui::theme::lockRowHeight)
-                         .reduced (ui::theme::unit, 3);
-    const auto lockWidth = lockRow.getWidth() / params::numLockGroups;
-    for (auto& button : lockButtons)
-        button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 0));
-
-    auto strip = bounds.removeFromTop (ui::theme::slotStripHeight)
-                       .reduced (ui::theme::unit, ui::theme::unit / 2);
-    const auto slotWidth = strip.getWidth() / params::numOscSlots;
-
-    for (int s = 0; s < params::numOscSlots; ++s)
-    {
-        auto area = strip.removeFromLeft (slotWidth).reduced (ui::theme::unit / 2, 0);
-        auto& sc = slotControls[(size_t) s];
-
-        sc.header.setBounds (area.removeFromLeft (56));
-
-        auto wtRow = area.removeFromTop (area.getHeight() / 2);
-        sc.factoryButton.setBounds (wtRow.removeFromRight (60).reduced (0, 3));
-        sc.loadButton.setBounds (wtRow.removeFromRight (52).reduced (0, 3));
-        sc.tableName.setBounds (wtRow);
-
-        sc.sfxButton.setBounds (area.removeFromRight (112).reduced (0, 3));
-        sc.sampleName.setBounds (area);
-    }
-
-    genericPanel.setSize (bounds.getWidth() - genericViewport.getScrollBarThickness(),
-                          juce::jmax (bounds.getHeight(), genericPanel.getHeight()));
-    genericViewport.setBounds (bounds);
+    arsenalProcessor.getAPVTS().state.setProperty ("uiScale", (double) scale, nullptr);
 }
 
 } // namespace arsenal

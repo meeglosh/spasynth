@@ -7,6 +7,7 @@
 #include "library/PresetManager.h"
 #include "params/ParameterRegistry.h"
 #include "params/Randomizer.h"
+#include "ui/ArsenalEditor.h"
 
 #include <iostream>
 
@@ -997,9 +998,38 @@ namespace
         presetsRoot.deleteRecursively();
     }
 
-int main()
+    // Renders the editor offscreen for visual review: ArsenalTests --snapshot <dir>
+    static void renderEditorSnapshots (const juce::File& outDir)
+    {
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        for (const bool dark : { true, false })
+        {
+            arsenal::ui::setDarkTheme (dark);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (arsenal::ui::metrics::baseWidth, arsenal::ui::metrics::baseHeight);
+
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+            const auto file = outDir.getChildFile (dark ? "arsenal-dark.png" : "arsenal-light.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+        }
+    }
+
+int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot")
+    {
+        renderEditorSnapshots (juce::File (argv[2]));
+        return 0;
+    }
 
     renderSmokeTest();
     multiSlotUnisonTest();

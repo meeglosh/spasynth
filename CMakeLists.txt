@@ -58,6 +58,8 @@ set(ARSENAL_SOURCES
     source/dsp/SampleLoader.cpp
     source/dsp/FXChain.cpp
     source/dsp/ArsenalVoice.cpp
+    source/ui/ArsenalLookAndFeel.cpp
+    source/ui/SectionPanel.cpp
     source/ui/ArsenalEditor.cpp)
 
 target_sources(Arsenal PRIVATE ${ARSENAL_SOURCES})

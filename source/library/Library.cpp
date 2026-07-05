@@ -133,6 +133,18 @@ void setLibraryRoot (const juce::File& root)
     settings->saveIfNeeded();
 }
 
+bool getDarkThemeEnabled()
+{
+    return openSettings()->getBoolValue ("darkTheme", true);
+}
+
+void setDarkThemeEnabled (bool dark)
+{
+    auto settings = openSettings();
+    settings->setValue ("darkTheme", dark);
+    settings->saveIfNeeded();
+}
+
 juce::File defaultPresetsRoot()
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)

@@ -21,6 +21,10 @@ std::vector<Pack> scanLibrary (const juce::File& root);
 juce::File getLibraryRoot();
 void setLibraryRoot (const juce::File&);
 
+// UI theme preference (dark by default), remembered across sessions.
+bool getDarkThemeEnabled();
+void setDarkThemeEnabled (bool dark);
+
 // Quick structural check: does this folder look like an Arsenal library
 // (at least one pack subfolder containing WAVs)?
 bool looksLikeLibrary (const juce::File&);

@@ -1,0 +1,150 @@
+#include "SectionPanel.h"
+
+namespace arsenal::ui
+{
+
+namespace
+{
+    // Strip the slot/LFO prefix registry names carry for host lists — the
+    // panel title already gives that context.
+    juce::String displayName (const params::ParamDef& def)
+    {
+        auto name = def.name;
+        for (const char* prefix : { "A ", "B ", "C ", "L1 ", "L2 ", "L3 " })
+            if (name.startsWith (prefix))
+                return name.fromFirstOccurrenceOf (" ", false, false);
+        return name;
+    }
+}
+
+SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
+                            params::Section section,
+                            const juce::String& title,
+                            const juce::StringArray& excludeIDs)
+    : panelTitle (title.isNotEmpty() ? title : params::sectionName (section))
+{
+    for (const auto& def : params::all())
+    {
+        if (def.section != section || excludeIDs.contains (def.id))
+            continue;
+
+        Control control;
+
+        control.label = std::make_unique<juce::Label>();
+        control.label->setText (displayName (def), juce::dontSendNotification);
+        control.label->setFont (metrics::smallFont());
+        control.label->setJustificationType (juce::Justification::centred);
+        control.label->setInterceptsMouseClicks (false, false);
+
+        switch (def.kind)
+        {
+            case params::ParamKind::boolParam:
+            {
+                auto toggle = std::make_unique<juce::ToggleButton> (displayName (def));
+                control.buttonAttachment =
+                    std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+                        apvts, def.id, *toggle);
+                control.component = std::move (toggle);
+                control.label = nullptr;  // toggle draws its own text
+                control.wide = true;
+                break;
+            }
+            case params::ParamKind::choiceParam:
+            {
+                auto combo = std::make_unique<juce::ComboBox>();
+                combo->addItemList (def.choices, 1);
+                control.comboAttachment =
+                    std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                        apvts, def.id, *combo);
+                control.component = std::move (combo);
+                control.wide = true;
+                break;
+            }
+            case params::ParamKind::intParam:
+            case params::ParamKind::floatParam:
+            {
+                auto knob = std::make_unique<juce::Slider> (
+                    juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox);
+                knob->setPopupDisplayEnabled (true, true, this);
+                control.sliderAttachment =
+                    std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+                        apvts, def.id, *knob);
+                control.component = std::move (knob);
+                break;
+            }
+        }
+
+        addAndMakeVisible (*control.component);
+        if (control.label != nullptr)
+            addAndMakeVisible (*control.label);
+
+        controls.push_back (std::move (control));
+    }
+}
+
+void SectionPanel::paint (juce::Graphics& g)
+{
+    const auto& t = currentTheme();
+    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+
+    g.setColour (t.surface);
+    g.fillRoundedRectangle (bounds, metrics::cornerRadius);
+    g.setColour (t.outline);
+    g.drawRoundedRectangle (bounds, metrics::cornerRadius, 1.0f);
+
+    g.setColour (t.accent);
+    g.setFont (metrics::sectionFont());
+    g.drawText (panelTitle.toUpperCase(),
+                getLocalBounds().removeFromTop (headerHeight).reduced (10, 0),
+                juce::Justification::centredLeft);
+}
+
+int SectionPanel::heightForWidth (int width) const
+{
+    const auto columns = juce::jmax (1, (width - 12) / cellWidth);
+    int cellsUsed = 0;
+    for (const auto& c : controls)
+        cellsUsed += c.wide ? 2 : 1;
+    const auto rows = (cellsUsed + columns - 1) / columns;
+    return headerHeight + rows * cellHeight + 8;
+}
+
+void SectionPanel::resized()
+{
+    const auto area = getLocalBounds().withTrimmedTop (headerHeight).reduced (6, 0);
+    const auto columns = juce::jmax (1, area.getWidth() / cellWidth);
+
+    int cell = 0;
+    for (auto& control : controls)
+    {
+        const auto span = control.wide ? 2 : 1;
+        // Wrap early if a wide control would split across rows.
+        if ((cell % columns) + span > columns)
+            cell += columns - (cell % columns);
+
+        const auto col = cell % columns;
+        const auto row = cell / columns;
+        auto cellBounds = juce::Rectangle<int> (area.getX() + col * cellWidth,
+                                                area.getY() + row * cellHeight,
+                                                cellWidth * span, cellHeight);
+        cell += span;
+
+        if (control.label != nullptr)
+        {
+            control.label->setBounds (cellBounds.removeFromBottom (16));
+            control.component->setBounds (cellBounds.reduced (4));
+        }
+        else if (dynamic_cast<juce::ComboBox*> (control.component.get()) != nullptr)
+        {
+            control.component->setBounds (cellBounds.withSizeKeepingCentre (
+                cellBounds.getWidth() - 10, 24));
+        }
+        else  // toggle
+        {
+            control.component->setBounds (cellBounds.withSizeKeepingCentre (
+                cellBounds.getWidth() - 10, 22));
+        }
+    }
+}
+
+} // namespace arsenal::ui

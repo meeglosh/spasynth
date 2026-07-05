@@ -43,7 +43,6 @@ private:
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
 
     // Header.
-    juce::Label title, subtitle;
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };
     juce::TextButton presetNameButton, savePresetButton { "SAVE" };
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };

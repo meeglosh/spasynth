@@ -23,14 +23,6 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     logoLight = juce::Drawable::createFromImageData (SPAAssets::SPAudio_logo_white_svg,
                                                      SPAAssets::SPAudio_logo_white_svgSize);
 
-    title.setText ("SPASYNTH", juce::dontSendNotification);
-    title.setFont (metrics::titleFont());
-    addAndMakeVisible (title);
-
-    subtitle.setText ("Silverplatter Audio", juce::dontSendNotification);
-    subtitle.setFont (metrics::smallFont());
-    addAndMakeVisible (subtitle);
-
     prevPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); };
     addAndMakeVisible (prevPresetButton);
     nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); };
@@ -214,9 +206,6 @@ void ContentComponent::refreshAll()
 {
     const auto& t = currentTheme();
 
-    title.setColour (juce::Label::textColourId, t.accent);
-    subtitle.setColour (juce::Label::textColourId,
-                        t.isDark ? t.textSecondary : t.textSecondary.brighter (0.6f));
     wildnessLabel.setColour (juce::Label::textColourId,
                              t.isDark ? t.textSecondary : juce::Colour (0xffb9bbbd));
     randomizeButton.setColour (juce::TextButton::buttonColourId, t.accent);
@@ -304,10 +293,7 @@ void ContentComponent::resized()
 
     // --- Header -------------------------------------------------------------
     auto header = bounds.removeFromTop (metrics::headerHeight);
-    header.removeFromLeft (52);  // logo
-    auto titleArea = header.removeFromLeft (150).reduced (0, 7);
-    title.setBounds (titleArea.removeFromTop (24));
-    subtitle.setBounds (titleArea);
+    header.removeFromLeft (52);  // logo (wordmark lives in the brand band)
 
     auto right = header.removeFromRight (362).reduced (0, 9);
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));

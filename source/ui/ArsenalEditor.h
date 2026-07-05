@@ -5,6 +5,7 @@
 #include "../params/ParameterRegistry.h"
 #include "../params/Randomizer.h"
 #include "ArsenalLookAndFeel.h"
+#include "ModulePanels.h"
 #include "SectionPanel.h"
 #include "MatrixPanel.h"
 
@@ -15,57 +16,6 @@ class ArsenalProcessor;
 
 namespace ui
 {
-
-// A SectionPanel inside a viewport: sections that fit show no scrollbar,
-// dense ones scroll instead of clipping.
-class ScrollableSection : public juce::Component
-{
-public:
-    ScrollableSection (juce::AudioProcessorValueTreeState& apvts, params::Section section,
-                       const juce::String& title = {}, const juce::StringArray& exclude = {})
-        : panel (apvts, section, title, exclude)
-    {
-        viewport.setViewedComponent (&panel, false);
-        viewport.setScrollBarsShown (true, false);
-        addAndMakeVisible (viewport);
-    }
-
-    void resized() override
-    {
-        viewport.setBounds (getLocalBounds());
-        const auto w = getWidth() - viewport.getScrollBarThickness();
-        panel.setSize (juce::jmax (60, w),
-                       juce::jmax (getHeight(), panel.heightForWidth (w)));
-    }
-
-private:
-    juce::Viewport viewport;
-    SectionPanel panel;
-};
-
-// One oscillator slot page: wavetable/SFX loaders on top, the slot's
-// registry parameters underneath.
-class OscPanel : public juce::Component
-{
-public:
-    OscPanel (ArsenalProcessor&, int slotIndex);
-
-    void refreshNames();
-    void resized() override;
-
-private:
-    void chooseWavetable();
-    void chooseSample();
-
-    ArsenalProcessor& processor;
-    const int slot;
-
-    juce::Label tableName, sampleName;
-    juce::TextButton loadWTButton { "WT..." }, factoryButton { "Factory" },
-                     loadSFXButton { "SFX..." };
-    ScrollableSection section;
-    std::unique_ptr<juce::FileChooser> fileChooser;
-};
 
 // Everything inside the plugin window at base size; the editor shell scales
 // this whole component for resizing.
@@ -91,9 +41,10 @@ private:
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
 
+    // Header.
     juce::Label title, subtitle;
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };
-    juce::TextButton presetNameButton, savePresetButton { "Save" };
+    juce::TextButton presetNameButton, savePresetButton { "SAVE" };
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };
     juce::Slider wildnessSlider;
     juce::Label wildnessLabel;
@@ -102,11 +53,13 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterAttachment;
     std::array<juce::TextButton, params::numLockGroups> lockButtons;
 
-    juce::TabbedComponent oscTabs { juce::TabbedButtonBar::TabsAtTop };
-    std::array<OscPanel*, params::numOscSlots> oscPanels {};  // owned by oscTabs
-    ScrollableSection filterPanel, chaosPanel, macrosPanel;
+    // Modules.
+    std::array<std::unique_ptr<OscStrip>, params::numOscSlots> oscStrips;
+    FilterPanel filterPanel;
     juce::TabbedComponent envTabs { juce::TabbedButtonBar::TabsAtTop };
     juce::TabbedComponent lfoTabs { juce::TabbedButtonBar::TabsAtTop };
+    ChaosPanel chaosPanel;
+    SectionPanel macrosPanel;
     juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
     MatrixPanel matrixPanel;
 

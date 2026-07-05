@@ -55,6 +55,16 @@ public:
     juce::String getSampleName (int slot) const;
     juce::String getSampleError (int slot) const;
 
+    // Content access for UI displays (message thread).
+    std::shared_ptr<const dsp::Wavetable> getWavetable (int slot) const
+    {
+        return slotTables[(size_t) slot].current;
+    }
+    std::shared_ptr<const dsp::SampleData> getSample (int slot) const
+    {
+        return slotSamples[(size_t) slot].current;
+    }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();

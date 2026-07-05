@@ -37,9 +37,9 @@ private:
         bool wide = false;   // combos + toggles span two cells
     };
 
-    static constexpr int cellWidth = 74;
-    static constexpr int cellHeight = 84;
-    static constexpr int headerHeight = 24;
+    static constexpr int cellWidth = 66;
+    static constexpr int cellHeight = 72;
+    static constexpr int headerHeight = 20;
 
     juce::String panelTitle;
     std::vector<Control> controls;

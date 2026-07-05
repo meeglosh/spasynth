@@ -26,6 +26,7 @@ public:
             row->depth.setSliderStyle (juce::Slider::LinearHorizontal);
             row->depth.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             row->depth.setPopupDisplayEnabled (true, true, this);
+            row->depth.setComponentID ("mod");
 
             row->sourceAttachment = std::make_unique<
                 juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, sourceID, row->source);
@@ -47,23 +48,15 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const auto& t = currentTheme();
-        const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (t.surface);
-        g.fillRoundedRectangle (bounds, metrics::cornerRadius);
-        g.setColour (t.outline);
-        g.drawRoundedRectangle (bounds, metrics::cornerRadius, 1.0f);
-
-        g.setColour (t.accent);
-        g.setFont (metrics::sectionFont());
-        g.drawText ("MOD MATRIX", getLocalBounds().removeFromTop (24).reduced (10, 0),
-                    juce::Justification::centredLeft);
+        draw::panel (g, getLocalBounds().toFloat());
+        draw::sectionHeader (g, getLocalBounds(), "Mod Matrix", {},
+                             currentTheme().accentMod);
     }
 
     void resized() override
     {
-        constexpr int rowHeight = 28;
-        auto area = getLocalBounds().withTrimmedTop (24).reduced (6, 4);
+        constexpr int rowHeight = 25;
+        auto area = getLocalBounds().withTrimmedTop (20).reduced (6, 4);
         viewport.setBounds (area);
 
         const auto contentWidth = area.getWidth() - viewport.getScrollBarThickness();

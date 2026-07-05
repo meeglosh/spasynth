@@ -84,19 +84,8 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
 
 void SectionPanel::paint (juce::Graphics& g)
 {
-    const auto& t = currentTheme();
-    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-
-    g.setColour (t.surface);
-    g.fillRoundedRectangle (bounds, metrics::cornerRadius);
-    g.setColour (t.outline);
-    g.drawRoundedRectangle (bounds, metrics::cornerRadius, 1.0f);
-
-    g.setColour (t.accent);
-    g.setFont (metrics::sectionFont());
-    g.drawText (panelTitle.toUpperCase(),
-                getLocalBounds().removeFromTop (headerHeight).reduced (10, 0),
-                juce::Justification::centredLeft);
+    draw::panel (g, getLocalBounds().toFloat());
+    draw::sectionHeader (g, getLocalBounds(), panelTitle, {}, currentTheme().accent);
 }
 
 int SectionPanel::heightForWidth (int width) const

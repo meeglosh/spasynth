@@ -18,9 +18,14 @@ juce::String sectionName (Section s)
         case Section::lfo1:    return "LFO 1";
         case Section::lfo2:    return "LFO 2";
         case Section::lfo3:    return "LFO 3";
-        case Section::macros:  return "Macros";
-        case Section::chaos:   return "Chaos";
-        case Section::matrix:  return "Mod Matrix";
+        case Section::macros:   return "Macros";
+        case Section::chaos:    return "Chaos";
+        case Section::fxDist:   return "FX Dist";
+        case Section::fxChorus: return "FX Chorus";
+        case Section::fxDelay:  return "FX Delay";
+        case Section::fxReverb: return "FX Reverb";
+        case Section::fxEQ:     return "FX EQ";
+        case Section::matrix:   return "Mod Matrix";
     }
     return {};
 }
@@ -353,6 +358,99 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
                    false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
                             .biasStrength = 0.4f } });
+
+    // --- FX chain -------------------------------------------------------
+    namespace fx = id::fx;
+
+    p.push_back ({ fx::distEnable, "Dist On", Section::fxDist,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::distType, "Dist Type", Section::fxDist,
+                   ParamKind::choiceParam, {}, 0.0f, "", false, { .enabled = true },
+                   { "Soft", "Hard", "Fold" } });
+    p.push_back ({ fx::distDrive, "Dist Drive", Section::fxDist,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.3f,
+                            .biasStrength = 0.3f } });
+    p.push_back ({ fx::distTone, "Dist Tone", Section::fxDist,
+                   ParamKind::floatParam, frequencyRange (500.0f, 20000.0f), 8000.0f, "Hz",
+                   false, { .enabled = true, .minNorm = 0.3f } });
+    p.push_back ({ fx::distMix, "Dist Mix", Section::fxDist,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .minNorm = 0.3f } });
+
+    p.push_back ({ fx::chorusEnable, "Chorus On", Section::fxChorus,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::chorusRate, "Chorus Rate", Section::fxChorus,
+                   ParamKind::floatParam, frequencyRange (0.05f, 5.0f), 0.8f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.7f } });
+    p.push_back ({ fx::chorusDepth, "Chorus Depth", Section::fxChorus,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .biasCentre = 0.35f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::chorusFeedback, "Chorus FB", Section::fxChorus,
+                   ParamKind::floatParam, { -0.9f, 0.9f }, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    p.push_back ({ fx::chorusMix, "Chorus Mix", Section::fxChorus,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+
+    p.push_back ({ fx::delayEnable, "Delay On", Section::fxDelay,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::delaySync, "Delay Sync", Section::fxDelay,
+                   ParamKind::boolParam, {}, 1.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.8f, .biasStrength = 0.5f } });
+    p.push_back ({ fx::delayTime, "Delay Time", Section::fxDelay,
+                   ParamKind::floatParam, { 1.0f, 2000.0f, 0.0f, 0.4f }, 350.0f, "ms",
+                   false, { .enabled = true, .minNorm = 0.2f, .maxNorm = 0.8f } });
+    p.push_back ({ fx::delayDivision, "Delay Div", Section::fxDelay,
+                   ParamKind::choiceParam, {}, 6.0f /* 1/4 */, "",
+                   false, { .enabled = true, .minNorm = 0.3f, .maxNorm = 0.9f },
+                   lfoDivisionNames() });
+    p.push_back ({ fx::delayFeedback, "Delay FB", Section::fxDelay,
+                   ParamKind::floatParam, { 0.0f, 0.95f }, 0.35f, "",
+                   false, { .enabled = true, .maxNorm = 0.75f, .biasCentre = 0.4f,
+                            .biasStrength = 0.3f } });
+    p.push_back ({ fx::delayPingPong, "Ping Pong", Section::fxDelay,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::delayMix, "Delay Mix", Section::fxDelay,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.35f, "",
+                   false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.35f,
+                            .biasStrength = 0.3f } });
+
+    p.push_back ({ fx::reverbEnable, "Reverb On", Section::fxReverb,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.6f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::reverbSize, "Reverb Size", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::reverbDamping, "Reverb Damp", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::reverbWidth, "Reverb Width", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .minNorm = 0.4f } });
+    p.push_back ({ fx::reverbMix, "Reverb Mix", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.3f,
+                            .biasStrength = 0.3f } });
+
+    p.push_back ({ fx::eqEnable, "EQ On", Section::fxEQ,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
+    p.push_back ({ fx::eqLowGain, "EQ Low", Section::fxEQ,
+                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    p.push_back ({ fx::eqMidFreq, "EQ Mid Freq", Section::fxEQ,
+                   ParamKind::floatParam, frequencyRange (200.0f, 8000.0f), 1000.0f, "Hz",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::eqMidGain, "EQ Mid", Section::fxEQ,
+                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    p.push_back ({ fx::eqHighGain, "EQ High", Section::fxEQ,
+                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
 
     return p;
 }

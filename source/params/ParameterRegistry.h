@@ -31,6 +31,11 @@ enum class Section
     lfo3,
     macros,
     chaos,
+    fxDist,
+    fxChorus,
+    fxDelay,
+    fxReverb,
+    fxEQ,
     matrix,
 };
 
@@ -38,7 +43,8 @@ inline constexpr Section allSections[] = {
     Section::global, Section::oscA, Section::oscB, Section::oscC,
     Section::filter1, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
-    Section::chaos, Section::matrix,
+    Section::chaos, Section::fxDist, Section::fxChorus, Section::fxDelay,
+    Section::fxReverb, Section::fxEQ, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -219,6 +225,42 @@ namespace id
         inline constexpr const char* saturation     = "chaos.saturation";
         inline constexpr const char* distOn         = "chaos.distOn";
         inline constexpr const char* distortion     = "chaos.distortion";
+    }
+
+    // FX chain (global, post-synth).
+    namespace fx
+    {
+        inline constexpr const char* distEnable = "fxDist.enable";
+        inline constexpr const char* distType   = "fxDist.type";
+        inline constexpr const char* distDrive  = "fxDist.drive";
+        inline constexpr const char* distTone   = "fxDist.tone";
+        inline constexpr const char* distMix    = "fxDist.mix";
+
+        inline constexpr const char* chorusEnable   = "fxChorus.enable";
+        inline constexpr const char* chorusRate     = "fxChorus.rate";
+        inline constexpr const char* chorusDepth    = "fxChorus.depth";
+        inline constexpr const char* chorusFeedback = "fxChorus.feedback";
+        inline constexpr const char* chorusMix      = "fxChorus.mix";
+
+        inline constexpr const char* delayEnable   = "fxDelay.enable";
+        inline constexpr const char* delaySync     = "fxDelay.sync";
+        inline constexpr const char* delayTime     = "fxDelay.time";
+        inline constexpr const char* delayDivision = "fxDelay.division";
+        inline constexpr const char* delayFeedback = "fxDelay.feedback";
+        inline constexpr const char* delayPingPong = "fxDelay.pingpong";
+        inline constexpr const char* delayMix      = "fxDelay.mix";
+
+        inline constexpr const char* reverbEnable  = "fxReverb.enable";
+        inline constexpr const char* reverbSize    = "fxReverb.size";
+        inline constexpr const char* reverbDamping = "fxReverb.damping";
+        inline constexpr const char* reverbWidth   = "fxReverb.width";
+        inline constexpr const char* reverbMix     = "fxReverb.mix";
+
+        inline constexpr const char* eqEnable   = "fxEQ.enable";
+        inline constexpr const char* eqLowGain  = "fxEQ.lowGain";
+        inline constexpr const char* eqMidFreq  = "fxEQ.midFreq";
+        inline constexpr const char* eqMidGain  = "fxEQ.midGain";
+        inline constexpr const char* eqHighGain = "fxEQ.highGain";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

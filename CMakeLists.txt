@@ -53,6 +53,7 @@ set(ARSENAL_SOURCES
     source/dsp/Wavetable.cpp
     source/dsp/WavetableLoader.cpp
     source/dsp/SampleLoader.cpp
+    source/dsp/FXChain.cpp
     source/dsp/ArsenalVoice.cpp
     source/ui/ArsenalEditor.cpp)
 

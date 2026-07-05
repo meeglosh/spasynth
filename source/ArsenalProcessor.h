@@ -4,6 +4,7 @@
 
 #include "params/ParameterRegistry.h"
 #include "dsp/ArsenalVoice.h"
+#include "dsp/FXChain.h"
 
 namespace arsenal
 {
@@ -28,7 +29,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override { return fxChain.tailSeconds (fxParams); }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -66,6 +67,8 @@ private:
 
     dsp::SharedState shared;   // written on audio thread, read by voices
     juce::Synthesiser synth;
+    dsp::FXChain fxChain;
+    dsp::FXChain::Params fxParams;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
 
     double currentSampleRate = 44100.0;
@@ -162,7 +165,40 @@ private:
         std::array<RawRoute, params::numModRoutes> routes {};
         // One pointer per mod destination, in dense mod-dest index order.
         std::vector<std::atomic<float>*> dests;
+
+        struct RawFX
+        {
+            std::atomic<float>* distEnable = nullptr;
+            std::atomic<float>* distType = nullptr;
+            std::atomic<float>* distDrive = nullptr;
+            std::atomic<float>* distTone = nullptr;
+            std::atomic<float>* distMix = nullptr;
+            std::atomic<float>* chorusEnable = nullptr;
+            std::atomic<float>* chorusRate = nullptr;
+            std::atomic<float>* chorusDepth = nullptr;
+            std::atomic<float>* chorusFeedback = nullptr;
+            std::atomic<float>* chorusMix = nullptr;
+            std::atomic<float>* delayEnable = nullptr;
+            std::atomic<float>* delaySync = nullptr;
+            std::atomic<float>* delayTime = nullptr;
+            std::atomic<float>* delayDivision = nullptr;
+            std::atomic<float>* delayFeedback = nullptr;
+            std::atomic<float>* delayPingPong = nullptr;
+            std::atomic<float>* delayMix = nullptr;
+            std::atomic<float>* reverbEnable = nullptr;
+            std::atomic<float>* reverbSize = nullptr;
+            std::atomic<float>* reverbDamping = nullptr;
+            std::atomic<float>* reverbWidth = nullptr;
+            std::atomic<float>* reverbMix = nullptr;
+            std::atomic<float>* eqEnable = nullptr;
+            std::atomic<float>* eqLowGain = nullptr;
+            std::atomic<float>* eqMidFreq = nullptr;
+            std::atomic<float>* eqMidGain = nullptr;
+            std::atomic<float>* eqHighGain = nullptr;
+        } fx {};
     } raw;
+
+    void updateFXParams();
 
     static constexpr int numVoices = 16;
 

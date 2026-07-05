@@ -569,6 +569,133 @@ namespace
         file.deleteFile();
     }
 
+    static void fxDelayReverbTest()
+    {
+        std::cout << "fxDelayReverbTest\n";
+
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        // Short staccato note; measure energy in the window 0.2-1.0s after
+        // note-off, with and without delay+reverb.
+        auto tailEnergy = [&] (bool fxOn)
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::ampRelease, 0.02f);
+            setParam (proc, id::chaos::enable, 0.0f);
+
+            if (fxOn)
+            {
+                setParam (proc, id::fx::delayEnable, 1.0f);
+                setParam (proc, id::fx::delaySync, 0.0f);
+                setParam (proc, id::fx::delayTime, 150.0f);
+                setParam (proc, id::fx::delayFeedback, 0.6f);
+                setParam (proc, id::fx::delayMix, 0.8f);
+                setParam (proc, id::fx::reverbEnable, 1.0f);
+                setParam (proc, id::fx::reverbMix, 0.5f);
+            }
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            midi.addEvent (juce::MidiMessage::noteOff (1, 60), blockSize - 1);
+
+            float energy = 0.0f;
+            const auto blocksTotal = (int) (1.0 * sampleRate / blockSize);
+            const auto blocksSkip = (int) (0.2 * sampleRate / blockSize);
+            for (int b = 0; b < blocksTotal; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                if (b >= blocksSkip)
+                    energy += buffer.getRMSLevel (0, 0, blockSize);
+            }
+            return energy;
+        };
+
+        const auto dry = tailEnergy (false);
+        const auto wet = tailEnergy (true);
+        expect (wet > dry * 3.0f + 1.0e-4f,
+                "delay+reverb produce a tail (dry " + juce::String (dry)
+                + " vs wet " + juce::String (wet) + ")");
+    }
+
+    static void fxEQDistortionTest()
+    {
+        std::cout << "fxEQDistortionTest\n";
+
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        auto brightnessWith = [&] (auto configure)
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);  // saw-ish
+            configure (proc);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            renderBlocks (proc, buffer, midi, 16);
+
+            proc.processBlock (buffer, midi);
+            float hf = 0.0f;
+            for (int i = 1; i < blockSize; ++i)
+                hf += std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1));
+            return hf / (float) blockSize;
+        };
+
+        const auto flat = brightnessWith ([] (auto&) {});
+        const auto darkened = brightnessWith ([] (auto& proc)
+        {
+            setParam (proc, id::fx::eqEnable, 1.0f);
+            setParam (proc, id::fx::eqHighGain, -12.0f);
+            setParam (proc, id::fx::eqMidGain, -12.0f);
+            setParam (proc, id::fx::eqMidFreq, 4000.0f);
+        });
+        expect (darkened < flat * 0.8f,
+                "EQ high/mid cut darkens output (flat " + juce::String (flat)
+                + " vs cut " + juce::String (darkened) + ")");
+
+        // Distortion flattens peaks: crest factor (peak/RMS) must drop.
+        auto crestWith = [&] (auto configure)
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);
+            configure (proc);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            renderBlocks (proc, buffer, midi, 16);
+
+            proc.processBlock (buffer, midi);
+            const auto peak = buffer.getMagnitude (0, blockSize);
+            const auto rms = buffer.getRMSLevel (0, 0, blockSize);
+            return rms > 0.0f ? peak / rms : 0.0f;
+        };
+
+        const auto crestClean = crestWith ([] (auto&) {});
+        const auto crestDriven = crestWith ([] (auto& proc)
+        {
+            setParam (proc, id::fx::distEnable, 1.0f);
+            setParam (proc, id::fx::distDrive, 1.0f);
+            setParam (proc, id::fx::distTone, 20000.0f);
+        });
+        expect (crestDriven < crestClean * 0.9f,
+                "distortion flattens peaks (clean crest " + juce::String (crestClean)
+                + " vs driven " + juce::String (crestDriven) + ")");
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -584,6 +711,8 @@ int main()
     samplePlaybackTest();
     granularTest();
     sfxFollowerTest();
+    fxDelayReverbTest();
+    fxEQDistortionTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

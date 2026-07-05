@@ -86,6 +86,38 @@ ArsenalProcessor::ArsenalProcessor()
     for (const auto& dest : params::modDestinations())
         raw.dests.push_back (apvts.getRawParameterValue (dest.def->id));
 
+    {
+        namespace fx = params::id::fx;
+        auto& rf = raw.fx;
+        rf.distEnable     = apvts.getRawParameterValue (fx::distEnable);
+        rf.distType       = apvts.getRawParameterValue (fx::distType);
+        rf.distDrive      = apvts.getRawParameterValue (fx::distDrive);
+        rf.distTone       = apvts.getRawParameterValue (fx::distTone);
+        rf.distMix        = apvts.getRawParameterValue (fx::distMix);
+        rf.chorusEnable   = apvts.getRawParameterValue (fx::chorusEnable);
+        rf.chorusRate     = apvts.getRawParameterValue (fx::chorusRate);
+        rf.chorusDepth    = apvts.getRawParameterValue (fx::chorusDepth);
+        rf.chorusFeedback = apvts.getRawParameterValue (fx::chorusFeedback);
+        rf.chorusMix      = apvts.getRawParameterValue (fx::chorusMix);
+        rf.delayEnable    = apvts.getRawParameterValue (fx::delayEnable);
+        rf.delaySync      = apvts.getRawParameterValue (fx::delaySync);
+        rf.delayTime      = apvts.getRawParameterValue (fx::delayTime);
+        rf.delayDivision  = apvts.getRawParameterValue (fx::delayDivision);
+        rf.delayFeedback  = apvts.getRawParameterValue (fx::delayFeedback);
+        rf.delayPingPong  = apvts.getRawParameterValue (fx::delayPingPong);
+        rf.delayMix       = apvts.getRawParameterValue (fx::delayMix);
+        rf.reverbEnable   = apvts.getRawParameterValue (fx::reverbEnable);
+        rf.reverbSize     = apvts.getRawParameterValue (fx::reverbSize);
+        rf.reverbDamping  = apvts.getRawParameterValue (fx::reverbDamping);
+        rf.reverbWidth    = apvts.getRawParameterValue (fx::reverbWidth);
+        rf.reverbMix      = apvts.getRawParameterValue (fx::reverbMix);
+        rf.eqEnable       = apvts.getRawParameterValue (fx::eqEnable);
+        rf.eqLowGain      = apvts.getRawParameterValue (fx::eqLowGain);
+        rf.eqMidFreq      = apvts.getRawParameterValue (fx::eqMidFreq);
+        rf.eqMidGain      = apvts.getRawParameterValue (fx::eqMidGain);
+        rf.eqHighGain     = apvts.getRawParameterValue (fx::eqHighGain);
+    }
+
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
     for (int s = 0; s < params::numOscSlots; ++s)
     {
@@ -203,13 +235,49 @@ juce::String ArsenalProcessor::getWavetableError (int slot) const
     return slotTables[(size_t) slot].error;
 }
 
-void ArsenalProcessor::prepareToPlay (double sampleRate, int)
+void ArsenalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
+    fxChain.prepare (sampleRate, samplesPerBlock);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+}
+
+void ArsenalProcessor::updateFXParams()
+{
+    const auto& rf = raw.fx;
+    auto& p = fxParams;
+
+    p.distEnable     = rf.distEnable->load() >= 0.5f;
+    p.distType       = (int) rf.distType->load();
+    p.distDrive      = rf.distDrive->load();
+    p.distToneHz     = rf.distTone->load();
+    p.distMix        = rf.distMix->load();
+    p.chorusEnable   = rf.chorusEnable->load() >= 0.5f;
+    p.chorusRate     = rf.chorusRate->load();
+    p.chorusDepth    = rf.chorusDepth->load();
+    p.chorusFeedback = rf.chorusFeedback->load();
+    p.chorusMix      = rf.chorusMix->load();
+    p.delayEnable    = rf.delayEnable->load() >= 0.5f;
+    p.delaySync      = rf.delaySync->load() >= 0.5f;
+    p.delayTimeMs    = rf.delayTime->load();
+    p.delayDivision  = (int) rf.delayDivision->load();
+    p.delayFeedback  = rf.delayFeedback->load();
+    p.delayPingPong  = rf.delayPingPong->load() >= 0.5f;
+    p.delayMix       = rf.delayMix->load();
+    p.reverbEnable   = rf.reverbEnable->load() >= 0.5f;
+    p.reverbSize     = rf.reverbSize->load();
+    p.reverbDamping  = rf.reverbDamping->load();
+    p.reverbWidth    = rf.reverbWidth->load();
+    p.reverbMix      = rf.reverbMix->load();
+    p.eqEnable       = rf.eqEnable->load() >= 0.5f;
+    p.eqLowGainDb    = rf.eqLowGain->load();
+    p.eqMidFreq      = rf.eqMidFreq->load();
+    p.eqMidGainDb    = rf.eqMidGain->load();
+    p.eqHighGainDb   = rf.eqHighGain->load();
+    p.bpm            = shared.bpm;
 }
 
 bool ArsenalProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -336,6 +404,9 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     scanMidiControllers (midi);
     updateSharedState (buffer.getNumSamples());
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
+
+    updateFXParams();
+    fxChain.process (buffer, fxParams);
 
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
     masterGain.applyGain (buffer, buffer.getNumSamples());

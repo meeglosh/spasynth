@@ -60,7 +60,7 @@ private:
     juce::TabbedComponent envTabs { juce::TabbedButtonBar::TabsAtTop };
     juce::TabbedComponent lfoTabs { juce::TabbedButtonBar::TabsAtTop };
     ChaosPanel chaosPanel;
-    SectionPanel macrosPanel;
+    ArpPanel arpPanel;
     juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
     MatrixPanel matrixPanel;
     OutputMeter outputMeter;

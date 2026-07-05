@@ -19,6 +19,7 @@ juce::String sectionName (Section s)
         case Section::lfo2:    return "LFO 2";
         case Section::lfo3:    return "LFO 3";
         case Section::macros:   return "Macros";
+        case Section::arp:      return "Arpeggiator";
         case Section::chaos:    return "Chaos";
         case Section::fxDist:   return "FX Dist";
         case Section::fxChorus: return "FX Chorus";
@@ -310,6 +311,46 @@ static std::vector<ParamDef> buildCoreDefs()
                        ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                        false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });
 
+    // --- Arpeggiator ----------------------------------------------------
+    namespace arpid = id::arp;
+    juce::StringArray phraseNames;
+    for (const auto& phrase : arpPhrases())
+        phraseNames.add (phrase.name);
+
+    p.push_back ({ arpid::enable, "Arp On", Section::arp,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.15f, .biasStrength = 0.6f } });
+    p.push_back ({ arpid::mode, "Arp Mode", Section::arp,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "Up", "Down", "Up-Down", "Down-Up", "Up-Down Incl",
+                     "Converge", "Diverge", "As Played", "Chord",
+                     "Random", "Random Walk", "Phrase" } });
+    p.push_back ({ arpid::division, "Arp Rate", Section::arp,
+                   ParamKind::choiceParam, {}, 12.0f /* 1/16 */, "",
+                   false, { .enabled = true, .minNorm = 0.4f, .maxNorm = 1.0f },
+                   lfoDivisionNames() });
+    p.push_back ({ arpid::octaves, "Arp Octaves", Section::arp,
+                   ParamKind::intParam, { 1.0f, 4.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.7f } });
+    p.push_back ({ arpid::gate, "Arp Gate", Section::arp,
+                   ParamKind::floatParam, { 0.05f, 1.0f }, 0.8f, "",
+                   false, { .enabled = true, .minNorm = 0.3f } });
+    p.push_back ({ arpid::swing, "Arp Swing", Section::arp,
+                   ParamKind::floatParam, { 0.0f, 0.75f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.1f,
+                            .biasStrength = 0.5f } });
+    p.push_back ({ arpid::latch, "Arp Latch", Section::arp,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ arpid::phrase, "Arp Phrase", Section::arp,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true }, phraseNames });
+    p.push_back ({ arpid::velMode, "Arp Velocity", Section::arp,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "As Played", "Fixed", "Accent" } });
+
     // --- Organic Chaos ------------------------------------------------------
     namespace ch = id::chaos;
     p.push_back ({ ch::enable, "Chaos Enable", Section::chaos,
@@ -453,6 +494,25 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
 
     return p;
+}
+
+const std::vector<ArpPhrase>& arpPhrases()
+{
+    static const std::vector<ArpPhrase> phrases = {
+        { "Root Pulse",     4, { 0, 0, 12, 0 } },
+        { "Octaves",        2, { 0, 12 } },
+        { "Fifths",         4, { 0, 7, 12, 7 } },
+        { "Major Arp",      4, { 0, 4, 7, 12 } },
+        { "Minor Arp",      4, { 0, 3, 7, 12 } },
+        { "Sus4 Climb",     4, { 0, 5, 7, 12 } },
+        { "Minor Run",      8, { 0, 3, 5, 7, 10, 7, 5, 3 } },
+        { "Pentatonic",     8, { 0, 3, 5, 7, 10, 12, 10, 7 } },
+        { "Octave Bounce",  6, { 0, 12, 24, 12, 0, -12 } },
+        { "Stairway",       8, { 0, 7, 3, 10, 5, 12, 7, 15 } },
+        { "Trance Gate",    8, { 0, 0, 12, 0, 0, 12, 0, 12 } },
+        { "Ripple",        12, { 0, 4, 7, 12, 16, 19, 24, 19, 16, 12, 7, 4 } },
+    };
+    return phrases;
 }
 
 const std::vector<ParamDef>& all()

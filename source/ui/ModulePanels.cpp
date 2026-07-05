@@ -379,6 +379,63 @@ void ChaosPanel::resized()
     }
 }
 
+// =============================== ArpPanel ==================================
+
+ArpPanel::ArpPanel (juce::AudioProcessorValueTreeState& apvts)
+    : enable (apvts, id::arp::enable, "ON"),
+      latch (apvts, id::arp::latch, "LATCH"),
+      mode (apvts, id::arp::mode),
+      division (apvts, id::arp::division),
+      phrase (apvts, id::arp::phrase),
+      velMode (apvts, id::arp::velMode),
+      octaves (apvts, id::arp::octaves, "OCTAVES", true),
+      gate (apvts, id::arp::gate, "GATE", true),
+      swing (apvts, id::arp::swing, "SWING", true)
+{
+    addAndMakeVisible (enable);
+    addAndMakeVisible (latch);
+    addAndMakeVisible (mode);
+    addAndMakeVisible (division);
+    addAndMakeVisible (phrase);
+    addAndMakeVisible (velMode);
+    addAndMakeVisible (octaves);
+    addAndMakeVisible (gate);
+    addAndMakeVisible (swing);
+}
+
+void ArpPanel::paint (juce::Graphics& g)
+{
+    draw::panel (g, getLocalBounds().toFloat());
+    draw::sectionHeader (g, getLocalBounds(), "Arpeggiator", {},
+                         currentTheme().accentMod);
+}
+
+void ArpPanel::resized()
+{
+    auto area = getLocalBounds().withTrimmedTop (20).reduced (7, 3);
+
+    auto row1 = area.removeFromTop (24);
+    enable.setBounds (row1.removeFromLeft (48));
+    latch.setBounds (row1.removeFromLeft (62));
+    row1.removeFromLeft (2);
+    mode.setBounds (row1.removeFromLeft ((row1.getWidth() - 4) * 58 / 100).reduced (0, 1));
+    row1.removeFromLeft (4);
+    division.setBounds (row1.reduced (0, 1));
+
+    area.removeFromTop (4);
+    auto row2 = area.removeFromTop (24);
+    phrase.setBounds (row2.removeFromLeft ((row2.getWidth() - 4) * 58 / 100).reduced (0, 1));
+    row2.removeFromLeft (4);
+    velMode.setBounds (row2.reduced (0, 1));
+
+    area.removeFromTop (2);
+    const auto cellW = area.getWidth() / 3;
+    auto knobRow = area.withHeight (juce::jmin (area.getHeight(), 68));
+    octaves.setBounds (knobRow.removeFromLeft (cellW));
+    gate.setBounds (knobRow.removeFromLeft (cellW));
+    swing.setBounds (knobRow);
+}
+
 // =============================== FXPanel ===================================
 
 FXPanel::FXPanel (juce::AudioProcessorValueTreeState& apvts, FXDisplay::Kind kind,

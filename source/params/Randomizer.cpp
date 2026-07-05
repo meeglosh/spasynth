@@ -13,6 +13,7 @@ juce::String lockGroupName (LockGroup g)
         case LockGroup::lfos:        return "LFO";
         case LockGroup::macros:      return "MACRO";
         case LockGroup::chaos:       return "CHAOS";
+        case LockGroup::arp:         return "ARP";
         case LockGroup::fx:          return "FX";
         case LockGroup::matrix:      return "MATRIX";
         case LockGroup::count:       break;
@@ -36,6 +37,7 @@ LockGroup lockGroupFor (Section s)
         case Section::lfo3:     return LockGroup::lfos;
         case Section::macros:   return LockGroup::macros;
         case Section::chaos:    return LockGroup::chaos;
+        case Section::arp:      return LockGroup::arp;
         case Section::fxDist:
         case Section::fxChorus:
         case Section::fxDelay:

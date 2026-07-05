@@ -5,6 +5,7 @@
 #include "params/ParameterRegistry.h"
 #include "dsp/ArsenalVoice.h"
 #include "dsp/FXChain.h"
+#include "dsp/Arpeggiator.h"
 #include "library/PresetManager.h"
 #include "MidiLearn.h"
 
@@ -106,6 +107,7 @@ private:
 
     dsp::SharedState shared;   // written on audio thread, read by voices
     dsp::Telemetry telemetry;
+    dsp::Arpeggiator arp;
     juce::Synthesiser synth;
     dsp::FXChain fxChain;
     dsp::FXChain::Params fxParams;
@@ -198,10 +200,24 @@ private:
         std::atomic<float>* distortion = nullptr;
     };
 
+    struct RawArp
+    {
+        std::atomic<float>* enable = nullptr;
+        std::atomic<float>* mode = nullptr;
+        std::atomic<float>* division = nullptr;
+        std::atomic<float>* octaves = nullptr;
+        std::atomic<float>* gate = nullptr;
+        std::atomic<float>* swing = nullptr;
+        std::atomic<float>* latch = nullptr;
+        std::atomic<float>* phrase = nullptr;
+        std::atomic<float>* velMode = nullptr;
+    };
+
     struct Raw
     {
         std::atomic<float>* masterGain = nullptr;
         std::atomic<float>* filterType = nullptr;
+        RawArp arp {};
         RawChaos chaos {};
         std::array<RawSlot, params::numOscSlots> slots {};
         std::array<RawLFO, params::numLFOs> lfos {};

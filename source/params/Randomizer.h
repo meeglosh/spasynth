@@ -15,6 +15,7 @@ enum class LockGroup
     lfos,
     macros,
     chaos,
+    arp,
     fx,
     matrix,
     count,

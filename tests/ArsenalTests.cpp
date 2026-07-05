@@ -2,6 +2,7 @@
 // pipeline without a host.
 
 #include "ArsenalProcessor.h"
+#include "dsp/Arpeggiator.h"
 #include "dsp/WavetableLoader.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
@@ -1115,6 +1116,116 @@ namespace
                 "loading a preset keeps hardware mappings");
     }
 
+    static void arpeggiatorTest()
+    {
+        std::cout << "arpeggiatorTest\n";
+
+        namespace params = arsenal::params;
+        using Arp = arsenal::dsp::Arpeggiator;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        Arp arp;
+        arp.prepare (sampleRate);
+
+        Arp::Params p;
+        p.enable = true;
+        p.mode = params::ArpMode::up;
+        p.division = 12;      // 1/16 @ 120bpm = 125ms = 6000 samples
+        p.gate = 0.5f;
+        p.sampleRate = sampleRate;
+
+        // Hold C-E-G; run one second; collect events.
+        std::vector<int> ons;
+        int offs = 0;
+
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 100), 0);
+
+        for (int block = 0; block < (int) (sampleRate / blockSize); ++block)
+        {
+            arp.process (midi, blockSize, p);
+            for (const auto metadata : midi)
+            {
+                if (metadata.getMessage().isNoteOn())
+                    ons.push_back (metadata.getMessage().getNoteNumber());
+                else if (metadata.getMessage().isNoteOff())
+                    ++offs;
+            }
+            midi.clear();
+        }
+
+        // 1s at 125ms/step = 8 steps (first at t=0).
+        expect (ons.size() >= 7 && ons.size() <= 9,
+                "up mode: ~8 steps per second (" + juce::String ((int) ons.size()) + ")");
+        expect (offs >= (int) ons.size() - 1, "gated note-offs follow note-ons");
+
+        bool cycleOk = ons.size() >= 6;
+        const int expected[3] = { 60, 64, 67 };
+        for (size_t i = 0; i < juce::jmin ((size_t) 6, ons.size()); ++i)
+            cycleOk = cycleOk && ons[i] == expected[i % 3];
+        expect (cycleOk, "up mode cycles C-E-G in pitch order");
+
+        // Latch: release all keys, arp keeps stepping.
+        p.latch = true;
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+        int latchedOns = 0;
+        for (int block = 0; block < (int) (0.5 * sampleRate / blockSize); ++block)
+        {
+            arp.process (midi, blockSize, p);
+            for (const auto metadata : midi)
+                if (metadata.getMessage().isNoteOn())
+                    ++latchedOns;
+            midi.clear();
+        }
+        expect (latchedOns >= 3, "latch keeps arping after keys release ("
+                                 + juce::String (latchedOns) + ")");
+
+        // Phrase mode: only the lowest held note seeds the pattern; check
+        // emitted pitches match the phrase intervals from C4.
+        Arp arp2;
+        arp2.prepare (sampleRate);
+        p = {};
+        p.enable = true;
+        p.mode = params::ArpMode::phrase;
+        p.phrase = 2;         // "Fifths": 0, 7, 12, 7
+        p.division = 12;
+        p.sampleRate = sampleRate;
+
+        std::vector<int> phraseNotes;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+        for (int block = 0; block < (int) (sampleRate / blockSize); ++block)
+        {
+            arp2.process (midi, blockSize, p);
+            for (const auto metadata : midi)
+                if (metadata.getMessage().isNoteOn())
+                    phraseNotes.push_back (metadata.getMessage().getNoteNumber());
+            midi.clear();
+        }
+
+        const int phraseExpected[4] = { 48, 55, 60, 55 };
+        bool phraseOk = phraseNotes.size() >= 4;
+        for (size_t i = 0; i < juce::jmin ((size_t) 8, phraseNotes.size()); ++i)
+            phraseOk = phraseOk && phraseNotes[i] == phraseExpected[i % 4];
+        expect (phraseOk, "phrase mode plays root/fifth/octave pattern from C3");
+
+        // Disable mid-run: pass-through resumes and actives get released.
+        p.enable = false;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 90), 10);
+        arp2.process (midi, blockSize, p);
+        bool sawPassThrough = false;
+        for (const auto metadata : midi)
+            if (metadata.getMessage().isNoteOn()
+                && metadata.getMessage().getNoteNumber() == 72)
+                sawPassThrough = true;
+        expect (sawPassThrough, "disabled arp passes MIDI through");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1141,6 +1252,7 @@ int main (int argc, char* argv[])
     randomizerTest();
     randomizerProducesSoundTest();
     midiLearnTest();
+    arpeggiatorTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

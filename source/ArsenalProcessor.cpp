@@ -86,6 +86,19 @@ ArsenalProcessor::ArsenalProcessor()
         raw.chaos.distortion     = apvts.getRawParameterValue (ch::distortion);
     }
 
+    {
+        namespace arpid = params::id::arp;
+        raw.arp.enable   = apvts.getRawParameterValue (arpid::enable);
+        raw.arp.mode     = apvts.getRawParameterValue (arpid::mode);
+        raw.arp.division = apvts.getRawParameterValue (arpid::division);
+        raw.arp.octaves  = apvts.getRawParameterValue (arpid::octaves);
+        raw.arp.gate     = apvts.getRawParameterValue (arpid::gate);
+        raw.arp.swing    = apvts.getRawParameterValue (arpid::swing);
+        raw.arp.latch    = apvts.getRawParameterValue (arpid::latch);
+        raw.arp.phrase   = apvts.getRawParameterValue (arpid::phrase);
+        raw.arp.velMode  = apvts.getRawParameterValue (arpid::velMode);
+    }
+
     raw.dests.reserve ((size_t) params::numModDests());
     for (const auto& dest : params::modDestinations())
         raw.dests.push_back (apvts.getRawParameterValue (dest.def->id));
@@ -344,6 +357,7 @@ void ArsenalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
+    arp.prepare (sampleRate);
     fxChain.prepare (sampleRate, samplesPerBlock);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (
@@ -508,6 +522,37 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
+
+    // Arpeggiator transforms the note stream ahead of the synth.
+    {
+        dsp::Arpeggiator::Params ap;
+        ap.enable       = raw.arp.enable->load() >= 0.5f;
+        ap.mode         = (params::ArpMode) (int) raw.arp.mode->load();
+        ap.division     = (int) raw.arp.division->load();
+        ap.octaves      = (int) raw.arp.octaves->load();
+        ap.gate         = raw.arp.gate->load();
+        ap.swing        = raw.arp.swing->load();
+        ap.latch        = raw.arp.latch->load() >= 0.5f;
+        ap.phrase       = (int) raw.arp.phrase->load();
+        ap.velocityMode = (int) raw.arp.velMode->load();
+        ap.bpm          = 120.0;
+        ap.sampleRate   = currentSampleRate;
+
+        if (auto* playHead = getPlayHead())
+        {
+            if (const auto position = playHead->getPosition())
+            {
+                if (const auto bpm = position->getBpm())
+                    ap.bpm = *bpm;
+                ap.hostPlaying = position->getIsPlaying();
+                if (const auto ppq = position->getPpqPosition())
+                    ap.ppqAtBlockStart = *ppq;
+            }
+        }
+
+        arp.process (midi, buffer.getNumSamples(), ap);
+    }
+
     updateSharedState (buffer.getNumSamples());
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
 

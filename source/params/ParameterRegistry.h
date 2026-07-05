@@ -30,6 +30,7 @@ enum class Section
     lfo2,
     lfo3,
     macros,
+    arp,
     chaos,
     fxDist,
     fxChorus,
@@ -43,8 +44,8 @@ inline constexpr Section allSections[] = {
     Section::global, Section::oscA, Section::oscB, Section::oscC,
     Section::filter1, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
-    Section::chaos, Section::fxDist, Section::fxChorus, Section::fxDelay,
-    Section::fxReverb, Section::fxEQ, Section::matrix,
+    Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
+    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -206,6 +207,20 @@ namespace id
 
     juce::String macro (int macroIndex);  // "macros.macro1"
 
+    // Arpeggiator.
+    namespace arp
+    {
+        inline constexpr const char* enable  = "arp.enable";
+        inline constexpr const char* mode    = "arp.mode";
+        inline constexpr const char* division = "arp.division";
+        inline constexpr const char* octaves = "arp.octaves";
+        inline constexpr const char* gate    = "arp.gate";
+        inline constexpr const char* swing   = "arp.swing";
+        inline constexpr const char* latch   = "arp.latch";
+        inline constexpr const char* phrase  = "arp.phrase";
+        inline constexpr const char* velMode = "arp.velMode";
+    }
+
     // Organic Chaos section.
     namespace chaos
     {
@@ -285,6 +300,24 @@ enum class PhaseMode { reset, random, free_ };
 
 // Oscillator slot engine — choice order is load-bearing.
 enum class OscMode { wavetable, sample, granular };
+
+// Arpeggiator modes — choice order is load-bearing, append-only.
+enum class ArpMode
+{
+    up, down, upDown, downUp, upDownInclusive,
+    converge, diverge, asPlayed, chord,
+    random, randomWalk, phrase,
+};
+
+// Melodic phrase patterns (semitone offsets from the lowest held note).
+struct ArpPhrase
+{
+    const char* name;
+    int length;
+    int intervals[16];
+};
+
+const std::vector<ArpPhrase>& arpPhrases();
 
 // LFO shape choice order — load-bearing, append-only.
 enum class LFOShape { sine, triangle, sawUp, sawDown, square, sampleHold };

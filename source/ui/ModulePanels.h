@@ -116,6 +116,21 @@ private:
     std::array<Drift, 6> drifts;   // pitch, phase, position, amp, sat, dist
 };
 
+// Arpeggiator: compact three-row layout (toggles+mode+rate / phrase+vel /
+// octave-gate-swing knobs).
+class ArpPanel : public juce::Component
+{
+public:
+    explicit ArpPanel (juce::AudioProcessorValueTreeState&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    Toggle enable, latch;
+    Choice mode, division, phrase, velMode;
+    Knob octaves, gate, swing;
+};
+
 // One FX tab: character scope on top, the section's registry controls below.
 class FXPanel : public juce::Component
 {

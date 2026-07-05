@@ -14,7 +14,7 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
     : processor (p), onThemeToggled (std::move (themeToggled)),
       filterPanel (p),
       chaosPanel (p),
-      macrosPanel (p.getAPVTS(), params::Section::macros),
+      arpPanel (p.getAPVTS()),
       matrixPanel (p.getAPVTS()),
       outputMeter (p.getTelemetry())
 {
@@ -111,7 +111,7 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
 
     addAndMakeVisible (filterPanel);
     addAndMakeVisible (chaosPanel);
-    addAndMakeVisible (macrosPanel);
+    addAndMakeVisible (arpPanel);
 
     fxTabs.addTab ("DIST", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::distortion, params::Section::fxDist, "Distortion"), true);
@@ -327,13 +327,13 @@ void ContentComponent::resized()
 
     // Row 2: envelopes, LFOs, chaos, macros.
     auto row2 = main.removeFromTop (juce::roundToInt ((float) main.getHeight() * 0.48f));
-    envTabs.setBounds (row2.removeFromLeft (row2.getWidth() * 24 / 100));
+    envTabs.setBounds (row2.removeFromLeft (row2.getWidth() * 22 / 100));
     row2.removeFromLeft (gap);
-    lfoTabs.setBounds (row2.removeFromLeft (row2.getWidth() * 31 / 100));
+    lfoTabs.setBounds (row2.removeFromLeft (row2.getWidth() * 28 / 100));
     row2.removeFromLeft (gap);
-    chaosPanel.setBounds (row2.removeFromLeft (row2.getWidth() * 62 / 100));
+    chaosPanel.setBounds (row2.removeFromLeft (row2.getWidth() * 52 / 100));
     row2.removeFromLeft (gap);
-    macrosPanel.setBounds (row2);
+    arpPanel.setBounds (row2);
     main.removeFromTop (gap);
 
     // Row 3: FX + matrix.

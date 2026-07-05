@@ -226,6 +226,7 @@ private:
 
     static constexpr int numVoices = 16;
 
+    JUCE_DECLARE_WEAK_REFERENCEABLE (ArsenalProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArsenalProcessor)
 };
 

@@ -857,6 +857,32 @@ namespace
         root.deleteRecursively();
     }
 
+    static void libraryDiscoveryTest()
+    {
+        std::cout << "libraryDiscoveryTest\n";
+
+        namespace lib = arsenal::library;
+
+        const auto realLib = makeFakeLibrary();
+        const auto emptyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getNonexistentChildFile ("arsenal-empty", "");
+        emptyDir.createDirectory();
+        const auto missing = juce::File ("/nonexistent/arsenal-lib");
+
+        expect (lib::looksLikeLibrary (realLib), "pack folders identify a library");
+        expect (! lib::looksLikeLibrary (emptyDir), "empty folder is not a library");
+        expect (! lib::looksLikeLibrary (missing), "missing folder is not a library");
+
+        // Discovery skips invalid candidates and lands on the first real one.
+        expect (lib::discoverLibrary ({ missing, emptyDir, realLib }) == realLib,
+                "discovery finds the library among standard locations");
+        expect (lib::discoverLibrary ({ missing, emptyDir }) == juce::File(),
+                "discovery reports nothing when no candidate is valid");
+
+        realLib.deleteRecursively();
+        emptyDir.deleteRecursively();
+    }
+
     static void presetRoundTripTest()
     {
         std::cout << "presetRoundTripTest\n";
@@ -991,6 +1017,7 @@ int main()
     randomizerTest();
     randomizerProducesSoundTest();
     libraryScanTest();
+    libraryDiscoveryTest();
     presetRoundTripTest();
     factoryPresetGenerationTest();
 

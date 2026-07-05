@@ -139,6 +139,14 @@ ArsenalProcessor::ArsenalProcessor()
         [this] (const juce::ValueTree& state) { restoreStateTree (state); },
         library::defaultPresetsRoot());
 
+    // Auto-discover the library and make sure factory presets exist — no
+    // user setup required when content sits in a standard install location.
+    juce::MessageManager::callAsync ([weak = juce::WeakReference<ArsenalProcessor> (this)]
+    {
+        if (weak != nullptr)
+            weak->refreshLibrary();
+    });
+
     startTimer (1000);  // purges retired wavetables
 }
 
@@ -508,7 +516,7 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
 juce::ValueTree ArsenalProcessor::buildStateTree()
 {
-    const auto libraryRoot = library::getLibraryRoot();
+    const auto libraryRoot = library::findLibraryRoot();
     auto state = apvts.copyState();
 
     auto wavetables = state.getOrCreateChildWithName (wavetableStateType, nullptr);
@@ -536,7 +544,7 @@ void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
         return;
 
     auto state = incoming.createCopy();
-    const auto libraryRoot = library::getLibraryRoot();
+    const auto libraryRoot = library::findLibraryRoot();
 
     // Wavetable/sample paths ride along in the state tree but are not
     // parameters.
@@ -573,7 +581,7 @@ void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
 
 void ArsenalProcessor::refreshLibrary()
 {
-    const auto root = library::getLibraryRoot();
+    const auto root = library::findLibraryRoot();
     if (! root.isDirectory())
         return;
 

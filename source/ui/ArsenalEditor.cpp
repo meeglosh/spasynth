@@ -38,7 +38,7 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
     addAndMakeVisible (randomizeButton);
 
     // First-run: nudge toward pointing Arsenal at the Silverplatter library.
-    if (! library::getLibraryRoot().isDirectory())
+    if (! library::findLibraryRoot().isDirectory())
         presetNameButton.setButtonText ("Set library folder...");
 
     wildnessSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -132,7 +132,7 @@ void ArsenalEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void ArsenalEditor::refreshPresetName()
 {
-    if (library::getLibraryRoot().isDirectory()
+    if (library::findLibraryRoot().isDirectory()
         || arsenalProcessor.getPresetManager().getCurrentName() != "Init")
         presetNameButton.setButtonText (arsenalProcessor.getPresetManager().getCurrentName());
 }

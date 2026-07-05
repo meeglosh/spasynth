@@ -21,6 +21,24 @@ std::vector<Pack> scanLibrary (const juce::File& root);
 juce::File getLibraryRoot();
 void setLibraryRoot (const juce::File&);
 
+// Quick structural check: does this folder look like an Arsenal library
+// (at least one pack subfolder containing WAVs)?
+bool looksLikeLibrary (const juce::File&);
+
+// The standard install locations the content installers write to, most
+// preferred first. The plugin probes these so users never have to point
+// Arsenal at the library manually.
+std::vector<juce::File> defaultLibraryLocations();
+
+// Pure discovery over a candidate list (testable).
+juce::File discoverLibrary (const std::vector<juce::File>& candidates);
+
+// The library root Arsenal should use right now: the configured root if it
+// is still valid, otherwise the first valid default location (which is then
+// persisted). Returns an invalid File only if nothing is found — the manual
+// "Set Library Folder..." fallback covers that case.
+juce::File findLibraryRoot();
+
 // Where presets live: <app data>/Silverplatter Audio/Arsenal/Presets with
 // Factory/<Category>/ and User/ underneath.
 juce::File defaultPresetsRoot();

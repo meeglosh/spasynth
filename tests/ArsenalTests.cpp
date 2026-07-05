@@ -1006,6 +1006,20 @@ namespace
         arsenal::ArsenalProcessor proc;
         proc.prepareToPlay (48000.0, 512);
 
+        // Reproduce the long-content-name case in osc A's header.
+        {
+            namespace id = arsenal::params::id;
+            const auto longName = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                .getChildFile ("1965 Brother Typewriter Platen Knob Turn Long Name 01_SP.wav");
+            const auto src = writeRampSine (0.5, 48000.0);
+            src.copyFileTo (longName);
+            src.deleteFile();
+            proc.loadSampleFromFile (0, longName);
+            waitForSample (proc, 0, 15000);
+            setParam (proc, id::oscSlot (0, id::osc::mode),
+                      (float) (int) arsenal::params::OscMode::sample);
+        }
+
         const auto previousPreference = arsenal::library::getDarkThemeEnabled();
 
         for (const bool dark : { true, false })

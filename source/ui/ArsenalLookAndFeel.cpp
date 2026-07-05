@@ -86,13 +86,31 @@ juce::Rectangle<int> sectionHeader (juce::Graphics& g, juce::Rectangle<int> boun
     int readoutWidth = 0;
     if (readout.isNotEmpty())
     {
-        g.setColour (t.textSecondary);
-        g.setFont (metrics::labelFont());
-        g.drawText (readout, text, juce::Justification::centredRight);
+        const auto stringWidth = [] (const juce::String& s)
+        {
+            juce::GlyphArrangement glyphArrangement;
+            glyphArrangement.addLineOfText (metrics::labelFont(), s, 0.0f, 0.0f);
+            return (int) std::ceil (glyphArrangement.getBoundingBox (0, -1, true).getWidth());
+        };
 
-        juce::GlyphArrangement readoutGlyphs;
-        readoutGlyphs.addLineOfText (metrics::labelFont(), readout, 0.0f, 0.0f);
-        readoutWidth = 8 + (int) std::ceil (readoutGlyphs.getBoundingBox (0, -1, true).getWidth());
+        // Never run under the title: fit into the space after title + a
+        // minimum rule, ellipsizing the tail of long content names.
+        const auto available = text.getWidth() - titleWidth - 8 - 14;
+        auto fitted = readout;
+        if (stringWidth (fitted) > available)
+        {
+            while (fitted.length() > 4 && stringWidth (fitted + "...") > available)
+                fitted = fitted.dropLastCharacters (1).trimEnd();
+            fitted += "...";
+        }
+
+        if (available > 20)
+        {
+            g.setColour (t.textSecondary);
+            g.setFont (metrics::labelFont());
+            g.drawText (fitted, text, juce::Justification::centredRight);
+            readoutWidth = 8 + stringWidth (fitted);
+        }
     }
 
     // Thin rule between title and readout.

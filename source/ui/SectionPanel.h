@@ -39,9 +39,9 @@ private:
     };
 
     static constexpr int cellWidth = 66;
-    static constexpr int cellHeight = 72;
     static constexpr int headerHeight = 20;
 
+    int cellHeight = 72;   // compacted in bare (embedded) mode
     juce::String panelTitle;
     bool framed = true;
     std::vector<Control> controls;

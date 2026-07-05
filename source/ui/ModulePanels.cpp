@@ -400,9 +400,15 @@ void FXPanel::paint (juce::Graphics& g)
 void FXPanel::resized()
 {
     auto area = getLocalBounds().withTrimmedTop (20).reduced (7, 3);
-    display.setBounds (area.removeFromTop (juce::jmax (56, area.getHeight() - 96)));
-    area.removeFromTop (4);
-    controls.setBounds (area);
+
+    // Controls take exactly the height their grid needs (they wrap by
+    // width); the scope gets whatever remains, with a survivable minimum.
+    const auto controlsNeeded = controls.heightForWidth (area.getWidth());
+    const auto controlsH = juce::jmin (controlsNeeded,
+                                       juce::jmax (60, area.getHeight() - 44));
+    controls.setBounds (area.removeFromBottom (controlsH));
+    area.removeFromBottom (4);
+    display.setBounds (area);
 }
 
 } // namespace arsenal::ui

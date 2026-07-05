@@ -1012,6 +1012,22 @@ namespace
             std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
             editor->setSize (arsenal::ui::metrics::baseWidth, arsenal::ui::metrics::baseHeight);
 
+            // Front the delay FX tab in dark mode so wrap-heavy layouts get
+            // visual review too.
+            if (dark)
+            {
+                std::function<void (juce::Component&)> frontDelay =
+                    [&] (juce::Component& c)
+                {
+                    if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
+                        if (tabs->getTabNames().contains ("DELAY"))
+                            tabs->setCurrentTabIndex (2);
+                    for (auto* child : c.getChildren())
+                        frontDelay (*child);
+                };
+                frontDelay (*editor);
+            }
+
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
             const auto file = outDir.getChildFile (dark ? "arsenal-dark.png" : "arsenal-light.png");
             file.deleteFile();

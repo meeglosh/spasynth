@@ -22,7 +22,8 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
                             const juce::String& title,
                             const juce::StringArray& excludeIDs,
                             bool drawFrame)
-    : panelTitle (title.isNotEmpty() ? title : params::sectionName (section)),
+    : cellHeight (drawFrame ? 72 : 60),
+      panelTitle (title.isNotEmpty() ? title : params::sectionName (section)),
       framed (drawFrame)
 {
     for (const auto& def : params::all())
@@ -100,7 +101,7 @@ int SectionPanel::heightForWidth (int width) const
     for (const auto& c : controls)
         cellsUsed += c.wide ? 2 : 1;
     const auto rows = (cellsUsed + columns - 1) / columns;
-    return headerHeight + rows * cellHeight + 8;
+    return (framed ? headerHeight : 0) + rows * cellHeight + 8;
 }
 
 void SectionPanel::resized()
@@ -125,8 +126,8 @@ void SectionPanel::resized()
 
         if (control.label != nullptr)
         {
-            control.label->setBounds (cellBounds.removeFromBottom (16));
-            control.component->setBounds (cellBounds.reduced (4));
+            control.label->setBounds (cellBounds.removeFromBottom (framed ? 16 : 13));
+            control.component->setBounds (cellBounds.reduced (framed ? 4 : 2));
         }
         else if (dynamic_cast<juce::ComboBox*> (control.component.get()) != nullptr)
         {

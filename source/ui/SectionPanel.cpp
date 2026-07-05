@@ -68,7 +68,7 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
             {
                 auto knob = std::make_unique<juce::Slider> (
                     juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox);
-                knob->setPopupDisplayEnabled (true, true, this);
+                knob->setPopupDisplayEnabled (true, false, this);
                 control.sliderAttachment =
                     std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                         apvts, def.id, *knob);

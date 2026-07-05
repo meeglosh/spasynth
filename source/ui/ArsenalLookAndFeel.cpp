@@ -241,6 +241,24 @@ void ArsenalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     g.drawEllipse (centre.x - faceRadius + 0.5f, centre.y - faceRadius + 1.0f,
                    faceRadius * 2.0f - 1.0f, faceRadius * 2.0f - 1.0f, 0.8f);
 
+    // Hover: a soft accent halo hugging the ring (stays inside the
+    // component bounds — the outermost faint pass may kiss the edge).
+    const auto accentPreview = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
+    if (slider.isMouseOverOrDragging() && slider.isEnabled())
+    {
+        constexpr float grows[] = { 0.5f, 1.8f, 3.2f };
+        constexpr float alphas[] = { 0.20f, 0.12f, 0.06f };
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            g.setColour (accentPreview.withAlpha (alphas[pass]));
+            g.drawEllipse (centre.x - arcRadius - grows[pass],
+                           centre.y - arcRadius - grows[pass],
+                           (arcRadius + grows[pass]) * 2.0f,
+                           (arcRadius + grows[pass]) * 2.0f,
+                           2.0f);
+        }
+    }
+
     // Ring track (groove outside the face).
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,

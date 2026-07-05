@@ -16,7 +16,7 @@ public:
     {
         slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        slider.setPopupDisplayEnabled (true, true, this);
+        slider.setPopupDisplayEnabled (true, false, this);   // value on drag; hover gets a glow
         if (modColoured)
             slider.setComponentID ("mod");
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (

@@ -71,7 +71,7 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    masterSlider.setPopupDisplayEnabled (true, true, this);
+    masterSlider.setPopupDisplayEnabled (true, false, this);
     masterSlider.setTooltip ("Master volume");
     masterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         processor.getAPVTS(), params::id::masterGain, masterSlider);

@@ -25,7 +25,7 @@ public:
             row->dest.addItemList (params::find (destID)->choices, 1);
             row->depth.setSliderStyle (juce::Slider::LinearHorizontal);
             row->depth.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-            row->depth.setPopupDisplayEnabled (true, true, this);
+            row->depth.setPopupDisplayEnabled (true, false, this);
             row->depth.setComponentID ("mod");
 
             row->sourceAttachment = std::make_unique<

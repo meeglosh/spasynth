@@ -1,0 +1,18 @@
+# Sample library content — never commit audio content to the code repo
+Silverplatter Audio packs/
+library/
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# Build output
+build/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.xcworkspace/xcuserdata/
+compile_commands.json
+.cache/

@@ -59,6 +59,7 @@ public:
 
         const auto basePhase = p.retrig ? phase : globalPhase;
         const auto ph = std::fmod (basePhase + (double) p.phaseOffset, 1.0);
+        lastBasePhase = (float) std::fmod (basePhase, 1.0);
 
         if (p.retrig)
         {
@@ -85,6 +86,9 @@ public:
         return value;
     }
 
+    // Where in the cycle the last chunk started (for UI playheads).
+    float getLastBasePhase() const noexcept { return lastBasePhase; }
+
 private:
     float shape (float ph, params::LFOShape s) const noexcept
     {
@@ -108,6 +112,7 @@ private:
 
     double sampleRate = 44100.0;
     double phase = 0.0;          // retriggered phase (cycles, unwrapped)
+    float lastBasePhase = 0.0f;
     float shValue = 0.0f;
     juce::int64 shCycle = 0;
     bool shPrimed = false;

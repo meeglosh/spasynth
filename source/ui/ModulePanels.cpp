@@ -208,12 +208,12 @@ void OscStrip::resized()
 
 // ============================= FilterPanel =================================
 
-FilterPanel::FilterPanel (juce::AudioProcessorValueTreeState& apvts)
-    : display (apvts),
-      type (apvts, id::filter1Type),
-      cutoff (apvts, id::filter1Cutoff, "CUTOFF"),
-      resonance (apvts, id::filter1Resonance, "RES"),
-      drive (apvts, id::filter1Drive, "DRIVE")
+FilterPanel::FilterPanel (ArsenalProcessor& p)
+    : display (p),
+      type (p.getAPVTS(), id::filter1Type),
+      cutoff (p.getAPVTS(), id::filter1Cutoff, "CUTOFF"),
+      resonance (p.getAPVTS(), id::filter1Resonance, "RES"),
+      drive (p.getAPVTS(), id::filter1Drive, "DRIVE")
 {
     addAndMakeVisible (display);
     addAndMakeVisible (type);
@@ -244,12 +244,12 @@ void FilterPanel::resized()
 
 // =============================== EnvPanel ==================================
 
-EnvPanel::EnvPanel (juce::AudioProcessorValueTreeState& apvts, const juce::String& idPrefix)
-    : display (apvts, idPrefix),
-      attack (apvts, idPrefix + ".attack", "ATTACK", true),
-      decay (apvts, idPrefix + ".decay", "DECAY", true),
-      sustain (apvts, idPrefix + ".sustain", "SUSTAIN", true),
-      release (apvts, idPrefix + ".release", "RELEASE", true)
+EnvPanel::EnvPanel (ArsenalProcessor& p, const juce::String& idPrefix, int envIndex)
+    : display (p, idPrefix, envIndex),
+      attack (p.getAPVTS(), idPrefix + ".attack", "ATTACK", true),
+      decay (p.getAPVTS(), idPrefix + ".decay", "DECAY", true),
+      sustain (p.getAPVTS(), idPrefix + ".sustain", "SUSTAIN", true),
+      release (p.getAPVTS(), idPrefix + ".release", "RELEASE", true)
 {
     addAndMakeVisible (display);
     addAndMakeVisible (attack);
@@ -273,15 +273,15 @@ void EnvPanel::resized()
 
 // =============================== LFOPanel ==================================
 
-LFOPanel::LFOPanel (juce::AudioProcessorValueTreeState& apvts, int lfoIndex)
-    : display (apvts, lfoIndex),
-      shape (apvts, id::lfoParam (lfoIndex, id::lfo::shape)),
-      division (apvts, id::lfoParam (lfoIndex, id::lfo::division)),
-      rate (apvts, id::lfoParam (lfoIndex, id::lfo::rate), "RATE", true),
-      phase (apvts, id::lfoParam (lfoIndex, id::lfo::phase), "PHASE", true),
-      sync (apvts, id::lfoParam (lfoIndex, id::lfo::sync), "SYNC"),
-      retrig (apvts, id::lfoParam (lfoIndex, id::lfo::retrig), "RETRIG"),
-      unipolar (apvts, id::lfoParam (lfoIndex, id::lfo::unipolar), "UNI")
+LFOPanel::LFOPanel (ArsenalProcessor& p, int lfoIndex)
+    : display (p, lfoIndex),
+      shape (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::shape)),
+      division (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::division)),
+      rate (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::rate), "RATE", true),
+      phase (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::phase), "PHASE", true),
+      sync (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::sync), "SYNC"),
+      retrig (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::retrig), "RETRIG"),
+      unipolar (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::unipolar), "UNI")
 {
     addAndMakeVisible (display);
     addAndMakeVisible (shape);
@@ -314,12 +314,12 @@ void LFOPanel::resized()
 
 // ============================== ChaosPanel =================================
 
-ChaosPanel::ChaosPanel (juce::AudioProcessorValueTreeState& apvts)
-    : display (apvts),
-      enable (apvts, id::chaos::enable, "ON"),
-      depth (apvts, id::chaos::depth, "DEPTH", true),
-      rate (apvts, id::chaos::rate, "RATE", true),
-      mix (apvts, id::chaos::mix, "MIX", true)
+ChaosPanel::ChaosPanel (ArsenalProcessor& p)
+    : display (p),
+      enable (p.getAPVTS(), id::chaos::enable, "ON"),
+      depth (p.getAPVTS(), id::chaos::depth, "DEPTH", true),
+      rate (p.getAPVTS(), id::chaos::rate, "RATE", true),
+      mix (p.getAPVTS(), id::chaos::mix, "MIX", true)
 {
     addAndMakeVisible (display);
     addAndMakeVisible (enable);
@@ -338,8 +338,8 @@ ChaosPanel::ChaosPanel (juce::AudioProcessorValueTreeState& apvts)
 
     for (size_t i = 0; i < defs.size(); ++i)
     {
-        drifts[i].on = std::make_unique<Toggle> (apvts, std::get<0> (defs[i]), "");
-        drifts[i].amount = std::make_unique<Knob> (apvts, std::get<1> (defs[i]),
+        drifts[i].on = std::make_unique<Toggle> (p.getAPVTS(), std::get<0> (defs[i]), "");
+        drifts[i].amount = std::make_unique<Knob> (p.getAPVTS(), std::get<1> (defs[i]),
                                                    std::get<2> (defs[i]), true);
         addAndMakeVisible (*drifts[i].on);
         addAndMakeVisible (*drifts[i].amount);
@@ -377,6 +377,32 @@ void ChaosPanel::resized()
         d.on->setBounds (cell.removeFromTop (16).withSizeKeepingCentre (28, 16));
         d.amount->setBounds (cell);
     }
+}
+
+// =============================== FXPanel ===================================
+
+FXPanel::FXPanel (juce::AudioProcessorValueTreeState& apvts, FXDisplay::Kind kind,
+                  params::Section section, const juce::String& title)
+    : panelTitle (title),
+      display (apvts, kind),
+      controls (apvts, section, title, {}, false)
+{
+    addAndMakeVisible (display);
+    addAndMakeVisible (controls);
+}
+
+void FXPanel::paint (juce::Graphics& g)
+{
+    draw::panel (g, getLocalBounds().toFloat());
+    draw::sectionHeader (g, getLocalBounds(), panelTitle, {}, currentTheme().accent);
+}
+
+void FXPanel::resized()
+{
+    auto area = getLocalBounds().withTrimmedTop (20).reduced (7, 3);
+    display.setBounds (area.removeFromTop (juce::jmax (56, area.getHeight() - 96)));
+    area.removeFromTop (4);
+    controls.setBounds (area);
 }
 
 } // namespace arsenal::ui

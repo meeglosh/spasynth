@@ -18,7 +18,8 @@ public:
     // covers them). title empty = use the section name.
     SectionPanel (juce::AudioProcessorValueTreeState& apvts, params::Section section,
                   const juce::String& title = {},
-                  const juce::StringArray& excludeIDs = {});
+                  const juce::StringArray& excludeIDs = {},
+                  bool drawFrame = true);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -42,6 +43,7 @@ private:
     static constexpr int headerHeight = 20;
 
     juce::String panelTitle;
+    bool framed = true;
     std::vector<Control> controls;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SectionPanel)

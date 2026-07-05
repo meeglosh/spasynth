@@ -62,6 +62,7 @@ private:
     SectionPanel macrosPanel;
     juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
     MatrixPanel matrixPanel;
+    OutputMeter outputMeter;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 

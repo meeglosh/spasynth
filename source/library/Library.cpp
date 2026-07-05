@@ -9,14 +9,36 @@ namespace
 {
     constexpr const char* portablePrefix = "$LIB$";
 
-    std::unique_ptr<juce::PropertiesFile> openSettings()
+    // ONE PropertiesFile instance per process. Creating a fresh instance per
+    // access (the previous scheme) meant each writer saved its own stale
+    // snapshot of the file, clobbering keys other writers had set — the
+    // classic "theme preference keeps resetting" bug.
+    //
+    // DeletedAtShutdown (not a plain static): PropertiesFile runs a save
+    // timer, so it must be destroyed while JUCE's event system still exists.
+    struct SettingsHolder : private juce::DeletedAtShutdown
     {
-        juce::PropertiesFile::Options options;
-        options.applicationName = "Arsenal";
-        options.folderName = "Silverplatter Audio/Arsenal";
-        options.filenameSuffix = "settings";
-        options.osxLibrarySubFolder = "Application Support";
-        return std::make_unique<juce::PropertiesFile> (options);
+        SettingsHolder() = default;
+        ~SettingsHolder() override { clearSingletonInstance(); }
+
+        juce::PropertiesFile file { []
+        {
+            juce::PropertiesFile::Options options;
+            options.applicationName = "Arsenal";
+            options.folderName = "Silverplatter Audio/Arsenal";
+            options.filenameSuffix = "settings";
+            options.osxLibrarySubFolder = "Application Support";
+            return options;
+        }() };
+
+        JUCE_DECLARE_SINGLETON (SettingsHolder, false)
+    };
+
+    JUCE_IMPLEMENT_SINGLETON (SettingsHolder)
+
+    juce::PropertiesFile& settings()
+    {
+        return SettingsHolder::getInstance()->file;
     }
 }
 
@@ -53,7 +75,7 @@ std::vector<Pack> scanLibrary (const juce::File& root)
 
 juce::File getLibraryRoot()
 {
-    const auto path = openSettings()->getValue ("libraryRoot");
+    const auto path = settings().getValue ("libraryRoot");
     return path.isNotEmpty() ? juce::File (path) : juce::File();
 }
 
@@ -128,21 +150,19 @@ juce::File findLibraryRoot()
 
 void setLibraryRoot (const juce::File& root)
 {
-    auto settings = openSettings();
-    settings->setValue ("libraryRoot", root.getFullPathName());
-    settings->saveIfNeeded();
+    settings().setValue ("libraryRoot", root.getFullPathName());
+    settings().saveIfNeeded();
 }
 
 bool getDarkThemeEnabled()
 {
-    return openSettings()->getBoolValue ("darkTheme", true);
+    return settings().getBoolValue ("darkTheme", true);
 }
 
 void setDarkThemeEnabled (bool dark)
 {
-    auto settings = openSettings();
-    settings->setValue ("darkTheme", dark);
-    settings->saveIfNeeded();
+    settings().setValue ("darkTheme", dark);
+    settings().saveIfNeeded();
 }
 
 juce::File defaultPresetsRoot()

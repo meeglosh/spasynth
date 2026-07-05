@@ -20,8 +20,10 @@ namespace
 SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
                             params::Section section,
                             const juce::String& title,
-                            const juce::StringArray& excludeIDs)
-    : panelTitle (title.isNotEmpty() ? title : params::sectionName (section))
+                            const juce::StringArray& excludeIDs,
+                            bool drawFrame)
+    : panelTitle (title.isNotEmpty() ? title : params::sectionName (section)),
+      framed (drawFrame)
 {
     for (const auto& def : params::all())
     {
@@ -84,6 +86,9 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
 
 void SectionPanel::paint (juce::Graphics& g)
 {
+    if (! framed)
+        return;
+
     draw::panel (g, getLocalBounds().toFloat());
     draw::sectionHeader (g, getLocalBounds(), panelTitle, {}, currentTheme().accent);
 }
@@ -100,7 +105,7 @@ int SectionPanel::heightForWidth (int width) const
 
 void SectionPanel::resized()
 {
-    const auto area = getLocalBounds().withTrimmedTop (headerHeight).reduced (6, 0);
+    const auto area = getLocalBounds().withTrimmedTop (framed ? headerHeight : 0).reduced (6, 0);
     const auto columns = juce::jmax (1, area.getWidth() / cellWidth);
 
     int cell = 0;

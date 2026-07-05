@@ -12,10 +12,11 @@ namespace ui
 
 ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> themeToggled)
     : processor (p), onThemeToggled (std::move (themeToggled)),
-      filterPanel (p.getAPVTS()),
-      chaosPanel (p.getAPVTS()),
+      filterPanel (p),
+      chaosPanel (p),
       macrosPanel (p.getAPVTS(), params::Section::macros),
-      matrixPanel (p.getAPVTS())
+      matrixPanel (p.getAPVTS()),
+      outputMeter (p.getTelemetry())
 {
     logoDark = juce::Drawable::createFromImageData (ArsenalAssets::SPAudio_logo_white_svg,
                                                     ArsenalAssets::SPAudio_logo_white_svgSize);
@@ -96,33 +97,34 @@ ContentComponent::ContentComponent (ArsenalProcessor& p, std::function<void()> t
     }
 
     const auto tabBg = juce::Colours::transparentBlack;
-    envTabs.addTab ("AMP", tabBg, new EnvPanel (processor.getAPVTS(), "ampEnv"), true);
-    envTabs.addTab ("ENV 2", tabBg, new EnvPanel (processor.getAPVTS(), "env2"), true);
-    envTabs.addTab ("ENV 3", tabBg, new EnvPanel (processor.getAPVTS(), "env3"), true);
+    envTabs.addTab ("AMP", tabBg, new EnvPanel (processor, "ampEnv", 0), true);
+    envTabs.addTab ("ENV 2", tabBg, new EnvPanel (processor, "env2", 1), true);
+    envTabs.addTab ("ENV 3", tabBg, new EnvPanel (processor, "env3", 2), true);
     addAndMakeVisible (envTabs);
 
     for (int i = 0; i < params::numLFOs; ++i)
         lfoTabs.addTab ("LFO " + juce::String (i + 1), tabBg,
-                        new LFOPanel (processor.getAPVTS(), i), true);
+                        new LFOPanel (processor, i), true);
     addAndMakeVisible (lfoTabs);
 
     addAndMakeVisible (filterPanel);
     addAndMakeVisible (chaosPanel);
     addAndMakeVisible (macrosPanel);
 
-    fxTabs.addTab ("DIST", tabBg, new SectionPanel (processor.getAPVTS(),
-                   params::Section::fxDist, "Distortion"), true);
-    fxTabs.addTab ("CHORUS", tabBg, new SectionPanel (processor.getAPVTS(),
-                   params::Section::fxChorus, "Chorus"), true);
-    fxTabs.addTab ("DELAY", tabBg, new SectionPanel (processor.getAPVTS(),
-                   params::Section::fxDelay, "Delay"), true);
-    fxTabs.addTab ("REVERB", tabBg, new SectionPanel (processor.getAPVTS(),
-                   params::Section::fxReverb, "Reverb"), true);
-    fxTabs.addTab ("EQ", tabBg, new SectionPanel (processor.getAPVTS(),
-                   params::Section::fxEQ, "EQ"), true);
+    fxTabs.addTab ("DIST", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::distortion, params::Section::fxDist, "Distortion"), true);
+    fxTabs.addTab ("CHORUS", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::chorus, params::Section::fxChorus, "Chorus"), true);
+    fxTabs.addTab ("DELAY", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::delay, params::Section::fxDelay, "Delay"), true);
+    fxTabs.addTab ("REVERB", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb"), true);
+    fxTabs.addTab ("EQ", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::eq, params::Section::fxEQ, "EQ"), true);
     addAndMakeVisible (fxTabs);
 
     addAndMakeVisible (matrixPanel);
+    addAndMakeVisible (outputMeter);
 
     processor.addChangeListener (this);
     processor.getPresetManager().addChangeListener (this);
@@ -209,7 +211,9 @@ void ContentComponent::resized()
     title.setBounds (titleArea.removeFromTop (24));
     subtitle.setBounds (titleArea);
 
-    auto right = header.removeFromRight (346).reduced (0, 9);
+    auto right = header.removeFromRight (362).reduced (0, 9);
+    outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
+    right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
     themeButton.setBounds (right.removeFromRight (32).reduced (2, 6));
     auto wildArea = right.removeFromRight (44);

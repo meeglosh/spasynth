@@ -129,6 +129,8 @@ ArsenalProcessor::ArsenalProcessor()
         slotTables[(size_t) s].live.store (factoryTable.get());
     }
 
+    shared.telemetry = &telemetry;
+
     synth.addSound (new dsp::ArsenalSound());
     for (int i = 0; i < numVoices; ++i)
         synth.addVoice (new dsp::ArsenalVoice (shared));
@@ -512,6 +514,19 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
     masterGain.applyGain (buffer, buffer.getNumSamples());
+
+    // Block-level telemetry.
+    int active = 0;
+    for (int i = 0; i < synth.getNumVoices(); ++i)
+        if (synth.getVoice (i)->isVoiceActive())
+            ++active;
+    telemetry.activeVoices.store (active, std::memory_order_relaxed);
+    telemetry.peakL.store (buffer.getMagnitude (0, 0, buffer.getNumSamples()),
+                           std::memory_order_relaxed);
+    telemetry.peakR.store (buffer.getNumChannels() > 1
+                               ? buffer.getMagnitude (1, 0, buffer.getNumSamples())
+                               : telemetry.peakL.load (std::memory_order_relaxed),
+                           std::memory_order_relaxed);
 }
 
 juce::ValueTree ArsenalProcessor::buildStateTree()

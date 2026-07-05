@@ -1004,6 +1004,8 @@ namespace
         arsenal::ArsenalProcessor proc;
         proc.prepareToPlay (48000.0, 512);
 
+        const auto previousPreference = arsenal::library::getDarkThemeEnabled();
+
         for (const bool dark : { true, false })
         {
             arsenal::ui::setDarkTheme (dark);
@@ -1019,6 +1021,8 @@ namespace
                 png.writeImageToStream (image, stream);
             std::cout << "snapshot: " << file.getFullPathName() << "\n";
         }
+
+        arsenal::ui::setDarkTheme (previousPreference);  // don't pollute user settings
     }
 
 int main (int argc, char* argv[])

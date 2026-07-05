@@ -129,6 +129,9 @@ void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
     velocity = noteVelocity;
     pitchBendSemitones = 2.0f * ((float) currentPitchWheelPosition - 8192.0f) / 8192.0f;
 
+    if (shared.telemetry != nullptr)
+        noteSerial = shared.telemetry->noteSerial.fetch_add (1) + 1;
+
     for (int s = 0; s < params::numOscSlots; ++s)
     {
         const auto& stat = shared.slots[(size_t) s];
@@ -377,6 +380,53 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
                           denorm (eff, lookup.env2S), denorm (eff, lookup.env2R) });
     env3.setParameters ({ denorm (eff, lookup.env3A), denorm (eff, lookup.env3D),
                           denorm (eff, lookup.env3S), denorm (eff, lookup.env3R) });
+
+    // --- Telemetry: the newest active voice narrates its effective state ----
+    if (auto* tel = shared.telemetry)
+    {
+        if (noteSerial >= tel->writerSerial.load (std::memory_order_relaxed))
+        {
+            tel->writerSerial.store (noteSerial, std::memory_order_relaxed);
+
+            for (int s = 0; s < params::numOscSlots; ++s)
+            {
+                const auto& stat = shared.slots[(size_t) s];
+                const auto slotChaosPos = chaosActive && ch.positionOn
+                    ? chaosGen.slotPosition (s) * ch.positionAmount * chaosScale : 0.0f;
+                float pos = 0.0f;
+                if (stat.mode == params::OscMode::wavetable)
+                    pos = juce::jlimit (0.0f, 1.0f,
+                                        denorm (eff, lookup.slots[(size_t) s].position)
+                                        + slotChaosPos);
+                else if (stat.mode == params::OscMode::sample)
+                    pos = stat.sample != nullptr
+                        ? (float) juce::jlimit (0.0, 1.0,
+                              samplePlayers[(size_t) s].positionSeconds (stat.sample)
+                              / juce::jmax (0.001, stat.sample->lengthSeconds()))
+                        : 0.0f;
+                else
+                    pos = lastGrainPos[(size_t) s];
+                tel->slotPosition[(size_t) s].store (pos, std::memory_order_relaxed);
+            }
+
+            tel->filterCutoffHz.store (denorm (eff, lookup.cutoff), std::memory_order_relaxed);
+            tel->filterResonance.store (denorm (eff, lookup.resonance), std::memory_order_relaxed);
+
+            tel->envValue[0].store (ampEnvLast, std::memory_order_relaxed);
+            tel->envValue[1].store (src[(int) params::ModSource::env2], std::memory_order_relaxed);
+            tel->envValue[2].store (src[(int) params::ModSource::env3], std::memory_order_relaxed);
+
+            for (int i = 0; i < params::numLFOs; ++i)
+            {
+                tel->lfoValue[(size_t) i].store (src[(int) params::ModSource::lfo1 + i],
+                                                 std::memory_order_relaxed);
+                tel->lfoPhase[(size_t) i].store (lfos[(size_t) i].getLastBasePhase(),
+                                                 std::memory_order_relaxed);
+            }
+
+            tel->chaosValue.store (src[(int) params::ModSource::chaos], std::memory_order_relaxed);
+        }
+    }
 }
 
 void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,

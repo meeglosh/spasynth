@@ -7,19 +7,26 @@ namespace arsenal::ui
 // ========================== DisplayComponent ===============================
 
 DisplayComponent::DisplayComponent (juce::AudioProcessorValueTreeState& state,
-                                    juce::StringArray paramIDs)
-    : apvts (state), watched (std::move (paramIDs))
+                                    juce::StringArray paramIDs,
+                                    const dsp::Telemetry* tel)
+    : apvts (state), telemetry (tel), watched (std::move (paramIDs))
 {
     setInterceptsMouseClicks (false, false);
     for (const auto& id : watched)
         apvts.addParameterListener (id, this);
-    startTimerHz (20);
+    startTimerHz (24);
 }
 
 DisplayComponent::~DisplayComponent()
 {
     for (const auto& id : watched)
         apvts.removeParameterListener (id, this);
+}
+
+bool DisplayComponent::isLive() const
+{
+    return telemetry != nullptr
+        && telemetry->activeVoices.load (std::memory_order_relaxed) > 0;
 }
 
 float DisplayComponent::value (const juce::String& paramID) const
@@ -30,7 +37,7 @@ float DisplayComponent::value (const juce::String& paramID) const
 
 void DisplayComponent::timerCallback()
 {
-    if (dirty.exchange (false))
+    if (dirty.exchange (false) || isLive())
         repaint();
 }
 
@@ -48,7 +55,8 @@ WaveDisplay::WaveDisplay (ArsenalProcessor& p, int slotIndex)
                         { params::id::oscSlot (slotIndex, params::id::osc::mode),
                           params::id::oscSlot (slotIndex, params::id::osc::position),
                           params::id::oscSlot (slotIndex, params::id::osc::grainPos),
-                          params::id::oscSlot (slotIndex, params::id::osc::sampleStart) }),
+                          params::id::oscSlot (slotIndex, params::id::osc::sampleStart) },
+                        &p.getTelemetry()),
       processor (p), slot (slotIndex)
 {
     processor.addChangeListener (this);
@@ -76,9 +84,13 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         if (table == nullptr || table->getNumFrames() == 0)
             return;
 
-        // Interpolated frame at the current position, mip 0.
-        const auto position = value (params::id::oscSlot (slot, params::id::osc::position));
-        const auto framePos = position * (float) (table->getNumFrames() - 1);
+        // Live (modulated) position while playing, knob position otherwise.
+        const auto position = isLive()
+            ? telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed)
+            : value (params::id::oscSlot (slot, params::id::osc::position));
+
+        const auto framePos = juce::jlimit (0.0f, 1.0f, position)
+                            * (float) (table->getNumFrames() - 1);
         const auto frameA = juce::jmin ((int) framePos, table->getNumFrames() - 1);
         const auto frameB = juce::jmin (frameA + 1, table->getNumFrames() - 1);
         const auto frac = framePos - (float) frameA;
@@ -119,39 +131,34 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     juce::Path fill;
     fill.startNewSubPath (area.getX(), area.getCentreY());
+    const auto columnPeak = [&] (int c)
+    {
+        const auto start = (int) ((juce::int64) c * numSamples / columns);
+        const auto end = (int) ((juce::int64) (c + 1) * numSamples / columns);
+        float peak = 0.0f;
+        const auto stride = juce::jmax (1, (end - start) / 64);
+        for (int i = start; i < end; i += stride)
+            peak = juce::jmax (peak, std::abs (audio[i]));
+        return peak;
+    };
+
     for (int c = 0; c < columns; ++c)
-    {
-        const auto start = (int) ((juce::int64) c * numSamples / columns);
-        const auto end = (int) ((juce::int64) (c + 1) * numSamples / columns);
-        float peak = 0.0f;
-        const auto stride = juce::jmax (1, (end - start) / 64);
-        for (int i = start; i < end; i += stride)
-            peak = juce::jmax (peak, std::abs (audio[i]));
-
-        const auto x = area.getX() + area.getWidth() * (float) c / (float) (columns - 1);
-        fill.lineTo (x, area.getCentreY() - peak * area.getHeight() * 0.46f);
-    }
+        fill.lineTo (area.getX() + area.getWidth() * (float) c / (float) (columns - 1),
+                     area.getCentreY() - columnPeak (c) * area.getHeight() * 0.46f);
     for (int c = columns - 1; c >= 0; --c)
-    {
-        const auto start = (int) ((juce::int64) c * numSamples / columns);
-        const auto end = (int) ((juce::int64) (c + 1) * numSamples / columns);
-        float peak = 0.0f;
-        const auto stride = juce::jmax (1, (end - start) / 64);
-        for (int i = start; i < end; i += stride)
-            peak = juce::jmax (peak, std::abs (audio[i]));
-
-        const auto x = area.getX() + area.getWidth() * (float) c / (float) (columns - 1);
-        fill.lineTo (x, area.getCentreY() + peak * area.getHeight() * 0.46f);
-    }
+        fill.lineTo (area.getX() + area.getWidth() * (float) c / (float) (columns - 1),
+                     area.getCentreY() + columnPeak (c) * area.getHeight() * 0.46f);
     fill.closeSubPath();
 
     g.setColour (t.accent.withAlpha (0.55f));
     g.fillPath (fill);
 
-    // Position marker: grain position (granular) or start offset (sample).
+    // Playhead: live playback position while sounding; knob otherwise.
     const auto markerParam = mode == params::OscMode::granular
                            ? params::id::osc::grainPos : params::id::osc::sampleStart;
-    const auto marker = value (params::id::oscSlot (slot, markerParam));
+    const auto marker = isLive()
+        ? telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed)
+        : value (params::id::oscSlot (slot, markerParam));
     const auto mx = area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, marker);
     g.setColour (t.textPrimary);
     g.drawLine (mx, area.getY(), mx, area.getBottom(), 1.2f);
@@ -159,16 +166,31 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // ============================ EnvDisplay ===================================
 
-EnvDisplay::EnvDisplay (juce::AudioProcessorValueTreeState& state, juce::String idPrefix)
-    : DisplayComponent (state, { idPrefix + ".attack", idPrefix + ".decay",
-                                 idPrefix + ".sustain", idPrefix + ".release" }),
-      prefix (std::move (idPrefix))
+EnvDisplay::EnvDisplay (ArsenalProcessor& p, juce::String idPrefix, int envIndex)
+    : DisplayComponent (p.getAPVTS(),
+                        { idPrefix + ".attack", idPrefix + ".decay",
+                          idPrefix + ".sustain", idPrefix + ".release" },
+                        &p.getTelemetry()),
+      prefix (std::move (idPrefix)), env (envIndex)
 {
 }
 
 void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto& t = currentTheme();
+
+    // Live level bar on the right edge.
+    if (isLive())
+    {
+        const auto level = juce::jlimit (0.0f, 1.0f,
+            telemetry->envValue[(size_t) env].load (std::memory_order_relaxed));
+        auto bar = area.removeFromRight (5.0f);
+        g.setColour (t.knobTrack.withAlpha (0.6f));
+        g.fillRect (bar);
+        g.setColour (t.accentMod);
+        g.fillRect (bar.removeFromBottom (bar.getHeight() * level));
+        area.removeFromRight (3.0f);
+    }
 
     // Perceptual (sqrt) time scaling keeps short envelopes readable.
     const auto a = std::sqrt (value (prefix + ".attack") / 10.0f);
@@ -182,9 +204,9 @@ void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     juce::Path curve;
     curve.startNewSubPath (area.getX(), yAt (0.0f));
-    curve.quadraticTo (xAt (a * 0.4f), yAt (0.85f), xAt (a), yAt (1.0f));                 // attack
+    curve.quadraticTo (xAt (a * 0.4f), yAt (0.85f), xAt (a), yAt (1.0f));
     curve.quadraticTo (xAt (a + d * 0.3f), yAt (s + (1.0f - s) * 0.25f), xAt (a + d), yAt (s));
-    curve.lineTo (xAt (a + d + 0.25f), yAt (s));                                           // sustain
+    curve.lineTo (xAt (a + d + 0.25f), yAt (s));
     curve.quadraticTo (xAt (a + d + 0.25f + r * 0.3f), yAt (s * 0.25f), area.getRight(), yAt (0.0f));
 
     auto fill = curve;
@@ -199,10 +221,12 @@ void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // ============================ LFODisplay ===================================
 
-LFODisplay::LFODisplay (juce::AudioProcessorValueTreeState& state, int lfoIndex)
-    : DisplayComponent (state, { params::id::lfoParam (lfoIndex, params::id::lfo::shape),
-                                 params::id::lfoParam (lfoIndex, params::id::lfo::phase),
-                                 params::id::lfoParam (lfoIndex, params::id::lfo::unipolar) }),
+LFODisplay::LFODisplay (ArsenalProcessor& p, int lfoIndex)
+    : DisplayComponent (p.getAPVTS(),
+                        { params::id::lfoParam (lfoIndex, params::id::lfo::shape),
+                          params::id::lfoParam (lfoIndex, params::id::lfo::phase),
+                          params::id::lfoParam (lfoIndex, params::id::lfo::unipolar) },
+                        &p.getTelemetry()),
       lfo (lfoIndex)
 {
 }
@@ -236,7 +260,7 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
             case params::LFOShape::square:   v = ph < 0.5f ? 1.0f : -1.0f; break;
             case params::LFOShape::sampleHold:
             {
-                const auto cycle = (int) (raw * 6.0f);   // several steps across the view
+                const auto cycle = (int) (raw * 6.0f);
                 if (cycle != shCycle)
                 {
                     shCycle = cycle;
@@ -259,13 +283,26 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     }
 
     draw::glowStroke (g, curve, t.accentMod, 1.6f);
+
+    // Live playhead dot at (phase, value).
+    if (isLive())
+    {
+        const auto phase = telemetry->lfoPhase[(size_t) lfo].load (std::memory_order_relaxed);
+        const auto v = telemetry->lfoValue[(size_t) lfo].load (std::memory_order_relaxed);
+        const auto x = area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, phase);
+        const auto y = area.getCentreY() - v * area.getHeight() * 0.42f;
+        g.setColour (t.textPrimary);
+        g.fillEllipse (x - 3.0f, y - 3.0f, 6.0f, 6.0f);
+    }
 }
 
 // =========================== FilterDisplay =================================
 
-FilterDisplay::FilterDisplay (juce::AudioProcessorValueTreeState& state)
-    : DisplayComponent (state, { params::id::filter1Type, params::id::filter1Cutoff,
-                                 params::id::filter1Resonance })
+FilterDisplay::FilterDisplay (ArsenalProcessor& p)
+    : DisplayComponent (p.getAPVTS(),
+                        { params::id::filter1Type, params::id::filter1Cutoff,
+                          params::id::filter1Resonance },
+                        &p.getTelemetry())
 {
 }
 
@@ -273,8 +310,14 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
 {
     const auto& t = currentTheme();
     const auto type = (params::FilterType) (int) value (params::id::filter1Type);
-    const auto cutoff = value (params::id::filter1Cutoff);
-    const auto res = value (params::id::filter1Resonance);
+
+    // Live modulated cutoff/res while playing.
+    const auto cutoff = isLive()
+        ? telemetry->filterCutoffHz.load (std::memory_order_relaxed)
+        : value (params::id::filter1Cutoff);
+    const auto res = isLive()
+        ? telemetry->filterResonance.load (std::memory_order_relaxed)
+        : value (params::id::filter1Resonance);
     const auto q = 0.5f + res * 4.5f;
 
     const bool is24 = type == params::FilterType::lp24 || type == params::FilterType::hp24
@@ -284,7 +327,6 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
     constexpr int steps = 140;
     for (int i = 0; i <= steps; ++i)
     {
-        // 20 Hz .. 20 kHz log axis.
         const auto freq = 20.0f * std::pow (1000.0f, (float) i / steps);
         const auto w = freq / juce::jmax (20.0f, cutoff);
         const auto w2 = w * w;
@@ -322,9 +364,11 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
 
 // ============================ ChaosDisplay =================================
 
-ChaosDisplay::ChaosDisplay (juce::AudioProcessorValueTreeState& state)
-    : DisplayComponent (state, { params::id::chaos::depth, params::id::chaos::rate,
-                                 params::id::chaos::mix, params::id::chaos::enable })
+ChaosDisplay::ChaosDisplay (ArsenalProcessor& p)
+    : DisplayComponent (p.getAPVTS(),
+                        { params::id::chaos::depth, params::id::chaos::rate,
+                          params::id::chaos::mix, params::id::chaos::enable },
+                        &p.getTelemetry())
 {
 }
 
@@ -364,6 +408,264 @@ void ChaosDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     }
 
     draw::glowStroke (g, curve, enabled ? t.accentMod : t.textSecondary.withAlpha (0.4f), 1.6f);
+
+    // Live chaos output dot on the right edge.
+    if (enabled && isLive())
+    {
+        const auto v = telemetry->chaosValue.load (std::memory_order_relaxed);
+        const auto y = area.getCentreY() - v * area.getHeight() * 0.45f;
+        g.setColour (t.textPrimary);
+        g.fillEllipse (area.getRight() - 7.0f, y - 3.0f, 6.0f, 6.0f);
+    }
+}
+
+// ============================= FXDisplay ===================================
+
+juce::StringArray FXDisplay::watchedFor (Kind kind)
+{
+    namespace fx = params::id::fx;
+    switch (kind)
+    {
+        case Kind::distortion: return { fx::distEnable, fx::distType, fx::distDrive, fx::distMix };
+        case Kind::chorus:     return { fx::chorusEnable, fx::chorusRate, fx::chorusDepth,
+                                        fx::chorusMix };
+        case Kind::delay:      return { fx::delayEnable, fx::delayFeedback, fx::delayPingPong,
+                                        fx::delayMix };
+        case Kind::reverb:     return { fx::reverbEnable, fx::reverbSize, fx::reverbDamping,
+                                        fx::reverbMix };
+        case Kind::eq:         return { fx::eqEnable, fx::eqLowGain, fx::eqMidFreq,
+                                        fx::eqMidGain, fx::eqHighGain };
+    }
+    return {};
+}
+
+FXDisplay::FXDisplay (juce::AudioProcessorValueTreeState& state, Kind k)
+    : DisplayComponent (state, watchedFor (k)), kind (k)
+{
+}
+
+void FXDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    namespace fx = params::id::fx;
+    const auto& t = currentTheme();
+
+    const auto enabledID = kind == Kind::distortion ? fx::distEnable
+                         : kind == Kind::chorus     ? fx::chorusEnable
+                         : kind == Kind::delay      ? fx::delayEnable
+                         : kind == Kind::reverb     ? fx::reverbEnable : fx::eqEnable;
+    const auto colour = value (enabledID) >= 0.5f ? t.accent
+                                                  : t.textSecondary.withAlpha (0.45f);
+
+    switch (kind)
+    {
+        case Kind::distortion:
+        {
+            // Transfer curve, input -1..1 -> output, with the dry diagonal.
+            const auto drive = 1.0f + 15.0f * value (fx::distDrive);
+            const auto type = (int) value (fx::distType);
+            const auto mix = value (fx::distMix);
+
+            g.setColour (t.outline);
+            g.drawLine (area.getX(), area.getBottom(), area.getRight(), area.getY(), 1.0f);
+
+            juce::Path curve;
+            constexpr int steps = 96;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const auto in = -1.0f + 2.0f * (float) i / steps;
+                const auto x = in * drive;
+                float wet;
+                switch (type)
+                {
+                    case 1:  wet = juce::jlimit (-1.0f, 1.0f, x); break;
+                    case 2:  wet = std::sin (x * 1.2f); break;
+                    default: wet = std::tanh (x); break;
+                }
+                wet /= std::sqrt (drive);
+                const auto out = in + (wet - in) * mix;
+
+                const auto px = area.getX() + area.getWidth() * (float) i / steps;
+                const auto py = area.getCentreY() - out * area.getHeight() * 0.46f;
+                if (i == 0)
+                    curve.startNewSubPath (px, py);
+                else
+                    curve.lineTo (px, py);
+            }
+            draw::glowStroke (g, curve, colour, 1.6f);
+            break;
+        }
+
+        case Kind::chorus:
+        {
+            // Two detuned voices weaving around the dry centre line.
+            const auto depth = value (fx::chorusDepth);
+            const auto mix = value (fx::chorusMix);
+
+            for (int voice = 0; voice < 2; ++voice)
+            {
+                juce::Path curve;
+                constexpr int steps = 120;
+                for (int i = 0; i <= steps; ++i)
+                {
+                    const auto ph = (float) i / steps * juce::MathConstants<float>::twoPi * 2.0f
+                                  + (voice == 0 ? 0.0f : juce::MathConstants<float>::pi * 0.6f);
+                    const auto v = std::sin (ph) * depth * (0.25f + 0.75f * mix);
+                    const auto x = area.getX() + area.getWidth() * (float) i / steps;
+                    const auto y = area.getCentreY() - v * area.getHeight() * 0.42f;
+                    if (i == 0)
+                        curve.startNewSubPath (x, y);
+                    else
+                        curve.lineTo (x, y);
+                }
+                draw::glowStroke (g, curve, voice == 0 ? colour : colour.withAlpha (0.55f), 1.4f);
+            }
+            break;
+        }
+
+        case Kind::delay:
+        {
+            // Echo taps decaying by feedback; ping-pong alternates sides.
+            const auto feedback = value (fx::delayFeedback);
+            const auto pingpong = value (fx::delayPingPong) >= 0.5f;
+            const auto mix = value (fx::delayMix);
+
+            const auto baseX = area.getX() + 6.0f;
+            const auto spacing = (area.getWidth() - 12.0f) / 6.0f;
+
+            // Dry impulse.
+            g.setColour (t.textPrimary.withAlpha (0.8f));
+            g.fillRect (juce::Rectangle<float> (baseX - 1.5f,
+                                                area.getCentreY() - area.getHeight() * 0.45f,
+                                                3.0f, area.getHeight() * 0.9f));
+
+            float gain = mix;
+            for (int tap = 1; tap <= 6 && gain > 0.02f; ++tap)
+            {
+                const auto h = area.getHeight() * 0.45f * gain;
+                const auto x = baseX + spacing * (float) tap;
+                const auto up = ! pingpong || (tap % 2 == 1);
+                g.setColour (colour);
+                g.fillRect (juce::Rectangle<float> (x - 1.5f,
+                                                    up ? area.getCentreY() - h : area.getCentreY(),
+                                                    3.0f, h));
+                gain *= feedback;
+            }
+
+            g.setColour (t.outline.withAlpha (0.7f));
+            g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
+            break;
+        }
+
+        case Kind::reverb:
+        {
+            // Decay envelope; size stretches it, damping bows it down.
+            const auto size = value (fx::reverbSize);
+            const auto damping = value (fx::reverbDamping);
+            const auto mix = value (fx::reverbMix);
+
+            juce::Path curve;
+            constexpr int steps = 100;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const auto x01 = (float) i / steps;
+                const auto decay = 1.2f + (1.0f - size) * 6.0f + damping * 2.0f;
+                const auto v = (0.2f + 0.8f * mix) * std::exp (-decay * x01);
+                const auto x = area.getX() + area.getWidth() * x01;
+                const auto y = area.getBottom() - v * area.getHeight() * 0.92f;
+                if (i == 0)
+                    curve.startNewSubPath (x, y);
+                else
+                    curve.lineTo (x, y);
+            }
+
+            auto fill = curve;
+            fill.lineTo (area.getRight(), area.getBottom());
+            fill.lineTo (area.getX(), area.getBottom());
+            fill.closeSubPath();
+            g.setColour (colour.withAlpha (0.18f));
+            g.fillPath (fill);
+            draw::glowStroke (g, curve, colour, 1.6f);
+            break;
+        }
+
+        case Kind::eq:
+        {
+            // Composite response of the three bands, +/-12 dB.
+            const auto low = value (fx::eqLowGain);
+            const auto midFreq = value (fx::eqMidFreq);
+            const auto mid = value (fx::eqMidGain);
+            const auto high = value (fx::eqHighGain);
+
+            g.setColour (t.outline.withAlpha (0.7f));
+            g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
+
+            juce::Path curve;
+            constexpr int steps = 120;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const auto freq = 20.0f * std::pow (1000.0f, (float) i / steps);
+                const auto lowShelf = low / (1.0f + std::pow (freq / 120.0f, 2.0f));
+                const auto highShelf = high * (std::pow (freq / 6000.0f, 2.0f)
+                                               / (1.0f + std::pow (freq / 6000.0f, 2.0f)));
+                const auto logRatio = std::log (freq / juce::jmax (20.0f, midFreq));
+                const auto peak = mid * std::exp (-(logRatio * logRatio) / 0.5f);
+                const auto dB = juce::jlimit (-14.0f, 14.0f, lowShelf + peak + highShelf);
+
+                const auto x = area.getX() + area.getWidth() * (float) i / steps;
+                const auto y = juce::jmap (dB, -14.0f, 14.0f, area.getBottom(), area.getY());
+                if (i == 0)
+                    curve.startNewSubPath (x, y);
+                else
+                    curve.lineTo (x, y);
+            }
+            draw::glowStroke (g, curve, colour, 1.6f);
+            break;
+        }
+    }
+}
+
+// ============================ OutputMeter ==================================
+
+OutputMeter::OutputMeter (const dsp::Telemetry& tel)
+    : telemetry (tel)
+{
+    setInterceptsMouseClicks (false, false);
+    startTimerHz (30);
+}
+
+void OutputMeter::timerCallback()
+{
+    const auto attackRelease = [] (float current, float target)
+    {
+        return target > current ? target : current * 0.82f;
+    };
+    levelL = attackRelease (levelL, telemetry.peakL.load (std::memory_order_relaxed));
+    levelR = attackRelease (levelR, telemetry.peakR.load (std::memory_order_relaxed));
+    repaint();
+}
+
+void OutputMeter::paint (juce::Graphics& g)
+{
+    const auto& t = currentTheme();
+    auto bounds = getLocalBounds().toFloat();
+    const auto barW = (bounds.getWidth() - 2.0f) / 2.0f;
+
+    const auto drawBar = [&] (juce::Rectangle<float> bar, float level)
+    {
+        g.setColour (t.display);
+        g.fillRoundedRectangle (bar, 1.5f);
+
+        const auto dB = juce::Decibels::gainToDecibels (level, -60.0f);
+        const auto h = juce::jmap (juce::jlimit (-60.0f, 0.0f, dB), -60.0f, 0.0f,
+                                   0.0f, bar.getHeight());
+        auto fill = bar.removeFromBottom (h);
+        g.setColour (dB > -3.0f ? t.accent : t.accentMod);
+        g.fillRoundedRectangle (fill, 1.5f);
+    };
+
+    drawBar (bounds.removeFromLeft (barW), levelL);
+    bounds.removeFromLeft (2.0f);
+    drawBar (bounds, levelR);
 }
 
 } // namespace arsenal::ui

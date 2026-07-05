@@ -65,6 +65,9 @@ public:
         return slotSamples[(size_t) slot].current;
     }
 
+    // Audio -> UI telemetry (lock-free; UI reads on its repaint timers).
+    dsp::Telemetry& getTelemetry() { return telemetry; }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -97,6 +100,7 @@ private:
     juce::AudioProcessorValueTreeState apvts;
 
     dsp::SharedState shared;   // written on audio thread, read by voices
+    dsp::Telemetry telemetry;
     juce::Synthesiser synth;
     dsp::FXChain fxChain;
     dsp::FXChain::Params fxParams;

@@ -9,6 +9,7 @@
 #include "ChaosGenerator.h"
 #include "SamplePlayer.h"
 #include "GranularPlayer.h"
+#include "Telemetry.h"
 
 namespace arsenal::dsp
 {
@@ -66,6 +67,8 @@ struct SharedState
     float modWheel = 0.0f;
     float aftertouch = 0.0f;
     double bpm = 120.0;
+
+    Telemetry* telemetry = nullptr;   // audio -> UI channel, set once at startup
 
     // Organic Chaos statics (depth/rate/mix are mod destinations and live in
     // baseNorm; these are the plain toggles/amounts).
@@ -126,6 +129,7 @@ private:
     juce::Random random;
 
     int currentNote = -1;
+    int noteSerial = -1;       // telemetry writer arbitration
     float velocity = 1.0f;
     float pitchBendSemitones = 0.0f;
     float ampEnvLast = 0.0f;   // amp env value fed back as mod source

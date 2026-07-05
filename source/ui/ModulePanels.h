@@ -2,6 +2,7 @@
 
 #include "Controls.h"
 #include "Displays.h"
+#include "SectionPanel.h"
 
 namespace arsenal
 {
@@ -58,7 +59,7 @@ private:
 class FilterPanel : public juce::Component
 {
 public:
-    explicit FilterPanel (juce::AudioProcessorValueTreeState&);
+    explicit FilterPanel (ArsenalProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -72,7 +73,7 @@ private:
 class EnvPanel : public juce::Component
 {
 public:
-    EnvPanel (juce::AudioProcessorValueTreeState&, const juce::String& idPrefix);
+    EnvPanel (ArsenalProcessor&, const juce::String& idPrefix, int envIndex);
     void resized() override;
 
 private:
@@ -84,7 +85,7 @@ private:
 class LFOPanel : public juce::Component
 {
 public:
-    LFOPanel (juce::AudioProcessorValueTreeState&, int lfoIndex);
+    LFOPanel (ArsenalProcessor&, int lfoIndex);
     void resized() override;
 
 private:
@@ -98,7 +99,7 @@ private:
 class ChaosPanel : public juce::Component
 {
 public:
-    explicit ChaosPanel (juce::AudioProcessorValueTreeState&);
+    explicit ChaosPanel (ArsenalProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -113,6 +114,22 @@ private:
         std::unique_ptr<Knob> amount;
     };
     std::array<Drift, 6> drifts;   // pitch, phase, position, amp, sat, dist
+};
+
+// One FX tab: character scope on top, the section's registry controls below.
+class FXPanel : public juce::Component
+{
+public:
+    FXPanel (juce::AudioProcessorValueTreeState&, FXDisplay::Kind,
+             params::Section, const juce::String& title);
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    juce::String panelTitle;
+    FXDisplay display;
+    SectionPanel controls;   // bare: frame + header drawn by this panel
 };
 
 } // namespace ui

@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
+#include "../dsp/Telemetry.h"
 
 namespace arsenal
 {
@@ -11,13 +12,16 @@ namespace ui
 {
 
 // Base for the module scopes: watches a set of parameters and repaints (at a
-// throttled rate) when any of them move. Subclasses implement paintDisplay().
+// throttled rate) when any of them move. When given a telemetry pointer it
+// also animates continuously while voices are sounding, so the scopes show
+// the *modulated* state, not just knob positions.
 class DisplayComponent : public juce::Component,
                          private juce::Timer,
                          private juce::AudioProcessorValueTreeState::Listener
 {
 public:
-    DisplayComponent (juce::AudioProcessorValueTreeState&, juce::StringArray paramIDs);
+    DisplayComponent (juce::AudioProcessorValueTreeState&, juce::StringArray paramIDs,
+                      const dsp::Telemetry* telemetry = nullptr);
     ~DisplayComponent() override;
 
     void paint (juce::Graphics&) final;
@@ -26,7 +30,11 @@ public:
 protected:
     virtual void paintDisplay (juce::Graphics&, juce::Rectangle<float>) = 0;
 
+    bool isLive() const;   // voices currently sounding
+
     juce::AudioProcessorValueTreeState& apvts;
+    const dsp::Telemetry* telemetry = nullptr;
+
     float value (const juce::String& paramID) const;   // real-world value
 
 private:
@@ -37,8 +45,8 @@ private:
     std::atomic<bool> dirty { true };
 };
 
-// Oscillator scope: wavetable frame at the current position, or the loaded
-// sample's waveform overview with a grain-position marker in granular mode.
+// Oscillator scope: wavetable frame at the (live, modulated) position, or the
+// loaded sample's waveform with a moving playhead.
 class WaveDisplay : public DisplayComponent,
                     private juce::ChangeListener
 {
@@ -54,47 +62,78 @@ private:
     const int slot;
 };
 
-// ADSR curve with translucent fill.
+// ADSR curve with translucent fill and a live output-level bar.
 class EnvDisplay : public DisplayComponent
 {
 public:
-    EnvDisplay (juce::AudioProcessorValueTreeState&, juce::String idPrefix);
+    EnvDisplay (ArsenalProcessor&, juce::String idPrefix, int envIndex);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
     juce::String prefix;
+    const int env;
 };
 
-// One cycle of the LFO shape with the phase offset applied.
+// One cycle of the LFO shape with a live playhead dot.
 class LFODisplay : public DisplayComponent
 {
 public:
-    LFODisplay (juce::AudioProcessorValueTreeState&, int lfoIndex);
+    LFODisplay (ArsenalProcessor&, int lfoIndex);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
     const int lfo;
 };
 
-// Approximate filter magnitude response.
+// Approximate filter magnitude response; follows the modulated cutoff live.
 class FilterDisplay : public DisplayComponent
 {
 public:
-    explicit FilterDisplay (juce::AudioProcessorValueTreeState&);
+    explicit FilterDisplay (ArsenalProcessor&);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
 };
 
-// A representative chaos walk: regenerates deterministically from
-// depth/rate/mix so the display "feels" like the settings.
+// A representative chaos walk with a live output dot.
 class ChaosDisplay : public DisplayComponent
 {
 public:
-    explicit ChaosDisplay (juce::AudioProcessorValueTreeState&);
+    explicit ChaosDisplay (ArsenalProcessor&);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+};
+
+// FX scopes: one class, five characters.
+class FXDisplay : public DisplayComponent
+{
+public:
+    enum class Kind { distortion, chorus, delay, reverb, eq };
+
+    FXDisplay (juce::AudioProcessorValueTreeState&, Kind);
+
+private:
+    void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+    static juce::StringArray watchedFor (Kind);
+
+    const Kind kind;
+};
+
+// Stereo output peak meter for the header, fed by telemetry.
+class OutputMeter : public juce::Component,
+                    private juce::Timer
+{
+public:
+    explicit OutputMeter (const dsp::Telemetry&);
+
+    void paint (juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+
+    const dsp::Telemetry& telemetry;
+    float levelL = 0.0f, levelR = 0.0f;
 };
 
 } // namespace ui

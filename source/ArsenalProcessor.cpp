@@ -133,6 +133,12 @@ ArsenalProcessor::ArsenalProcessor()
     for (int i = 0; i < numVoices; ++i)
         synth.addVoice (new dsp::ArsenalVoice (shared));
 
+    presetManager = std::make_unique<library::PresetManager> (
+        apvts,
+        [this] { return buildStateTree(); },
+        [this] (const juce::ValueTree& state) { restoreStateTree (state); },
+        library::defaultPresetsRoot());
+
     startTimer (1000);  // purges retired wavetables
 }
 
@@ -500,29 +506,37 @@ void ArsenalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     masterGain.applyGain (buffer, buffer.getNumSamples());
 }
 
-void ArsenalProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree ArsenalProcessor::buildStateTree()
 {
+    const auto libraryRoot = library::getLibraryRoot();
     auto state = apvts.copyState();
 
     auto wavetables = state.getOrCreateChildWithName (wavetableStateType, nullptr);
     auto samples = state.getOrCreateChildWithName (sampleStateType, nullptr);
     for (int s = 0; s < params::numOscSlots; ++s)
     {
-        wavetables.setProperty (slotPathProperty (s), slotTables[(size_t) s].path, nullptr);
-        samples.setProperty (slotPathProperty (s), slotSamples[(size_t) s].path, nullptr);
+        const auto& wtPath = slotTables[(size_t) s].path;
+        const auto& smpPath = slotSamples[(size_t) s].path;
+        wavetables.setProperty (slotPathProperty (s),
+                                wtPath.isEmpty() ? juce::String()
+                                    : library::toPortable (juce::File (wtPath), libraryRoot),
+                                nullptr);
+        samples.setProperty (slotPathProperty (s),
+                             smpPath.isEmpty() ? juce::String()
+                                 : library::toPortable (juce::File (smpPath), libraryRoot),
+                             nullptr);
     }
 
-    if (auto xml = state.createXml())
-        copyXmlToBinary (*xml, destData);
+    return state;
 }
 
-void ArsenalProcessor::setStateInformation (const void* data, int sizeInBytes)
+void ArsenalProcessor::restoreStateTree (const juce::ValueTree& incoming)
 {
-    auto xml = getXmlFromBinary (data, sizeInBytes);
-    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+    if (! incoming.hasType (apvts.state.getType()))
         return;
 
-    auto state = juce::ValueTree::fromXml (*xml);
+    auto state = incoming.createCopy();
+    const auto libraryRoot = library::getLibraryRoot();
 
     // Wavetable/sample paths ride along in the state tree but are not
     // parameters.
@@ -544,17 +558,40 @@ void ArsenalProcessor::setStateInformation (const void* data, int sizeInBytes)
                            ? samples.getProperty (slotPathProperty (s)).toString()
                            : juce::String();
 
-        juce::MessageManager::callAsync ([this, s, wtPath, smpPath]
+        juce::MessageManager::callAsync ([this, s, wtPath, smpPath, libraryRoot]
         {
             if (wtPath.isEmpty())
                 setFactoryWavetable (s);
             else
-                loadWavetableFromFile (s, juce::File (wtPath));
+                loadWavetableFromFile (s, library::fromPortable (wtPath, libraryRoot));
 
             if (smpPath.isNotEmpty())
-                loadSampleFromFile (s, juce::File (smpPath));
+                loadSampleFromFile (s, library::fromPortable (smpPath, libraryRoot));
         });
     }
+}
+
+void ArsenalProcessor::refreshLibrary()
+{
+    const auto root = library::getLibraryRoot();
+    if (! root.isDirectory())
+        return;
+
+    const auto packs = library::scanLibrary (root);
+    presetManager->generateFactoryPresets (packs, root);
+    presetManager->rescan();
+}
+
+void ArsenalProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = buildStateTree().createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void ArsenalProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        restoreStateTree (juce::ValueTree::fromXml (*xml));
 }
 
 juce::AudioProcessorEditor* ArsenalProcessor::createEditor()

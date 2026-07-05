@@ -5,6 +5,7 @@
 #include "params/ParameterRegistry.h"
 #include "dsp/ArsenalVoice.h"
 #include "dsp/FXChain.h"
+#include "library/PresetManager.h"
 
 namespace arsenal
 {
@@ -62,6 +63,18 @@ public:
     bool isLockGroupLocked (int group) const;
     void setLockGroupLocked (int group, bool locked);
 
+    // Presets + library (message thread).
+    library::PresetManager& getPresetManager() { return *presetManager; }
+
+    // Full plugin state as a tree (params + portable wavetable/sample paths).
+    // Shared by host chunks and the preset system.
+    juce::ValueTree buildStateTree();
+    void restoreStateTree (const juce::ValueTree&);
+
+    // Rescans the configured library and (re)generates factory presets for
+    // any packs that don't have them yet.
+    void refreshLibrary();
+
 private:
     void updateSharedState (int blockLength);
     void scanMidiControllers (const juce::MidiBuffer& midi);
@@ -109,6 +122,9 @@ private:
     };
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread
+
+    // Constructed last (captures the pristine default state).
+    std::unique_ptr<library::PresetManager> presetManager;
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot

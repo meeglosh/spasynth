@@ -27,6 +27,10 @@ public:
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void refreshSlotLabels();
+    void refreshPresetName();
+    void showPresetMenu();
+    void chooseLibraryFolder();
+    void saveUserPreset();
     void chooseWavetable (int slot);
     void chooseSample (int slot);
 
@@ -34,6 +38,12 @@ private:
 
     std::unique_ptr<juce::Drawable> logo;
     juce::Label title;
+
+    juce::TextButton prevPresetButton { "<" };
+    juce::TextButton nextPresetButton { ">" };
+    juce::TextButton presetNameButton;
+    juce::TextButton savePresetButton { "Save" };
+
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };
     juce::Slider wildnessSlider;
     juce::Label wildnessLabel;

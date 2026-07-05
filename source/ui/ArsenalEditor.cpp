@@ -18,9 +18,28 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
     title.setColour (juce::Label::textColourId, ui::theme::textPrimary);
     addAndMakeVisible (title);
 
+    prevPresetButton.onClick = [this] { arsenalProcessor.getPresetManager().loadPrevious(); };
+    addAndMakeVisible (prevPresetButton);
+
+    nextPresetButton.onClick = [this] { arsenalProcessor.getPresetManager().loadNext(); };
+    addAndMakeVisible (nextPresetButton);
+
+    presetNameButton.onClick = [this] { showPresetMenu(); };
+    addAndMakeVisible (presetNameButton);
+
+    savePresetButton.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible (savePresetButton);
+
+    arsenalProcessor.getPresetManager().addChangeListener (this);
+    refreshPresetName();
+
     randomizeButton.setColour (juce::TextButton::buttonColourId, ui::theme::accent);
     randomizeButton.onClick = [this] { arsenalProcessor.randomizeAll(); };
     addAndMakeVisible (randomizeButton);
+
+    // First-run: nudge toward pointing Arsenal at the Silverplatter library.
+    if (! library::getLibraryRoot().isDirectory())
+        presetNameButton.setButtonText ("Set library folder...");
 
     wildnessSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     wildnessSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -101,12 +120,103 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
 
 ArsenalEditor::~ArsenalEditor()
 {
+    arsenalProcessor.getPresetManager().removeChangeListener (this);
     arsenalProcessor.removeChangeListener (this);
 }
 
 void ArsenalEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     refreshSlotLabels();
+    refreshPresetName();
+}
+
+void ArsenalEditor::refreshPresetName()
+{
+    if (library::getLibraryRoot().isDirectory()
+        || arsenalProcessor.getPresetManager().getCurrentName() != "Init")
+        presetNameButton.setButtonText (arsenalProcessor.getPresetManager().getCurrentName());
+}
+
+void ArsenalEditor::showPresetMenu()
+{
+    auto& pm = arsenalProcessor.getPresetManager();
+    const auto presets = pm.getPresets();  // snapshot for stable indices
+
+    juce::PopupMenu menu;
+
+    for (const auto& category : pm.getCategories())
+    {
+        juce::PopupMenu sub;
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (presets[i].category == category)
+                sub.addItem ((int) i + 1, presets[i].name);
+        menu.addSubMenu (category, sub);
+    }
+
+    if (! presets.empty())
+        menu.addSeparator();
+
+    constexpr int chooseLibraryItem = 1000000;
+    constexpr int rescanItem = 1000001;
+    menu.addItem (chooseLibraryItem, "Set Library Folder...");
+    menu.addItem (rescanItem, "Rescan Library && Presets");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetNameButton),
+                        [this] (int result)
+    {
+        if (result == 0)
+            return;
+        if (result == chooseLibraryItem)
+            chooseLibraryFolder();
+        else if (result == rescanItem)
+            arsenalProcessor.refreshLibrary();
+        else
+            arsenalProcessor.getPresetManager().loadPreset (result - 1);
+    });
+}
+
+void ArsenalEditor::chooseLibraryFolder()
+{
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Locate the Silverplatter Audio library folder",
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory));
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectDirectories,
+                              [this] (const juce::FileChooser& fc)
+    {
+        const auto folder = fc.getResult();
+        if (! folder.isDirectory())
+            return;
+
+        library::setLibraryRoot (folder);
+        arsenalProcessor.refreshLibrary();
+        refreshPresetName();
+    });
+}
+
+void ArsenalEditor::saveUserPreset()
+{
+    auto& pm = arsenalProcessor.getPresetManager();
+    pm.getUserPresetFolder().createDirectory();
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Save preset",
+        pm.getUserPresetFolder().getChildFile ("My Preset"
+            + juce::String (library::PresetManager::presetExtension)),
+        "*" + juce::String (library::PresetManager::presetExtension));
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                            | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+    {
+        const auto file = fc.getResult();
+        if (file == juce::File())
+            return;
+
+        arsenalProcessor.getPresetManager().saveUserPreset (
+            file.getFileNameWithoutExtension());
+    });
 }
 
 void ArsenalEditor::refreshSlotLabels()
@@ -210,6 +320,13 @@ void ArsenalEditor::resized()
     wildnessSlider.setBounds (wildArea);
 
     randomizeButton.setBounds (topBar.removeFromRight (160).reduced (0, ui::theme::unit));
+
+    // Preset cluster fills the remaining top-bar space.
+    auto presetArea = topBar.reduced (ui::theme::unit, ui::theme::unit);
+    prevPresetButton.setBounds (presetArea.removeFromLeft (26));
+    savePresetButton.setBounds (presetArea.removeFromRight (48));
+    nextPresetButton.setBounds (presetArea.removeFromRight (26));
+    presetNameButton.setBounds (presetArea.reduced (2, 0));
 
     // Lock-group row under the top bar.
     auto lockRow = bounds.removeFromTop (ui::theme::lockRowHeight)

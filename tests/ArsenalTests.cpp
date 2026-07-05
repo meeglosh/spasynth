@@ -3,6 +3,8 @@
 
 #include "ArsenalProcessor.h"
 #include "dsp/WavetableLoader.h"
+#include "library/Library.h"
+#include "library/PresetManager.h"
 #include "params/ParameterRegistry.h"
 #include "params/Randomizer.h"
 
@@ -807,6 +809,168 @@ namespace
                                   + juce::String (audible) + "/" + juce::String (rolls) + ")");
     }
 
+    // Builds a throwaway library: two packs with tiny WAVs.
+    static juce::File makeFakeLibrary()
+    {
+        const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("arsenal-lib-test", "");
+        for (auto* pack : { "Alpha Pack", "Beta Pack" })
+            for (auto* wav : { "one.wav", "two.wav", "three.wav" })
+            {
+                juce::AudioBuffer<float> buffer (1, 4800);
+                for (int i = 0; i < 4800; ++i)
+                    buffer.setSample (0, i, 0.5f * (float) std::sin (
+                        juce::MathConstants<double>::twoPi * 220.0 * i / 48000.0));
+
+                const auto file = root.getChildFile (pack).getChildFile (wav);
+                file.getParentDirectory().createDirectory();
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+                if (auto writer = fmt.createWriterFor (stream,
+                        juce::AudioFormatWriterOptions().withSampleRate (48000.0)
+                            .withNumChannels (1).withBitsPerSample (24)))
+                    writer->writeFromAudioSampleBuffer (buffer, 0, 4800);
+            }
+        return root;
+    }
+
+    static void libraryScanTest()
+    {
+        std::cout << "libraryScanTest\n";
+
+        namespace lib = arsenal::library;
+
+        const auto root = makeFakeLibrary();
+        const auto packs = lib::scanLibrary (root);
+
+        expect (packs.size() == 2, "scan finds two pack categories");
+        expect (! packs.empty() && packs[0].name == "Alpha Pack"
+                && packs[0].wavs.size() == 3,
+                "pack folder maps to category with its wavs");
+
+        // Portable path round-trip.
+        const auto wav = packs[0].wavs.getFirst();
+        const auto portable = lib::toPortable (wav, root);
+        expect (portable.startsWith ("$LIB$"), "library paths serialize portably");
+        expect (lib::fromPortable (portable, root) == wav, "portable path resolves back");
+
+        root.deleteRecursively();
+    }
+
+    static void presetRoundTripTest()
+    {
+        std::cout << "presetRoundTripTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+        namespace lib = arsenal::library;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("arsenal-presets-test", "");
+        lib::PresetManager pm (proc.getAPVTS(),
+                               [&] { return proc.buildStateTree(); },
+                               [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); },
+                               presetsRoot);
+
+        setParam (proc, id::filter1Cutoff, 1234.0f);
+        setParam (proc, id::oscSlot (0, id::osc::position), 0.42f);
+        expect (pm.saveUserPreset ("RoundTrip"), "user preset saves");
+
+        setParam (proc, id::filter1Cutoff, 20000.0f);
+        setParam (proc, id::oscSlot (0, id::osc::position), 0.0f);
+
+        pm.rescan();
+        bool loaded = false;
+        for (size_t i = 0; i < pm.getPresets().size(); ++i)
+            if (pm.getPresets()[i].name == "RoundTrip")
+                loaded = pm.loadPreset ((int) i);
+        expect (loaded, "user preset loads back");
+
+        const auto cutoff = proc.getAPVTS().getParameter (id::filter1Cutoff)
+                                ->convertFrom0to1 (proc.getAPVTS()
+                                    .getParameter (id::filter1Cutoff)->getValue());
+        expect (std::abs (cutoff - 1234.0f) < 5.0f,
+                "params restore from preset (cutoff " + juce::String (cutoff) + ")");
+        expect (pm.getCurrentName() == "RoundTrip", "current preset name tracks");
+
+        presetsRoot.deleteRecursively();
+    }
+
+    static void factoryPresetGenerationTest()
+    {
+        std::cout << "factoryPresetGenerationTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+        namespace lib = arsenal::library;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        const auto libRoot = makeFakeLibrary();
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("arsenal-factory-test", "");
+
+        lib::PresetManager pm (proc.getAPVTS(),
+                               [&] { return proc.buildStateTree(); },
+                               [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); },
+                               presetsRoot);
+
+        const auto packs = lib::scanLibrary (libRoot);
+        const auto written = pm.generateFactoryPresets (packs, libRoot);
+        expect (written == 6, "3 factory presets per pack ("
+                              + juce::String (written) + " written)");
+        expect (pm.getCategories().size() == 2, "one preset category per pack");
+
+        // Load a "Keys" preset end-to-end: sample mode engages and the
+        // library sample actually loads (portable path resolution works).
+        bool foundKeys = false;
+        for (size_t i = 0; i < pm.getPresets().size(); ++i)
+        {
+            if (pm.getPresets()[i].name == "Alpha Pack Keys")
+            {
+                foundKeys = pm.loadPreset ((int) i);
+                break;
+            }
+        }
+        expect (foundKeys, "factory Keys preset loads");
+
+        // Portable-path lambda in restoreStateTree resolves against the
+        // *configured* library root; for the test, resolve manually instead:
+        // the preset stores $LIB$ paths, so with no configured root the load
+        // lands nowhere. Verify the stored path is portable and resolvable.
+        const auto presetFile = presetsRoot.getChildFile ("Factory")
+                                    .getChildFile ("Alpha Pack")
+                                    .findChildFiles (juce::File::findFiles, false,
+                                                     "*Keys*").getFirst();
+        const auto xml = juce::XmlDocument::parse (presetFile);
+        expect (xml != nullptr, "factory preset file parses as XML");
+        if (xml != nullptr)
+        {
+            const auto state = juce::ValueTree::fromXml (*xml->getFirstChildElement());
+            const auto stored = state.getChildWithName ("SAMPLES")
+                                     .getProperty ("slot0").toString();
+            expect (stored.startsWith ("$LIB$"), "factory preset stores portable path");
+            expect (lib::fromPortable (stored, libRoot).existsAsFile(),
+                    "portable path resolves to a real library file");
+        }
+
+        // The mode parameter came through the preset.
+        const auto mode = (int) proc.getAPVTS().getParameter (
+            id::oscSlot (0, id::osc::mode))->convertFrom0to1 (
+                proc.getAPVTS().getParameter (id::oscSlot (0, id::osc::mode))->getValue());
+        expect (mode == (int) params::OscMode::sample, "Keys preset sets sample mode");
+
+        libRoot.deleteRecursively();
+        presetsRoot.deleteRecursively();
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -826,6 +990,9 @@ int main()
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();
+    libraryScanTest();
+    presetRoundTripTest();
+    factoryPresetGenerationTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

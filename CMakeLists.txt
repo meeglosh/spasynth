@@ -50,6 +50,7 @@ juce_add_binary_data(ArsenalAssets
 set(ARSENAL_SOURCES
     source/ArsenalProcessor.cpp
     source/params/ParameterRegistry.cpp
+    source/params/Randomizer.cpp
     source/dsp/Wavetable.cpp
     source/dsp/WavetableLoader.cpp
     source/dsp/SampleLoader.cpp

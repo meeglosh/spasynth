@@ -25,6 +25,7 @@ namespace theme
     inline constexpr int unit = 8;
     inline constexpr int topBarHeight = 64;
     inline constexpr int slotStripHeight = 64;  // two rows: wavetable + SFX
+    inline constexpr int lockRowHeight = 30;    // RANDOMIZE ALL lock groups
     inline constexpr float cornerRadius = 6.0f;
 
     // Typography

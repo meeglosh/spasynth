@@ -1,5 +1,6 @@
 #include "ArsenalProcessor.h"
 #include "dsp/WavetableLoader.h"
+#include "params/Randomizer.h"
 #include "ui/ArsenalEditor.h"
 
 namespace arsenal
@@ -14,6 +15,9 @@ namespace
     {
         return { "slot" + juce::String (slot) };
     }
+
+    const juce::Identifier wildnessProperty { "randomWildness" };
+    const juce::Identifier lockMaskProperty { "randomLockMask" };
 }
 
 ArsenalProcessor::ArsenalProcessor()
@@ -186,6 +190,90 @@ juce::String ArsenalProcessor::getSampleName (int slot) const
 juce::String ArsenalProcessor::getSampleError (int slot) const
 {
     return slotSamples[(size_t) slot].error;
+}
+
+float ArsenalProcessor::getRandomWildness() const
+{
+    return (float) (double) apvts.state.getProperty (wildnessProperty, 0.5);
+}
+
+void ArsenalProcessor::setRandomWildness (float wildness)
+{
+    apvts.state.setProperty (wildnessProperty, (double) wildness, nullptr);
+}
+
+bool ArsenalProcessor::isLockGroupLocked (int group) const
+{
+    const auto mask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);
+    return (mask & (1u << group)) != 0;
+}
+
+void ArsenalProcessor::setLockGroupLocked (int group, bool locked)
+{
+    auto mask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);
+    mask = locked ? (mask | (1u << group)) : (mask & ~(1u << group));
+    apvts.state.setProperty (lockMaskProperty, (int) mask, nullptr);
+}
+
+void ArsenalProcessor::randomizeAll()
+{
+    auto& rng = juce::Random::getSystemRandom();
+    const auto wildness = getRandomWildness();
+    const auto lockedMask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);
+
+    params::randomizeAll (apvts, wildness, lockedMask, rng);
+
+    // --- Musicality post-pass ------------------------------------------------
+    const auto setNorm = [this] (const juce::String& id, float norm)
+    {
+        if (auto* param = apvts.getParameter (id))
+            param->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
+    };
+    const auto realValue = [this] (const juce::String& id)
+    {
+        auto* param = apvts.getParameter (id);
+        return param != nullptr ? param->convertFrom0to1 (param->getValue()) : 0.0f;
+    };
+
+    const bool oscsUnlocked = (lockedMask & (1u << (int) params::LockGroup::oscillators)) == 0;
+    const bool filterUnlocked = (lockedMask & (1u << (int) params::LockGroup::filter)) == 0;
+
+    if (oscsUnlocked)
+    {
+        namespace osc = params::id::osc;
+        for (int s = 0; s < params::numOscSlots; ++s)
+        {
+            // A slot with no sample loaded can't be in a sample mode.
+            if (slotSamples[(size_t) s].current == nullptr)
+                setNorm (params::id::oscSlot (s, osc::mode), 0.0f);
+
+            // Keep loop points ordered with a usable window.
+            const auto loopStart = realValue (params::id::oscSlot (s, osc::loopStart));
+            const auto loopEnd = realValue (params::id::oscSlot (s, osc::loopEnd));
+            if (loopEnd < loopStart + 0.05f)
+                setNorm (params::id::oscSlot (s, osc::loopEnd),
+                         juce::jlimit (0.0f, 1.0f, loopStart + 0.2f));
+        }
+    }
+
+    if (filterUnlocked)
+    {
+        // High-passing everything above the note range means silence: pull
+        // HP/notch cutoffs back into a musical zone.
+        const auto type = (params::FilterType) (int) realValue (params::id::filter1Type);
+        const auto cutoff = realValue (params::id::filter1Cutoff);
+        const bool subtractive = type == params::FilterType::hp12
+                              || type == params::FilterType::hp24
+                              || type == params::FilterType::notch12
+                              || type == params::FilterType::notch24;
+
+        if (subtractive && cutoff > 2000.0f)
+            if (auto* param = apvts.getParameter (params::id::filter1Cutoff))
+                param->setValueNotifyingHost (
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
+    }
+
+    sendChangeMessage();
 }
 
 void ArsenalProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,

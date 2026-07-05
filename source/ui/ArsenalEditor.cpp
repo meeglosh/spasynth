@@ -18,10 +18,41 @@ ArsenalEditor::ArsenalEditor (ArsenalProcessor& p)
     title.setColour (juce::Label::textColourId, ui::theme::textPrimary);
     addAndMakeVisible (title);
 
-    // Placeholder until checkpoint 7 — visible so the layout accounts for it.
-    randomizeButton.setEnabled (false);
     randomizeButton.setColour (juce::TextButton::buttonColourId, ui::theme::accent);
+    randomizeButton.onClick = [this] { arsenalProcessor.randomizeAll(); };
     addAndMakeVisible (randomizeButton);
+
+    wildnessSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    wildnessSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    wildnessSlider.setRange (0.0, 1.0, 0.0);
+    wildnessSlider.setValue (arsenalProcessor.getRandomWildness(), juce::dontSendNotification);
+    wildnessSlider.onValueChange = [this]
+    {
+        arsenalProcessor.setRandomWildness ((float) wildnessSlider.getValue());
+    };
+    wildnessSlider.setTooltip ("Chaos amount: how wild RANDOMIZE ALL rolls");
+    addAndMakeVisible (wildnessSlider);
+
+    wildnessLabel.setText ("WILD", juce::dontSendNotification);
+    wildnessLabel.setFont (ui::theme::labelFont());
+    wildnessLabel.setColour (juce::Label::textColourId, ui::theme::textSecondary);
+    wildnessLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (wildnessLabel);
+
+    for (int g = 0; g < params::numLockGroups; ++g)
+    {
+        auto& button = lockButtons[(size_t) g];
+        button.setButtonText (params::lockGroupName ((params::LockGroup) g));
+        button.setClickingTogglesState (true);
+        button.setToggleState (arsenalProcessor.isLockGroupLocked (g), juce::dontSendNotification);
+        button.setColour (juce::TextButton::buttonOnColourId, ui::theme::accentSecondary);
+        button.setTooltip ("Lock this section: RANDOMIZE ALL keeps its current settings");
+        button.onClick = [this, g]
+        {
+            arsenalProcessor.setLockGroupLocked (g, lockButtons[(size_t) g].getToggleState());
+        };
+        addAndMakeVisible (button);
+    }
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
@@ -173,7 +204,19 @@ void ArsenalEditor::resized()
     title.setBounds (topBar.removeFromLeft (140));
 
     masterSlider.setBounds (topBar.removeFromRight (72));
+
+    auto wildArea = topBar.removeFromRight (48);
+    wildnessLabel.setBounds (wildArea.removeFromBottom (14));
+    wildnessSlider.setBounds (wildArea);
+
     randomizeButton.setBounds (topBar.removeFromRight (160).reduced (0, ui::theme::unit));
+
+    // Lock-group row under the top bar.
+    auto lockRow = bounds.removeFromTop (ui::theme::lockRowHeight)
+                         .reduced (ui::theme::unit, 3);
+    const auto lockWidth = lockRow.getWidth() / params::numLockGroups;
+    for (auto& button : lockButtons)
+        button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 0));
 
     auto strip = bounds.removeFromTop (ui::theme::slotStripHeight)
                        .reduced (ui::theme::unit, ui::theme::unit / 2);

@@ -4,6 +4,7 @@
 #include "ArsenalProcessor.h"
 #include "dsp/WavetableLoader.h"
 #include "params/ParameterRegistry.h"
+#include "params/Randomizer.h"
 
 #include <iostream>
 
@@ -696,6 +697,116 @@ namespace
                 + " vs driven " + juce::String (crestDriven) + ")");
     }
 
+    static void randomizerTest()
+    {
+        std::cout << "randomizerTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        auto& apvts = proc.getAPVTS();
+
+        auto snapshot = [&]
+        {
+            std::vector<float> values;
+            for (const auto& def : params::all())
+                values.push_back (apvts.getParameter (def.id)->getValue());
+            return values;
+        };
+
+        // Re-roll changes a substantial number of parameters.
+        const auto before = snapshot();
+        proc.randomizeAll();
+        const auto after = snapshot();
+
+        int changed = 0;
+        for (size_t i = 0; i < before.size(); ++i)
+            if (std::abs (before[i] - after[i]) > 1.0e-4f)
+                ++changed;
+        expect (changed > 30, "re-roll changes many params ("
+                              + juce::String (changed) + " changed)");
+
+        // Osc A always survives a re-roll enabled.
+        expect (apvts.getParameter (id::oscSlot (0, id::osc::enable))->getValue() >= 0.5f,
+                "osc A stays enabled after re-roll");
+
+        // Constrained bounds hold at default wildness: cutoff never below its
+        // minNorm window, resonance never in the self-oscillation zone.
+        bool boundsOk = true;
+        for (int roll = 0; roll < 30; ++roll)
+        {
+            proc.randomizeAll();
+            boundsOk = boundsOk
+                    && apvts.getParameter (id::filter1Resonance)->getValue() <= 0.86f;
+        }
+        expect (boundsOk, "randomization respects per-param constrained ranges");
+
+        // Locks: filter section untouched when locked.
+        proc.setLockGroupLocked ((int) params::LockGroup::filter, true);
+        const auto cutoffBefore = apvts.getParameter (id::filter1Cutoff)->getValue();
+        const auto typeBefore = apvts.getParameter (id::filter1Type)->getValue();
+        for (int roll = 0; roll < 5; ++roll)
+            proc.randomizeAll();
+        expect (juce::approximatelyEqual (
+                    apvts.getParameter (id::filter1Cutoff)->getValue(), cutoffBefore)
+                && juce::approximatelyEqual (
+                    apvts.getParameter (id::filter1Type)->getValue(), typeBefore),
+                "locked filter section survives re-rolls");
+        proc.setLockGroupLocked ((int) params::LockGroup::filter, false);
+
+        // No-sample slots never land in sample/granular mode.
+        bool modesOk = true;
+        for (int roll = 0; roll < 10; ++roll)
+        {
+            proc.randomizeAll();
+            for (int s = 0; s < params::numOscSlots; ++s)
+                modesOk = modesOk
+                       && apvts.getParameter (id::oscSlot (s, id::osc::mode))->getValue() < 0.01f;
+        }
+        expect (modesOk, "slots without samples stay in wavetable mode");
+    }
+
+    static void randomizerProducesSoundTest()
+    {
+        std::cout << "randomizerProducesSoundTest\n";
+
+        namespace params = arsenal::params;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        arsenal::ArsenalProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        // The matrix can legitimately duck levels (that's its job); lock it so
+        // this test isolates the "every re-roll makes sound" guarantee.
+        proc.setLockGroupLocked ((int) params::LockGroup::matrix, true);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        int audible = 0;
+        constexpr int rolls = 8;
+        for (int roll = 0; roll < rolls; ++roll)
+        {
+            proc.randomizeAll();
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            const auto peak = renderBlocks (proc, buffer, midi, 90);  // ~1s
+            midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            renderBlocks (proc, buffer, midi, 90);
+            if (peak > 0.005f)
+                ++audible;
+        }
+
+        expect (audible == rolls, "every re-roll produces an audible patch ("
+                                  + juce::String (audible) + "/" + juce::String (rolls) + ")");
+    }
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -713,6 +824,8 @@ int main()
     sfxFollowerTest();
     fxDelayReverbTest();
     fxEQDistortionTest();
+    randomizerTest();
+    randomizerProducesSoundTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

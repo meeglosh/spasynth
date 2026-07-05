@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "../params/ParameterRegistry.h"
+#include "../params/Randomizer.h"
 
 namespace arsenal
 {
@@ -34,6 +35,9 @@ private:
     std::unique_ptr<juce::Drawable> logo;
     juce::Label title;
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };
+    juce::Slider wildnessSlider;
+    juce::Label wildnessLabel;
+    std::array<juce::TextButton, params::numLockGroups> lockButtons;
     juce::Slider masterSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterAttachment;
 

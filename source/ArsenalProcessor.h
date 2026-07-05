@@ -54,6 +54,14 @@ public:
     juce::String getSampleName (int slot) const;
     juce::String getSampleError (int slot) const;
 
+    // RANDOMIZE ALL (message thread). Wildness and lock state live as state
+    // properties so they persist with the session but stay non-automatable.
+    void randomizeAll();
+    float getRandomWildness() const;
+    void setRandomWildness (float wildness);
+    bool isLockGroupLocked (int group) const;
+    void setLockGroupLocked (int group, bool locked);
+
 private:
     void updateSharedState (int blockLength);
     void scanMidiControllers (const juce::MidiBuffer& midi);

@@ -1,4 +1,5 @@
 #include "SectionPanel.h"
+#include "Controls.h"
 
 namespace spa::ui
 {
@@ -68,10 +69,12 @@ SectionPanel::SectionPanel (juce::AudioProcessorValueTreeState& apvts,
             {
                 auto knob = std::make_unique<juce::Slider> (
                     juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox);
-                knob->setPopupDisplayEnabled (true, false, this);
                 control.sliderAttachment =
                     std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                         apvts, def.id, *knob);
+                control.label->setMinimumHorizontalScale (0.6f);
+                Knob::wireDragReadout (*knob, *control.label, apvts.getParameter (def.id),
+                                       control.label->getText(), false);
                 control.component = std::move (knob);
                 break;
             }

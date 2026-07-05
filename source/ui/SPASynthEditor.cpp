@@ -51,6 +51,13 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     wildnessSlider.onValueChange = [this]
     {
         processor.setRandomWildness ((float) wildnessSlider.getValue());
+        if (wildnessSlider.isMouseButtonDown())
+            wildnessLabel.setText (juce::String (juce::roundToInt (
+                wildnessSlider.getValue() * 100.0)) + "%", juce::dontSendNotification);
+    };
+    wildnessSlider.onDragEnd = [this]
+    {
+        wildnessLabel.setText ("WILD", juce::dontSendNotification);
     };
     wildnessSlider.setTooltip ("Chaos amount: how wild RANDOMIZE ALL rolls");
     addAndMakeVisible (wildnessSlider);
@@ -71,7 +78,7 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    masterSlider.setPopupDisplayEnabled (true, false, this);
+    masterSlider.getProperties().set ("inlineValueSuffix", " dB");  // LnF chip on drag
     masterSlider.setTooltip ("Master volume");
     masterSlider.getProperties().set ("paramID", juce::String (params::id::masterGain));
     masterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (

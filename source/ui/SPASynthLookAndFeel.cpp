@@ -295,6 +295,28 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     g.drawLine (inner.x + 0.7f, inner.y + 1.0f, tip.x + 0.7f, tip.y + 1.0f, lineW);
     g.setColour (t.isDark ? juce::Colours::white : t.textPrimary);
     g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW * 0.9f);
+
+    // Press state for label-less knobs that opt in: a value chip across the
+    // knob (used by the header master volume).
+    if (slider.isMouseButtonDown()
+        && slider.getProperties().contains ("inlineValueSuffix"))
+    {
+        const auto text = juce::String (slider.getValue(), 1)
+                        + slider.getProperties()["inlineValueSuffix"].toString();
+        g.setFont (metrics::smallFont());
+
+        juce::GlyphArrangement glyphs;
+        glyphs.addLineOfText (metrics::smallFont(), text, 0.0f, 0.0f);
+        const auto w = glyphs.getBoundingBox (0, -1, true).getWidth() + 10.0f;
+        const auto chip = juce::Rectangle<float> (w, 14.0f).withCentre (centre);
+
+        g.setColour (t.display.withAlpha (0.92f));
+        g.fillRoundedRectangle (chip, 3.0f);
+        g.setColour (t.outline);
+        g.drawRoundedRectangle (chip, 3.0f, 1.0f);
+        g.setColour (t.textPrimary);
+        g.drawText (text, chip.toNearestInt(), juce::Justification::centred);
+    }
 }
 
 void SPASynthLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -321,6 +343,23 @@ void SPASynthLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int
 
         g.setColour (t.textPrimary);
         g.fillEllipse (sliderPos - 4.0f, (float) y + (float) height * 0.5f - 4.0f, 8.0f, 8.0f);
+
+        // Press state: numeric readout inside the slider, on whichever side
+        // of the thumb has room.
+        if (slider.isMouseButtonDown())
+        {
+            const auto text = juce::String (slider.getValue(), 2);
+            g.setFont (metrics::smallFont());
+            g.setColour (t.textPrimary);
+            const auto onLeft = sliderPos > (float) x + (float) width * 0.5f;
+            const auto textArea = onLeft
+                ? juce::Rectangle<int> (x + 2, y, (int) (sliderPos - (float) x) - 10, height)
+                : juce::Rectangle<int> ((int) sliderPos + 10, y,
+                                        x + width - (int) sliderPos - 12, height);
+            g.drawText (text, textArea,
+                        onLeft ? juce::Justification::centredLeft
+                               : juce::Justification::centredRight);
+        }
         return;
     }
 

@@ -25,7 +25,6 @@ public:
             row->dest.addItemList (params::find (destID)->choices, 1);
             row->depth.setSliderStyle (juce::Slider::LinearHorizontal);
             row->depth.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-            row->depth.setPopupDisplayEnabled (true, false, this);
             row->depth.setComponentID ("mod");
             row->source.getProperties().set ("paramID", sourceID);
             row->dest.getProperties().set ("paramID", destID);

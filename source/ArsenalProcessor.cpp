@@ -43,6 +43,9 @@ ArsenalProcessor::ArsenalProcessor()
         rs.keytrack    = apvts.getRawParameterValue (pid (params::id::osc::keytrack));
         rs.rootNote    = apvts.getRawParameterValue (pid (params::id::osc::rootNote));
         rs.grainPitch  = apvts.getRawParameterValue (pid (params::id::osc::grainPitch));
+        rs.analogShape = apvts.getRawParameterValue (pid (params::id::osc::analogShape));
+        rs.fmRatio     = apvts.getRawParameterValue (pid (params::id::osc::fmRatio));
+        rs.noiseColor  = apvts.getRawParameterValue (pid (params::id::osc::noiseColor));
     }
 
     for (int i = 0; i < params::numLFOs; ++i)
@@ -273,8 +276,12 @@ void ArsenalProcessor::randomizeAll()
         namespace osc = params::id::osc;
         for (int s = 0; s < params::numOscSlots; ++s)
         {
-            // A slot with no sample loaded can't be in a sample mode.
-            if (slotSamples[(size_t) s].current == nullptr)
+            // A slot with no sample loaded can't be in a sample mode (the
+            // synthesis engines are always valid).
+            const auto mode = (params::OscMode) (int) realValue (
+                params::id::oscSlot (s, osc::mode));
+            if (slotSamples[(size_t) s].current == nullptr
+                && (mode == params::OscMode::sample || mode == params::OscMode::granular))
                 setNorm (params::id::oscSlot (s, osc::mode), 0.0f);
 
             // Keep loop points ordered with a usable window.
@@ -442,6 +449,9 @@ void ArsenalProcessor::updateSharedState (int blockLength)
         slot.keytrack    = rs.keytrack->load() >= 0.5f;
         slot.rootNote    = (int) rs.rootNote->load();
         slot.grainPitch  = rs.grainPitch->load();
+        slot.analogShape = (int) rs.analogShape->load();
+        slot.fmRatio     = rs.fmRatio->load();
+        slot.noiseColor  = (int) rs.noiseColor->load();
     }
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();

@@ -60,13 +60,26 @@ OscStrip::OscStrip (ArsenalProcessor& p, int slotIndex)
     granularKnobs.push_back (knob (pid (id::osc::rootNote), "ROOT"));
     keytrackGranular = std::make_unique<Toggle> (apvts, pid (id::osc::keytrack), "KEY");
 
-    for (auto* set : { &commonKnobs, &wavetableKnobs, &sampleKnobs, &granularKnobs })
+    analogKnobs.push_back (knob (pid (id::osc::pulseWidth), "PW"));
+    analogShape = std::make_unique<Choice> (apvts, pid (id::osc::analogShape));
+
+    fmKnobs.push_back (knob (pid (id::osc::fmRatio), "RATIO"));
+    fmKnobs.push_back (knob (pid (id::osc::fmIndex), "INDEX"));
+
+    noiseColor = std::make_unique<Choice> (apvts, pid (id::osc::noiseColor));
+
+    pluckKnobs.push_back (knob (pid (id::osc::pluckDamp), "DAMP"));
+
+    for (auto* set : { &commonKnobs, &wavetableKnobs, &sampleKnobs, &granularKnobs,
+                       &analogKnobs, &fmKnobs, &pluckKnobs })
         for (auto& k : *set)
             addChildComponent (*k);
     addChildComponent (*phaseMode);
     addChildComponent (*loop);
     addChildComponent (*keytrackSample);
     addChildComponent (*keytrackGranular);
+    addChildComponent (*analogShape);
+    addChildComponent (*noiseColor);
 
     apvts.addParameterListener (pid (id::osc::mode), this);
     processor.addChangeListener (this);
@@ -87,14 +100,27 @@ params::OscMode OscStrip::currentMode() const
 
 juce::String OscStrip::contentName() const
 {
-    if (currentMode() == params::OscMode::wavetable)
-        return processor.getWavetableName (slot);
+    switch (currentMode())
+    {
+        case params::OscMode::wavetable:
+            return processor.getWavetableName (slot);
 
-    const auto error = processor.getSampleError (slot);
-    if (error.isNotEmpty())
-        return "! " + error;
-    const auto name = processor.getSampleName (slot);
-    return name.isNotEmpty() ? name : "no SFX";
+        case params::OscMode::sample:
+        case params::OscMode::granular:
+        {
+            const auto error = processor.getSampleError (slot);
+            if (error.isNotEmpty())
+                return "! " + error;
+            const auto name = processor.getSampleName (slot);
+            return name.isNotEmpty() ? name : "no SFX";
+        }
+
+        case params::OscMode::analog: return "virtual analog";
+        case params::OscMode::fm:     return "2-op FM";
+        case params::OscMode::noise:  return "noise";
+        case params::OscMode::pluck:  return "karplus-strong";
+    }
+    return {};
 }
 
 void OscStrip::handleAsyncUpdate()
@@ -109,12 +135,23 @@ void OscStrip::handleAsyncUpdate()
         k->setVisible (m == params::OscMode::sample);
     for (auto& k : granularKnobs)
         k->setVisible (m == params::OscMode::granular);
+    for (auto& k : analogKnobs)
+        k->setVisible (m == params::OscMode::analog);
+    for (auto& k : fmKnobs)
+        k->setVisible (m == params::OscMode::fm);
+    for (auto& k : pluckKnobs)
+        k->setVisible (m == params::OscMode::pluck);
 
     phaseMode->setVisible (m == params::OscMode::wavetable);
     loop->setVisible (m == params::OscMode::sample);
     keytrackSample->setVisible (m == params::OscMode::sample);
     keytrackGranular->setVisible (m == params::OscMode::granular);
+    analogShape->setVisible (m == params::OscMode::analog);
+    noiseColor->setVisible (m == params::OscMode::noise);
     factoryButton.setVisible (m == params::OscMode::wavetable);
+    loadButton.setVisible (m == params::OscMode::wavetable
+                        || m == params::OscMode::sample
+                        || m == params::OscMode::granular);
 
     resized();
     repaint();
@@ -176,8 +213,12 @@ void OscStrip::resized()
         loop->setBounds (extraRow.removeFromLeft (70));
         keytrackSample->setBounds (extraRow.removeFromLeft (70));
     }
-    else
+    else if (m == params::OscMode::granular)
         keytrackGranular->setBounds (extraRow.removeFromLeft (70));
+    else if (m == params::OscMode::analog)
+        analogShape->setBounds (extraRow.removeFromLeft (extraRow.getWidth() / 2).reduced (2, 1));
+    else if (m == params::OscMode::noise)
+        noiseColor->setBounds (extraRow.removeFromLeft (extraRow.getWidth() / 2).reduced (2, 1));
 
     // Knobs: mode-specific first, then common, wrapped in rows of 5.
     std::vector<Knob*> visibleKnobs;
@@ -190,6 +231,9 @@ void OscStrip::resized()
     collect (wavetableKnobs);
     collect (sampleKnobs);
     collect (granularKnobs);
+    collect (analogKnobs);
+    collect (fmKnobs);
+    collect (pluckKnobs);
     collect (commonKnobs);
 
     constexpr int columns = 5;

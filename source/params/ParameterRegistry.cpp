@@ -184,7 +184,8 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::mode), letter + "Mode", section,
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.0f, .biasStrength = 0.5f },
-                   { "Wavetable", "Sample", "Granular" } });
+                   { "Wavetable", "Sample", "Granular",
+                     "Analog", "FM", "Noise", "Pluck" } });
     p.push_back ({ pid (id::osc::sampleStart), letter + "Smp Start", section,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.0f,
@@ -219,6 +220,42 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
                    ParamKind::floatParam, { -24.0f, 24.0f, 1.0f }, 0.0f, "st",
                    false, { .enabled = true, .minNorm = 0.25f, .maxNorm = 0.75f,
                             .biasCentre = 0.5f, .biasStrength = 0.7f } });
+
+    // --- Analog / FM / Noise / Pluck (non-destination controls) ---------
+    p.push_back ({ pid (id::osc::analogShape), letter + "Analog Shape", section,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "Saw", "Square", "Pulse", "Triangle", "Sine" } });
+    p.push_back ({ pid (id::osc::fmRatio), letter + "FM Ratio", section,
+                   ParamKind::floatParam, { 0.5f, 8.0f, 0.5f }, 2.0f, "x",
+                   false, { .enabled = true, .biasCentre = 0.25f, .biasStrength = 0.4f } });
+    p.push_back ({ pid (id::osc::noiseColor), letter + "Noise Color", section,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "White", "Pink", "Brown" } });
+}
+
+// Modulatable engine params, appended AFTER all pre-existing destinations so
+// the dense mod-dest index space (and every saved route) stays stable.
+static void addEngineDestParams (std::vector<ParamDef>& p)
+{
+    for (int slot = 0; slot < numOscSlots; ++slot)
+    {
+        const auto section = oscSection (slot);
+        const auto letter = id::oscSlotLetter (slot) + " ";
+        const auto pid = [slot] (const char* key) { return id::oscSlot (slot, key); };
+
+        p.push_back ({ pid (id::osc::pulseWidth), letter + "Pulse Width", section,
+                       ParamKind::floatParam, { 0.05f, 0.95f }, 0.5f, "",
+                       true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.4f } });
+        p.push_back ({ pid (id::osc::fmIndex), letter + "FM Index", section,
+                       ParamKind::floatParam, { 0.0f, 10.0f, 0.0f, 0.6f }, 2.0f, "",
+                       true, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.3f,
+                               .biasStrength = 0.3f } });
+        p.push_back ({ pid (id::osc::pluckDamp), letter + "Pluck Damp", section,
+                       ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                       true, { .enabled = true } });
+    }
 }
 
 static void addADSRParams (std::vector<ParamDef>& p, Section section, const juce::String& idPrefix)
@@ -399,6 +436,8 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
                    false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
                             .biasStrength = 0.4f } });
+
+    addEngineDestParams (p);   // appended: keeps existing dest indices stable
 
     // --- FX chain -------------------------------------------------------
     namespace fx = id::fx;

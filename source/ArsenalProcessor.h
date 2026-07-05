@@ -163,6 +163,9 @@ private:
         std::atomic<float>* keytrack = nullptr;
         std::atomic<float>* rootNote = nullptr;
         std::atomic<float>* grainPitch = nullptr;
+        std::atomic<float>* analogShape = nullptr;
+        std::atomic<float>* fmRatio = nullptr;
+        std::atomic<float>* noiseColor = nullptr;
     };
 
     struct RawLFO

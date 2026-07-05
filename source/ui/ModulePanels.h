@@ -47,7 +47,8 @@ private:
     std::vector<std::unique_ptr<Knob>> wavetableKnobs;
     std::vector<std::unique_ptr<Knob>> sampleKnobs;
     std::vector<std::unique_ptr<Knob>> granularKnobs;
-    std::unique_ptr<Choice> phaseMode;
+    std::vector<std::unique_ptr<Knob>> analogKnobs, fmKnobs, pluckKnobs;
+    std::unique_ptr<Choice> phaseMode, analogShape, noiseColor;
     std::unique_ptr<Toggle> loop, keytrackSample, keytrackGranular;
 
     std::unique_ptr<juce::FileChooser> fileChooser;

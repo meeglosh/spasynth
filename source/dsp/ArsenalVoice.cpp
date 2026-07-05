@@ -12,6 +12,7 @@ namespace
         {
             int position, coarse, fine, level, pan, unisonDetune, unisonBlend, unisonWidth;
             int grainSize, grainDensity, grainPos, grainSpray;
+            int pulseWidth, fmIndex, pluckDamp;
         };
         std::array<Slot, params::numOscSlots> slots {};
         int cutoff, resonance, drive;
@@ -44,6 +45,9 @@ namespace
                     slot.grainDensity = params::modDestIndex (id::oscSlot (s, id::osc::grainDensity));
                     slot.grainPos     = params::modDestIndex (id::oscSlot (s, id::osc::grainPos));
                     slot.grainSpray   = params::modDestIndex (id::oscSlot (s, id::osc::grainSpray));
+                    slot.pulseWidth   = params::modDestIndex (id::oscSlot (s, id::osc::pulseWidth));
+                    slot.fmIndex      = params::modDestIndex (id::oscSlot (s, id::osc::fmIndex));
+                    slot.pluckDamp    = params::modDestIndex (id::oscSlot (s, id::osc::pluckDamp));
                 }
 
                 l.cutoff    = params::modDestIndex (id::filter1Cutoff);
@@ -106,6 +110,14 @@ void ArsenalVoice::setCurrentPlaybackSampleRate (double newRate)
     {
         for (auto& osc : oscs)
             osc.prepare (newRate);
+        for (auto& osc : analogOscs)
+            osc.prepare (newRate);
+        for (auto& osc : fmOscs)
+            osc.prepare (newRate);
+        for (auto& gen : noiseGens)
+            gen.prepare();
+        for (auto& pluck : plucks)
+            pluck.prepare (newRate);
         for (auto& lfo : lfos)
             lfo.prepare (newRate);
         filter.prepare (newRate);
@@ -138,6 +150,15 @@ void ArsenalVoice::startNote (int midiNoteNumber, float noteVelocity,
         oscs[(size_t) s].noteOn (stat.phaseMode, stat.phase, &random);
         samplePlayers[(size_t) s].noteOn (stat.sample, stat.sampleStart);
         granularPlayers[(size_t) s].noteOn();
+        analogOscs[(size_t) s].noteOn();
+        fmOscs[(size_t) s].noteOn();
+
+        if (stat.mode == params::OscMode::pluck)
+        {
+            const auto hz = 440.0f * std::exp2 (((float) midiNoteNumber - 69.0f) / 12.0f);
+            plucks[(size_t) s].noteOn (hz, random);
+        }
+
         lastGrainPos[(size_t) s] = baseValue (lookup.slots[(size_t) s].grainPos);
     }
 
@@ -348,6 +369,25 @@ void ArsenalVoice::computeChunk (int blockOffset, int chunkLen)
                     (double) stat.loopEnd,
                 };
             }
+            else if (stat.mode == params::OscMode::analog
+                  || stat.mode == params::OscMode::fm
+                  || stat.mode == params::OscMode::noise
+                  || stat.mode == params::OscMode::pluck)
+            {
+                const auto note = (float) currentNote + pitchOffset;
+                const auto hz = 440.0f * std::exp2 ((note - 69.0f) / 12.0f);
+
+                slotPulseWidth[(size_t) s] = denorm (eff, d.pulseWidth);
+                slotFMIndex[(size_t) s] = denorm (eff, d.fmIndex);
+                slotPluckDamp[(size_t) s] = denorm (eff, d.pluckDamp);
+
+                if (stat.mode == params::OscMode::analog)
+                    analogOscs[(size_t) s].setFrequency (hz);
+                else if (stat.mode == params::OscMode::fm)
+                    fmOscs[(size_t) s].setFrequency (hz, stat.fmRatio);
+                else if (stat.mode == params::OscMode::pluck)
+                    plucks[(size_t) s].setFrequency (hz);
+            }
             else
             {
                 const auto grainPos = juce::jlimit (0.0f, 1.0f,
@@ -480,6 +520,39 @@ void ArsenalVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                                              .getNextSample (granularParams[(size_t) s], random);
                         l = smp.left * slotPanL[(size_t) s];
                         r = smp.right * slotPanR[(size_t) s];
+                        break;
+                    }
+                    case params::OscMode::analog:
+                    {
+                        const auto v = analogOscs[(size_t) s].getNextSample (
+                            (AnalogOscillator::Shape) stat.analogShape,
+                            slotPulseWidth[(size_t) s]);
+                        l = v * slotPanL[(size_t) s];
+                        r = v * slotPanR[(size_t) s];
+                        break;
+                    }
+                    case params::OscMode::fm:
+                    {
+                        const auto v = fmOscs[(size_t) s].getNextSample (
+                            slotFMIndex[(size_t) s]);
+                        l = v * slotPanL[(size_t) s];
+                        r = v * slotPanR[(size_t) s];
+                        break;
+                    }
+                    case params::OscMode::noise:
+                    {
+                        const auto v = noiseGens[(size_t) s].getNextSample (
+                            (NoiseGenerator::Color) stat.noiseColor, random);
+                        l = v * slotPanL[(size_t) s];
+                        r = v * slotPanR[(size_t) s];
+                        break;
+                    }
+                    case params::OscMode::pluck:
+                    {
+                        const auto v = plucks[(size_t) s].getNextSample (
+                            slotPluckDamp[(size_t) s]);
+                        l = v * slotPanL[(size_t) s];
+                        r = v * slotPanR[(size_t) s];
                         break;
                     }
                 }

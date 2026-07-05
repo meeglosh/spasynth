@@ -763,16 +763,22 @@ namespace
                 "locked filter section survives re-rolls");
         proc.setLockGroupLocked ((int) params::LockGroup::filter, false);
 
-        // No-sample slots never land in sample/granular mode.
+        // No-sample slots never land in sample/granular mode (any synthesis
+        // engine - wavetable/analog/FM/noise/pluck - is fine).
         bool modesOk = true;
         for (int roll = 0; roll < 10; ++roll)
         {
             proc.randomizeAll();
             for (int s = 0; s < params::numOscSlots; ++s)
+            {
+                auto* param = apvts.getParameter (id::oscSlot (s, id::osc::mode));
+                const auto mode = (params::OscMode) (int) param->convertFrom0to1 (param->getValue());
                 modesOk = modesOk
-                       && apvts.getParameter (id::oscSlot (s, id::osc::mode))->getValue() < 0.01f;
+                       && mode != params::OscMode::sample
+                       && mode != params::OscMode::granular;
+            }
         }
-        expect (modesOk, "slots without samples stay in wavetable mode");
+        expect (modesOk, "sample-less slots avoid sample/granular modes");
     }
 
     static void randomizerProducesSoundTest()
@@ -1226,6 +1232,111 @@ namespace
         expect (sawPassThrough, "disabled arp passes MIDI through");
     }
 
+    static void extraEnginesTest()
+    {
+        std::cout << "extraEnginesTest\n";
+
+        namespace params = arsenal::params;
+        namespace id = arsenal::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto renderWith = [&] (params::OscMode mode,
+                                     std::function<void (arsenal::ArsenalProcessor&)> configure,
+                                     int note, int blocks, juce::AudioBuffer<float>& capture)
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) mode);
+            if (configure)
+                configure (proc);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+            float peak = 0.0f;
+            for (int b = 0; b < blocks; ++b)
+            {
+                proc.processBlock (capture, midi);
+                midi.clear();
+                peak = juce::jmax (peak, capture.getMagnitude (0, blockSize));
+            }
+            return peak;
+        };
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+
+        // Analog saw at A3: audible and at the right pitch (zero crossings).
+        {
+            const auto peak = renderWith (params::OscMode::analog, {}, 57, 24, buffer);
+            expect (peak > 0.05f, "analog saw is audible");
+
+            int crossings = 0;
+            for (int i = 1; i < blockSize; ++i)
+                if ((buffer.getSample (0, i - 1) < 0.0f) != (buffer.getSample (0, i) < 0.0f))
+                    ++crossings;
+            const auto freq = (float) crossings * (float) sampleRate / (2.0f * blockSize);
+            expect (freq > 200.0f && freq < 240.0f,
+                    "analog saw tracks pitch (" + juce::String (freq) + " Hz, expect ~220)");
+        }
+
+        // FM: raising the index adds sidebands (HF metric grows).
+        {
+            const auto hfOf = [&] (float index)
+            {
+                renderWith (params::OscMode::fm, [index] (auto& proc)
+                {
+                    setParam (proc, id::oscSlot (0, id::osc::fmIndex), index);
+                }, 57, 24, buffer);
+                float hf = 0.0f;
+                for (int i = 1; i < blockSize; ++i)
+                    hf += std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1));
+                return hf;
+            };
+            const auto clean = hfOf (0.0f);
+            const auto driven = hfOf (8.0f);
+            expect (driven > clean * 1.5f,
+                    "FM index adds sidebands (idx0 " + juce::String (clean)
+                    + " vs idx8 " + juce::String (driven) + ")");
+        }
+
+        // Noise: audible, aperiodic-ish (no dominant zero-crossing regularity
+        // check needed - just assert output).
+        {
+            const auto peak = renderWith (params::OscMode::noise, {}, 57, 12, buffer);
+            expect (peak > 0.05f, "noise engine is audible");
+        }
+
+        // Pluck: strikes then decays while the key is held.
+        {
+            arsenal::ArsenalProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::mode),
+                      (float) (int) params::OscMode::pluck);
+            setParam (proc, id::oscSlot (0, id::osc::pluckDamp), 0.3f);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+            float early = 0.0f, late = 0.0f;
+            for (int b = 0; b < 90; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                const auto peak = buffer.getMagnitude (0, blockSize);
+                if (b < 8)
+                    early = juce::jmax (early, peak);
+                if (b >= 70)
+                    late = juce::jmax (late, peak);
+            }
+            expect (early > 0.05f, "pluck strikes audibly");
+            expect (late < early * 0.5f,
+                    "pluck decays while held (early " + juce::String (early)
+                    + " vs late " + juce::String (late) + ")");
+        }
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1253,6 +1364,7 @@ int main (int argc, char* argv[])
     randomizerProducesSoundTest();
     midiLearnTest();
     arpeggiatorTest();
+    extraEnginesTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

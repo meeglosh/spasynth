@@ -9,6 +9,7 @@
 #include "ChaosGenerator.h"
 #include "SamplePlayer.h"
 #include "GranularPlayer.h"
+#include "ExtraOscillators.h"
 #include "Telemetry.h"
 
 namespace arsenal::dsp
@@ -41,6 +42,10 @@ struct SharedState
         bool keytrack = true;
         int rootNote = 60;
         float grainPitch = 0.0f;
+
+        int analogShape = 0;
+        float fmRatio = 2.0f;
+        int noiseColor = 0;
     };
 
     struct Route
@@ -120,6 +125,11 @@ private:
     std::array<UnisonOscillator, params::maxOscSlots> oscs;
     std::array<SamplePlayer, params::maxOscSlots> samplePlayers;
     std::array<GranularPlayer, params::maxOscSlots> granularPlayers;
+    std::array<AnalogOscillator, params::maxOscSlots> analogOscs;
+    std::array<FMOscillator, params::maxOscSlots> fmOscs;
+    std::array<NoiseGenerator, params::maxOscSlots> noiseGens;
+    std::array<PluckString, params::maxOscSlots> plucks;
+    std::array<float, params::maxOscSlots> slotPulseWidth {}, slotFMIndex {}, slotPluckDamp {};
     std::array<SamplePlayer::Params, params::maxOscSlots> sampleParams {};
     std::array<GranularPlayer::Params, params::maxOscSlots> granularParams {};
     MultiModeFilter filter;

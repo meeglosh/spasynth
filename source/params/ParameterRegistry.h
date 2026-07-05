@@ -129,7 +129,7 @@ int numModDests();
 
 // Fixed capacity for per-voice modulation arrays (no allocation on the audio
 // thread). numModDests() is asserted against this at startup.
-inline constexpr int maxModDests = 64;
+inline constexpr int maxModDests = 96;
 
 // Dense mod-dest index for a parameter ID, or -1 if it is not a destination.
 int modDestIndex (const juce::String& paramID);
@@ -184,6 +184,14 @@ namespace id
         inline constexpr const char* grainPos     = "grainPos";
         inline constexpr const char* grainSpray   = "grainSpray";
         inline constexpr const char* grainPitch   = "grainPitch";
+
+        // Analog / FM / Noise / Pluck engines
+        inline constexpr const char* analogShape  = "analogShape";
+        inline constexpr const char* pulseWidth   = "pulseWidth";
+        inline constexpr const char* fmRatio      = "fmRatio";
+        inline constexpr const char* fmIndex      = "fmIndex";
+        inline constexpr const char* noiseColor   = "noiseColor";
+        inline constexpr const char* pluckDamp    = "pluckDamp";
     }
 
     juce::String oscSlot (int slotIndex, const char* key);
@@ -298,8 +306,8 @@ enum class FilterType
 // Oscillator phase behaviour on note-on.
 enum class PhaseMode { reset, random, free_ };
 
-// Oscillator slot engine — choice order is load-bearing.
-enum class OscMode { wavetable, sample, granular };
+// Oscillator slot engine — choice order is load-bearing, append-only.
+enum class OscMode { wavetable, sample, granular, analog, fm, noise, pluck };
 
 // Arpeggiator modes — choice order is load-bearing, append-only.
 enum class ArpMode

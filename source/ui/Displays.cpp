@@ -55,7 +55,13 @@ WaveDisplay::WaveDisplay (ArsenalProcessor& p, int slotIndex)
                         { params::id::oscSlot (slotIndex, params::id::osc::mode),
                           params::id::oscSlot (slotIndex, params::id::osc::position),
                           params::id::oscSlot (slotIndex, params::id::osc::grainPos),
-                          params::id::oscSlot (slotIndex, params::id::osc::sampleStart) },
+                          params::id::oscSlot (slotIndex, params::id::osc::sampleStart),
+                          params::id::oscSlot (slotIndex, params::id::osc::analogShape),
+                          params::id::oscSlot (slotIndex, params::id::osc::pulseWidth),
+                          params::id::oscSlot (slotIndex, params::id::osc::fmRatio),
+                          params::id::oscSlot (slotIndex, params::id::osc::fmIndex),
+                          params::id::oscSlot (slotIndex, params::id::osc::noiseColor),
+                          params::id::oscSlot (slotIndex, params::id::osc::pluckDamp) },
                         &p.getTelemetry()),
       processor (p), slot (slotIndex)
 {
@@ -105,6 +111,77 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
             const auto sample = a[idx] + frac * (b[idx] - a[idx]);
             const auto x = area.getX() + area.getWidth() * (float) i / steps;
             const auto y = area.getCentreY() - sample * area.getHeight() * 0.42f;
+            if (i == 0)
+                wave.startNewSubPath (x, y);
+            else
+                wave.lineTo (x, y);
+        }
+
+        draw::glowStroke (g, wave, t.accent);
+        return;
+    }
+
+    // Synthesis engines: draw an ideal-cycle preview.
+    if (mode == params::OscMode::analog || mode == params::OscMode::fm
+        || mode == params::OscMode::noise || mode == params::OscMode::pluck)
+    {
+        namespace osc = params::id::osc;
+        juce::Random previewRng (17 + slot);
+        float brown = 0.0f;
+
+        juce::Path wave;
+        constexpr int steps = 160;
+        for (int i = 0; i <= steps; ++i)
+        {
+            const auto ph = (float) i / steps;
+            float v = 0.0f;
+
+            if (mode == params::OscMode::analog)
+            {
+                const auto shape = (int) value (params::id::oscSlot (slot, osc::analogShape));
+                const auto pw = value (params::id::oscSlot (slot, osc::pulseWidth));
+                switch (shape)
+                {
+                    case 0:  v = 2.0f * ph - 1.0f; break;
+                    case 1:  v = ph < 0.5f ? 1.0f : -1.0f; break;
+                    case 2:  v = ph < pw ? 1.0f : -1.0f; break;
+                    case 3:  v = 1.0f - 4.0f * std::abs (ph - 0.5f); break;
+                    default: v = std::sin (juce::MathConstants<float>::twoPi * ph); break;
+                }
+            }
+            else if (mode == params::OscMode::fm)
+            {
+                const auto ratio = value (params::id::oscSlot (slot, osc::fmRatio));
+                const auto index = value (params::id::oscSlot (slot, osc::fmIndex));
+                v = std::sin (juce::MathConstants<float>::twoPi * ph
+                              + index * std::sin (juce::MathConstants<float>::twoPi * ph * ratio));
+            }
+            else if (mode == params::OscMode::noise)
+            {
+                const auto colour = (int) value (params::id::oscSlot (slot, osc::noiseColor));
+                const auto white = previewRng.nextFloat() * 2.0f - 1.0f;
+                if (colour == 2)
+                {
+                    brown = juce::jlimit (-1.0f, 1.0f, brown * 0.9f + white * 0.35f);
+                    v = brown;
+                }
+                else if (colour == 1)
+                {
+                    brown = brown * 0.5f + white * 0.5f;
+                    v = brown;
+                }
+                else
+                    v = white;
+            }
+            else   // pluck: decaying burst
+            {
+                const auto damp = value (params::id::oscSlot (slot, osc::pluckDamp));
+                const auto white = previewRng.nextFloat() * 2.0f - 1.0f;
+                v = white * std::exp (-(3.5f - 2.5f * damp) * ph);
+            }
+
+            const auto x = area.getX() + area.getWidth() * ph;
+            const auto y = area.getCentreY() - v * area.getHeight() * 0.42f;
             if (i == 0)
                 wave.startNewSubPath (x, y);
             else

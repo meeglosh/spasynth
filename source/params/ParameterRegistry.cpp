@@ -12,6 +12,7 @@ juce::String sectionName (Section s)
         case Section::oscB:    return "Osc B";
         case Section::oscC:    return "Osc C";
         case Section::filter1: return "Filter 1";
+        case Section::filter2: return "Filter 2";
         case Section::ampEnv:  return "Amp Env";
         case Section::env2:    return "Env 2";
         case Section::env3:    return "Env 3";
@@ -339,6 +340,22 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
 
+    // --- Filter 2 (non-destination controls; dests are appended later) ---
+    p.push_back ({ id::filter2Enable, "F2 On", Section::filter2,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
+    p.push_back ({ id::filter2Type, "F2 Type", Section::filter2,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   { "LP 12", "LP 24", "HP 12", "HP 24",
+                     "BP 12", "BP 24", "Notch 12", "Notch 24" } });
+    p.push_back ({ id::filter2Keytrack, "F2 Keytrack", Section::filter2,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
+    p.push_back ({ id::filterRouting, "Routing", Section::filter2,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true }, { "Series", "Parallel" } });
+
     addADSRParams (p, Section::ampEnv, "ampEnv");
     addADSRParams (p, Section::env2, "env2");
     addADSRParams (p, Section::env3, "env3");
@@ -450,6 +467,26 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { -1.0f, 1.0f }, 0.0f, "",
                    true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.35f } });
     p.push_back ({ id::filter1Mix, "Mix", Section::filter1,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   true, { .enabled = true, .minNorm = 0.5f, .biasCentre = 0.95f,
+                           .biasStrength = 0.5f } });
+
+    p.push_back ({ id::filter2Cutoff, "F2 Cutoff", Section::filter2,
+                   ParamKind::floatParam, frequencyRange (20.0f, 20000.0f), 20000.0f, "Hz",
+                   true, { .enabled = true, .minNorm = 0.2f, .biasCentre = 0.6f,
+                           .biasStrength = 0.3f } });
+    p.push_back ({ id::filter2Resonance, "F2 Resonance", Section::filter2,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .maxNorm = 0.85f, .biasCentre = 0.3f,
+                           .biasStrength = 0.4f } });
+    p.push_back ({ id::filter2Drive, "F2 Drive", Section::filter2,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
+                           .biasStrength = 0.5f } });
+    p.push_back ({ id::filter2EnvAmount, "F2 Env Amt", Section::filter2,
+                   ParamKind::floatParam, { -1.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.35f } });
+    p.push_back ({ id::filter2Mix, "F2 Mix", Section::filter2,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    true, { .enabled = true, .minNorm = 0.5f, .biasCentre = 0.95f,
                            .biasStrength = 0.5f } });

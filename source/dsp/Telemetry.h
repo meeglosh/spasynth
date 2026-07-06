@@ -28,6 +28,8 @@ struct Telemetry
 
     std::atomic<float> filterCutoffHz { 20000.0f };
     std::atomic<float> filterResonance { 0.0f };
+    std::atomic<float> filter2CutoffHz { 20000.0f };
+    std::atomic<float> filter2Resonance { 0.0f };
 
     std::array<std::atomic<float>, 3> envValue {};                 // amp, env2, env3
     std::array<std::atomic<float>, params::numLFOs> lfoValue {};   // post uni/bipolar

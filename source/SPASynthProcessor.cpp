@@ -27,6 +27,10 @@ SPASynthProcessor::SPASynthProcessor()
     raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
+    raw.filter2Enable = apvts.getRawParameterValue (params::id::filter2Enable);
+    raw.filter2Type = apvts.getRawParameterValue (params::id::filter2Type);
+    raw.filter2Keytrack = apvts.getRawParameterValue (params::id::filter2Keytrack);
+    raw.filterRouting = apvts.getRawParameterValue (params::id::filterRouting);
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {
@@ -309,6 +313,19 @@ void SPASynthProcessor::randomizeAll()
             if (auto* param = apvts.getParameter (params::id::filter1Cutoff))
                 param->setValueNotifyingHost (
                     param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
+
+        // Same guard for filter 2 when it rolls enabled + subtractive-high.
+        const auto f2Enabled = realValue (params::id::filter2Enable) >= 0.5f;
+        const auto f2Type = (params::FilterType) (int) realValue (params::id::filter2Type);
+        const auto f2Cutoff = realValue (params::id::filter2Cutoff);
+        const bool f2Subtractive = f2Type == params::FilterType::hp12
+                                || f2Type == params::FilterType::hp24
+                                || f2Type == params::FilterType::notch12
+                                || f2Type == params::FilterType::notch24;
+        if (f2Enabled && f2Subtractive && f2Cutoff > 2000.0f)
+            if (auto* param = apvts.getParameter (params::id::filter2Cutoff))
+                param->setValueNotifyingHost (
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
     }
 
     sendChangeMessage();
@@ -457,6 +474,10 @@ void SPASynthProcessor::updateSharedState (int blockLength)
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
     shared.filterKeytrack = raw.filterKeytrack->load();
+    shared.filter2Enabled = raw.filter2Enable->load() >= 0.5f;
+    shared.filter2Type = (params::FilterType) (int) raw.filter2Type->load();
+    shared.filter2Keytrack = raw.filter2Keytrack->load();
+    shared.filterParallel = raw.filterRouting->load() >= 0.5f;
 
     // Normalized base values for every mod destination.
     const auto& dests = params::modDestinations();

@@ -252,15 +252,16 @@ void OscStrip::resized()
 
 // ============================= FilterPanel =================================
 
-FilterPanel::FilterPanel (SPASynthProcessor& p)
-    : display (p),
-      type (p.getAPVTS(), id::filter1Type),
-      cutoff (p.getAPVTS(), id::filter1Cutoff, "CUTOFF"),
-      resonance (p.getAPVTS(), id::filter1Resonance, "RES"),
-      drive (p.getAPVTS(), id::filter1Drive, "DRIVE"),
-      keytrack (p.getAPVTS(), id::filter1Keytrack, "KEYTRK"),
-      envAmount (p.getAPVTS(), id::filter1EnvAmount, "ENV 2", true),
-      mix (p.getAPVTS(), id::filter1Mix, "MIX")
+FilterPanel::FilterPanel (SPASynthProcessor& p, int filterIndex)
+    : index (filterIndex),
+      display (p, filterIndex),
+      type (p.getAPVTS(), filterIndex == 1 ? id::filter1Type : id::filter2Type),
+      cutoff (p.getAPVTS(), filterIndex == 1 ? id::filter1Cutoff : id::filter2Cutoff, "CUTOFF"),
+      resonance (p.getAPVTS(), filterIndex == 1 ? id::filter1Resonance : id::filter2Resonance, "RES"),
+      drive (p.getAPVTS(), filterIndex == 1 ? id::filter1Drive : id::filter2Drive, "DRIVE"),
+      keytrack (p.getAPVTS(), filterIndex == 1 ? id::filter1Keytrack : id::filter2Keytrack, "KEYTRK"),
+      envAmount (p.getAPVTS(), filterIndex == 1 ? id::filter1EnvAmount : id::filter2EnvAmount, "ENV 2", true),
+      mix (p.getAPVTS(), filterIndex == 1 ? id::filter1Mix : id::filter2Mix, "MIX")
 {
     addAndMakeVisible (display);
     addAndMakeVisible (type);
@@ -270,19 +271,39 @@ FilterPanel::FilterPanel (SPASynthProcessor& p)
     addAndMakeVisible (keytrack);
     addAndMakeVisible (envAmount);
     addAndMakeVisible (mix);
+
+    if (index == 2)
+    {
+        enable = std::make_unique<Toggle> (p.getAPVTS(), id::filter2Enable, "ON");
+        routing = std::make_unique<Choice> (p.getAPVTS(), id::filterRouting);
+        addAndMakeVisible (*enable);
+        addAndMakeVisible (*routing);
+    }
 }
 
 void FilterPanel::paint (juce::Graphics& g)
 {
     draw::panel (g, getLocalBounds().toFloat());
-    draw::sectionHeader (g, getLocalBounds(), "Filter", {}, currentTheme().accent);
+    draw::sectionHeader (g, getLocalBounds(),
+                         index == 1 ? "Filter 1" : "Filter 2", {},
+                         currentTheme().accent);
 }
 
 void FilterPanel::resized()
 {
     auto area = getLocalBounds().withTrimmedTop (20).reduced (7, 3);
-    display.setBounds (area.removeFromTop (86));
+    display.setBounds (area.removeFromTop (index == 2 ? 64 : 86));
     area.removeFromTop (4);
+
+    if (index == 2)
+    {
+        auto enableRow = area.removeFromTop (22);
+        enable->setBounds (enableRow.removeFromLeft (52));
+        enableRow.removeFromLeft (4);
+        routing->setBounds (enableRow.reduced (0, 1));
+        area.removeFromTop (2);
+    }
+
     type.setBounds (area.removeFromTop (22).reduced (2, 0));
 
     const auto cellW = area.getWidth() / 3;

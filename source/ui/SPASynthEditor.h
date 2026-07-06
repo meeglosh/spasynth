@@ -55,7 +55,7 @@ private:
 
     // Modules.
     std::array<std::unique_ptr<OscStrip>, params::numOscSlots> oscStrips;
-    FilterPanel filterPanel;
+    juce::TabbedComponent filterTabs { juce::TabbedButtonBar::TabsAtTop };
     juce::TabbedComponent envTabs { juce::TabbedButtonBar::TabsAtTop };
     juce::TabbedComponent lfoTabs { juce::TabbedButtonBar::TabsAtTop };
     ChaosPanel chaosPanel;

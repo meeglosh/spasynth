@@ -221,6 +221,10 @@ private:
         std::atomic<float>* masterGain = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;
+        std::atomic<float>* filter2Enable = nullptr;
+        std::atomic<float>* filter2Type = nullptr;
+        std::atomic<float>* filter2Keytrack = nullptr;
+        std::atomic<float>* filterRouting = nullptr;
         RawArp arp {};
         RawChaos chaos {};
         std::array<RawSlot, params::numOscSlots> slots {};

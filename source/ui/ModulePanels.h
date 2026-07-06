@@ -60,15 +60,18 @@ private:
 class FilterPanel : public juce::Component
 {
 public:
-    explicit FilterPanel (SPASynthProcessor&);
+    FilterPanel (SPASynthProcessor&, int filterIndex);
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
+    const int index;
     FilterDisplay display;
     Choice type;
     Knob cutoff, resonance, drive;
     Knob keytrack, envAmount, mix;
+    std::unique_ptr<Toggle> enable;      // filter 2 only
+    std::unique_ptr<Choice> routing;     // filter 2 only
 };
 
 // One ADSR page: curve + four knobs.

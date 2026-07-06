@@ -1043,8 +1043,12 @@ namespace
                     [&] (juce::Component& c)
                 {
                     if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
+                    {
                         if (tabs->getTabNames().contains ("DELAY"))
                             tabs->setCurrentTabIndex (2);
+                        if (tabs->getTabNames().contains ("FILTER 2"))
+                            tabs->setCurrentTabIndex (1);
+                    }
                     for (auto* child : c.getChildren())
                         frontDelay (*child);
                 };
@@ -1404,6 +1408,59 @@ namespace
                 + " vs bypassed " + juce::String (bypassed) + ")");
     }
 
+    static void dualFilterTest()
+    {
+        std::cout << "dualFilterTest\n";
+
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        // F1 = LP 300 Hz, F2 = HP 3 kHz. In series the pass-bands are
+        // disjoint -> near silence. In parallel both bands pass -> loud.
+        const auto peakWith = [&] (bool f2On, bool parallel)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);  // saw-ish
+            setParam (proc, id::filter1Type, 1.0f);       // LP 24
+            setParam (proc, id::filter1Cutoff, 300.0f);
+            setParam (proc, id::filter2Enable, f2On ? 1.0f : 0.0f);
+            setParam (proc, id::filter2Type, 3.0f);       // HP 24
+            setParam (proc, id::filter2Cutoff, 3000.0f);
+            setParam (proc, id::filterRouting, parallel ? 1.0f : 0.0f);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            float peak = 0.0f;
+            for (int b = 0; b < 24; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                if (b >= 8)
+                    peak = juce::jmax (peak, buffer.getMagnitude (0, blockSize));
+            }
+            return peak;
+        };
+
+        const auto single = peakWith (false, false);
+        const auto series = peakWith (true, false);
+        const auto parallel = peakWith (true, true);
+
+        expect (single > 0.02f, "single filter baseline is audible");
+        expect (series < single * 0.25f,
+                "series LP300->HP3k gates the signal (single " + juce::String (single)
+                + " vs series " + juce::String (series) + ")");
+        expect (parallel > series * 3.0f,
+                "parallel routing passes both bands (series " + juce::String (series)
+                + " vs parallel " + juce::String (parallel) + ")");
+        expect (peakWith (true, false) <= series * 1.5f,
+                "series result is repeatable");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1433,6 +1490,7 @@ int main (int argc, char* argv[])
     arpeggiatorTest();
     extraEnginesTest();
     filterExtrasTest();
+    dualFilterTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

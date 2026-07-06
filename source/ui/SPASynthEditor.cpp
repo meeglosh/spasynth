@@ -12,7 +12,6 @@ namespace ui
 
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeToggled)
     : processor (p), onThemeToggled (std::move (themeToggled)),
-      filterPanel (p),
       chaosPanel (p),
       arpPanel (p.getAPVTS()),
       matrixPanel (p.getAPVTS()),
@@ -113,7 +112,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                         new LFOPanel (processor, i), true);
     addAndMakeVisible (lfoTabs);
 
-    addAndMakeVisible (filterPanel);
+    filterTabs.addTab ("FILTER 1", juce::Colours::transparentBlack,
+                       new FilterPanel (processor, 1), true);
+    filterTabs.addTab ("FILTER 2", juce::Colours::transparentBlack,
+                       new FilterPanel (processor, 2), true);
+    addAndMakeVisible (filterTabs);
     addAndMakeVisible (chaosPanel);
     addAndMakeVisible (arpPanel);
 
@@ -337,7 +340,7 @@ void ContentComponent::resized()
         oscStrips[(size_t) s]->setBounds (row1.removeFromLeft (oscW));
         row1.removeFromLeft (gap);
     }
-    filterPanel.setBounds (row1);
+    filterTabs.setBounds (row1);
     main.removeFromTop (gap);
 
     // Row 2: envelopes, LFOs, chaos, macros.

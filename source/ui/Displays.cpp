@@ -375,26 +375,38 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // =========================== FilterDisplay =================================
 
-FilterDisplay::FilterDisplay (SPASynthProcessor& p)
+FilterDisplay::FilterDisplay (SPASynthProcessor& p, int filterIndex)
     : DisplayComponent (p.getAPVTS(),
-                        { params::id::filter1Type, params::id::filter1Cutoff,
-                          params::id::filter1Resonance },
-                        &p.getTelemetry())
+                        filterIndex == 1
+                            ? juce::StringArray { params::id::filter1Type,
+                                                  params::id::filter1Cutoff,
+                                                  params::id::filter1Resonance }
+                            : juce::StringArray { params::id::filter2Type,
+                                                  params::id::filter2Cutoff,
+                                                  params::id::filter2Resonance,
+                                                  params::id::filter2Enable },
+                        &p.getTelemetry()),
+      index (filterIndex)
 {
 }
 
 void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto& t = currentTheme();
-    const auto type = (params::FilterType) (int) value (params::id::filter1Type);
+    const bool second = index == 2;
+    const auto enabled = ! second || value (params::id::filter2Enable) >= 0.5f;
+    const auto type = (params::FilterType) (int) value (
+        second ? params::id::filter2Type : params::id::filter1Type);
 
     // Live modulated cutoff/res while playing.
-    const auto cutoff = isLive()
-        ? telemetry->filterCutoffHz.load (std::memory_order_relaxed)
-        : value (params::id::filter1Cutoff);
-    const auto res = isLive()
-        ? telemetry->filterResonance.load (std::memory_order_relaxed)
-        : value (params::id::filter1Resonance);
+    const auto cutoff = isLive() && enabled
+        ? (second ? telemetry->filter2CutoffHz : telemetry->filterCutoffHz)
+              .load (std::memory_order_relaxed)
+        : value (second ? params::id::filter2Cutoff : params::id::filter1Cutoff);
+    const auto res = isLive() && enabled
+        ? (second ? telemetry->filter2Resonance : telemetry->filterResonance)
+              .load (std::memory_order_relaxed)
+        : value (second ? params::id::filter2Resonance : params::id::filter1Resonance);
     const auto q = 0.5f + res * 4.5f;
 
     const bool is24 = type == params::FilterType::lp24 || type == params::FilterType::hp24
@@ -436,7 +448,8 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
             curve.lineTo (x, y);
     }
 
-    draw::glowStroke (g, curve, t.accent, 1.6f);
+    draw::glowStroke (g, curve,
+                      enabled ? t.accent : t.textSecondary.withAlpha (0.45f), 1.6f);
 }
 
 // ============================ ChaosDisplay =================================

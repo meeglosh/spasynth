@@ -89,10 +89,11 @@ private:
 class FilterDisplay : public DisplayComponent
 {
 public:
-    explicit FilterDisplay (SPASynthProcessor&);
+    FilterDisplay (SPASynthProcessor&, int filterIndex);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+    const int index;
 };
 
 // A representative chaos walk with a live output dot.

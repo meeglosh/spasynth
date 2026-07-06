@@ -16,6 +16,7 @@ namespace
         };
         std::array<Slot, params::numOscSlots> slots {};
         int cutoff, resonance, drive, filterEnvAmt, filterMix;
+        int f2Cutoff, f2Resonance, f2Drive, f2EnvAmt, f2Mix;
         int ampA, ampD, ampS, ampR;
         int env2A, env2D, env2S, env2R;
         int env3A, env3D, env3S, env3R;
@@ -55,6 +56,11 @@ namespace
                 l.drive        = params::modDestIndex (id::filter1Drive);
                 l.filterEnvAmt = params::modDestIndex (id::filter1EnvAmount);
                 l.filterMix    = params::modDestIndex (id::filter1Mix);
+                l.f2Cutoff     = params::modDestIndex (id::filter2Cutoff);
+                l.f2Resonance  = params::modDestIndex (id::filter2Resonance);
+                l.f2Drive      = params::modDestIndex (id::filter2Drive);
+                l.f2EnvAmt     = params::modDestIndex (id::filter2EnvAmount);
+                l.f2Mix        = params::modDestIndex (id::filter2Mix);
 
                 l.ampA = params::modDestIndex (id::ampAttack);
                 l.ampD = params::modDestIndex (id::ampDecay);
@@ -123,6 +129,7 @@ void SPASynthVoice::setCurrentPlaybackSampleRate (double newRate)
         for (auto& lfo : lfos)
             lfo.prepare (newRate);
         filter.prepare (newRate);
+        filter2.prepare (newRate);
         ampEnv.setSampleRate (newRate);
         env2.setSampleRate (newRate);
         env3.setSampleRate (newRate);
@@ -173,6 +180,7 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
     chaosMix = baseValue (lookup.chaosMix);
 
     filter.reset();
+    filter2.reset();
 
     // Envelopes start from base (unmodulated) values; the first chunk refresh
     // applies modulation.
@@ -428,6 +436,22 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                       denorm (eff, lookup.resonance),
                       denorm (eff, lookup.drive));
 
+    if (shared.filter2Enabled)
+    {
+        const auto f2EnvAmt = denorm (eff, lookup.f2EnvAmt);
+        const auto f2Keytrack = shared.filter2Keytrack
+                              * (float) (currentNote - 60) / 12.0f;
+        const auto f2Cutoff = juce::jlimit (20.0f, 20000.0f,
+            denorm (eff, lookup.f2Cutoff)
+            * std::exp2 (f2Keytrack + f2EnvAmt * env2Value * 4.0f));
+
+        filter2MixValue = denorm (eff, lookup.f2Mix);
+        filter2.setParams (shared.filter2Type,
+                           f2Cutoff,
+                           denorm (eff, lookup.f2Resonance),
+                           denorm (eff, lookup.f2Drive));
+    }
+
     ampEnv.setParameters ({ denorm (eff, lookup.ampA), denorm (eff, lookup.ampD),
                             denorm (eff, lookup.ampS), denorm (eff, lookup.ampR) });
     env2.setParameters ({ denorm (eff, lookup.env2A), denorm (eff, lookup.env2D),
@@ -465,6 +489,16 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
 
             tel->filterCutoffHz.store (finalCutoff, std::memory_order_relaxed);
             tel->filterResonance.store (denorm (eff, lookup.resonance), std::memory_order_relaxed);
+            if (shared.filter2Enabled)
+            {
+                const auto f2KeyOct = shared.filter2Keytrack * (float) (currentNote - 60) / 12.0f;
+                tel->filter2CutoffHz.store (juce::jlimit (20.0f, 20000.0f,
+                    denorm (eff, lookup.f2Cutoff)
+                    * std::exp2 (f2KeyOct + denorm (eff, lookup.f2EnvAmt) * env2Value * 4.0f)),
+                    std::memory_order_relaxed);
+                tel->filter2Resonance.store (denorm (eff, lookup.f2Resonance),
+                                             std::memory_order_relaxed);
+            }
 
             tel->envValue[0].store (ampEnvLast, std::memory_order_relaxed);
             tel->envValue[1].store (src[(int) params::ModSource::env2], std::memory_order_relaxed);
@@ -583,6 +617,30 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
             auto outR = right != nullptr
                       ? sumR + (filter.processSample (1, sumR) - sumR) * filterMixValue
                       : 0.0f;
+
+            if (shared.filter2Enabled)
+            {
+                if (shared.filterParallel)
+                {
+                    // Parallel: both filters see the raw mix; halved sum.
+                    const auto pL = sumL + (filter2.processSample (0, sumL) - sumL)
+                                           * filter2MixValue;
+                    const auto pR = right != nullptr
+                                  ? sumR + (filter2.processSample (1, sumR) - sumR)
+                                           * filter2MixValue
+                                  : 0.0f;
+                    outL = 0.5f * (outL + pL);
+                    outR = 0.5f * (outR + pR);
+                }
+                else
+                {
+                    // Series: filter 2 shapes filter 1's output.
+                    outL = outL + (filter2.processSample (0, outL) - outL) * filter2MixValue;
+                    if (right != nullptr)
+                        outR = outR + (filter2.processSample (1, outR) - outR)
+                                      * filter2MixValue;
+                }
+            }
 
             // Chaos saturation: warm tanh, level-compensated.
             if (satDrive > 0.001f)

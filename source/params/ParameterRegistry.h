@@ -23,6 +23,7 @@ enum class Section
     oscB,
     oscC,
     filter1,
+    filter2,
     ampEnv,
     env2,
     env3,
@@ -42,7 +43,7 @@ enum class Section
 
 inline constexpr Section allSections[] = {
     Section::global, Section::oscA, Section::oscB, Section::oscC,
-    Section::filter1, Section::ampEnv, Section::env2, Section::env3,
+    Section::filter1, Section::filter2, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
     Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
     Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::matrix,
@@ -150,6 +151,16 @@ namespace id
     inline constexpr const char* filter1Keytrack  = "filter1.keytrack";
     inline constexpr const char* filter1EnvAmount = "filter1.envAmount";
     inline constexpr const char* filter1Mix       = "filter1.mix";
+
+    inline constexpr const char* filter2Enable    = "filter2.enable";
+    inline constexpr const char* filter2Type      = "filter2.type";
+    inline constexpr const char* filter2Cutoff    = "filter2.cutoff";
+    inline constexpr const char* filter2Resonance = "filter2.resonance";
+    inline constexpr const char* filter2Drive     = "filter2.drive";
+    inline constexpr const char* filter2Keytrack  = "filter2.keytrack";
+    inline constexpr const char* filter2EnvAmount = "filter2.envAmount";
+    inline constexpr const char* filter2Mix       = "filter2.mix";
+    inline constexpr const char* filterRouting    = "filter2.routing";   // Series/Parallel
 
     inline constexpr const char* ampAttack  = "ampEnv.attack";
     inline constexpr const char* ampDecay   = "ampEnv.decay";

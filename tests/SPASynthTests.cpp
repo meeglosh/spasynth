@@ -1695,6 +1695,31 @@ namespace
         }
     }
 
+    static void licenseLineTest()
+    {
+        std::cout << "licenseLineTest\n";
+
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("spasynth-license-test.txt");
+
+        expect (spa::library::licenseLineFromFile (file).isEmpty(),
+                "missing license file yields empty");
+
+        file.replaceWithText ("\n  \n  Licensed to mike@example.com "
+                              + juce::String::fromUTF8 ("\xe2\x80\x94")
+                              + " Pro Edition  \nsecond line\n");
+        expect (spa::library::licenseLineFromFile (file)
+                    == "Licensed to mike@example.com "
+                       + juce::String::fromUTF8 ("\xe2\x80\x94") + " Pro Edition",
+                "first non-empty line, trimmed");
+
+        file.replaceWithText ("   \n\n");
+        expect (spa::library::licenseLineFromFile (file).isEmpty(),
+                "whitespace-only file yields empty");
+
+        file.deleteFile();
+    }
+
     static void presetBrowserFilterTest()
     {
         std::cout << "presetBrowserFilterTest\n";
@@ -1778,6 +1803,7 @@ int main (int argc, char* argv[])
     presetRoundTripTest();
     factoryPresetGenerationTest();
     presetBrowserFilterTest();
+    licenseLineTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

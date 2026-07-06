@@ -215,6 +215,34 @@ juce::File defaultPresetsRoot()
         .getChildFile ("Presets");
 }
 
+juce::String licenseLineFromFile (const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return {};
+
+    juce::StringArray lines;
+    lines.addLines (file.loadFileAsString());
+    for (const auto& line : lines)
+        if (line.trim().isNotEmpty())
+            return line.trim();
+
+    return {};
+}
+
+juce::String getLicenseLine()
+{
+    for (const auto& candidate : { findLibraryRoot().getChildFile ("license.txt"),
+                                   defaultPresetsRoot().getParentDirectory()
+                                       .getChildFile ("license.txt") })
+    {
+        const auto line = licenseLineFromFile (candidate);
+        if (line.isNotEmpty())
+            return line;
+    }
+
+    return {};
+}
+
 juce::String toPortable (const juce::File& f, const juce::File& libraryRoot)
 {
     if (libraryRoot.isDirectory() && f.isAChildOf (libraryRoot))

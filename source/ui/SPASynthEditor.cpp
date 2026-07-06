@@ -409,6 +409,8 @@ void ContentComponent::refreshAll()
     if (presetBrowser != nullptr)
         presetBrowser->refresh();   // theme colours
 
+    licenseLine = library::getLicenseLine();
+
     repaint();
 }
 
@@ -459,7 +461,11 @@ void ContentComponent::paint (juce::Graphics& g)
     g.fillRect (footer);
     g.setColour (t.textSecondary);
     g.setFont (metrics::smallFont());
-    g.drawText (juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
+    // The ownership stamp takes the brand echo's spot when a license.txt is
+    // installed (informational only — nothing is ever gated on it).
+    g.drawText (licenseLine.isNotEmpty()
+                    ? licenseLine
+                    : juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
                 footer.reduced (10, 0), juce::Justification::centredRight);
     g.drawText ("v" SPASYNTH_VERSION, footer.reduced (10, 0), juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));

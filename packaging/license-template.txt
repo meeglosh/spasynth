@@ -1,0 +1,4 @@
+Licensed to {{customer_email}} — {{edition}} Edition (order {{order_number}})
+
+SPASynth by Silverplatter Audio. This copy is registered to the customer
+above. It is not copy-protected — see EULA.txt for what that means and why.

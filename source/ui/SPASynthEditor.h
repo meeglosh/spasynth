@@ -85,6 +85,8 @@ private:
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
+    juce::String licenseLine;   // footer ownership stamp (refreshed with the library)
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ContentComponent)
 };
 

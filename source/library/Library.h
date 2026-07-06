@@ -60,6 +60,13 @@ juce::File findLibraryRoot();
 // Factory/<Category>/ and User/ underneath.
 juce::File defaultPresetsRoot();
 
+// Optional ownership stamp ("Licensed to name@example.com — Pro Edition"),
+// shown in the editor footer when present. Purely informational — never
+// gates anything (see EULA: no activation, no phone-home). Looked for as
+// license.txt in the library root, then next to the presets folder.
+juce::String getLicenseLine();
+juce::String licenseLineFromFile (const juce::File&);   // pure parser (testable)
+
 // --- Portable paths ---------------------------------------------------------
 // Sample/wavetable paths inside the library are stored as "$LIB$/..." so
 // presets and sessions survive the library living elsewhere on a customer's

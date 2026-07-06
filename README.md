@@ -62,6 +62,12 @@ SKU model: one binary, content-differentiated. Standard ships the starter
 library; every full pack is an add-on zip that installs the same way. Pro
 ships all 88 packs. No DRM anywhere, by design.
 
+Ownership stamp (optional, per-order): fill `packaging/license-template.txt`
+with the buyer's email/edition/order (manually or via a Shopify stamping
+app) and deliver it as `Silverplatter Audio/SPASynth Library/license.txt` —
+zipped with that path it installs like any pack. SPASynth shows the first
+line in its footer. Purely informational; nothing is gated on it.
+
 ## Layout
 
 - `source/params/` — the parameter registry: single source of truth for every

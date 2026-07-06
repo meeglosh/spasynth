@@ -420,6 +420,22 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true },
                    { "As Played", "Fixed", "Accent" } });
+    p.push_back ({ arpid::chance, "Arp Chance", Section::arp,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .minNorm = 0.5f, .biasCentre = 0.9f,
+                            .biasStrength = 0.5f } });
+    p.push_back ({ arpid::stutter, "Arp Stutter", Section::arp,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.15f,
+                            .biasStrength = 0.5f } });
+    p.push_back ({ arpid::jump, "Arp Jump", Section::arp,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.15f,
+                            .biasStrength = 0.5f } });
+    p.push_back ({ arpid::humanize, "Arp Humanize", Section::arp,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.25f,
+                            .biasStrength = 0.4f } });
 
     // --- Organic Chaos ------------------------------------------------------
     namespace ch = id::chaos;

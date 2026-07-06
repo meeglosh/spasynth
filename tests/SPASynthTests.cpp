@@ -1238,6 +1238,106 @@ namespace
         expect (sawPassThrough, "disabled arp passes MIDI through");
     }
 
+    static void arpChanceTest()
+    {
+        std::cout << "arpChanceTest\n";
+
+        namespace params = spa::params;
+        using Arp = spa::dsp::Arpeggiator;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        struct Hit { int note; int velocity; };
+
+        // Runs `seconds` of a held C4 through a fresh arp; returns note-ons.
+        // division 12 = 1/16 @ 120bpm = 8 steps per second.
+        const auto run = [&] (Arp::Params p, double seconds)
+        {
+            Arp arp;
+            arp.prepare (sampleRate);
+            p.enable = true;
+            p.division = 12;
+            p.sampleRate = sampleRate;
+
+            std::vector<Hit> hits;
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            for (int block = 0; block < (int) (seconds * sampleRate / blockSize); ++block)
+            {
+                arp.process (midi, blockSize, p);
+                for (const auto metadata : midi)
+                    if (metadata.getMessage().isNoteOn())
+                        hits.push_back ({ metadata.getMessage().getNoteNumber(),
+                                          (int) metadata.getMessage().getVelocity() });
+                midi.clear();
+            }
+            return hits;
+        };
+
+        {
+            Arp::Params p;
+            const auto hits = run (p, 1.0);
+            bool clean = ! hits.empty();
+            for (const auto& h : hits)
+                clean = clean && h.note == 60 && h.velocity == 100;
+            expect (clean, "defaults leave the pattern untouched ("
+                           + juce::String ((int) hits.size()) + " hits)");
+        }
+
+        {
+            Arp::Params p;
+            p.chance = 0.0f;
+            expect (run (p, 1.0).empty(), "chance 0 rests every step");
+        }
+
+        {
+            Arp::Params p;
+            p.chance = 0.5f;
+            const auto n = (int) run (p, 4.0).size();   // 32 steps
+            expect (n >= 5 && n <= 27,
+                    "chance 0.5 fires some steps, rests others (" + juce::String (n) + "/32)");
+        }
+
+        {
+            Arp::Params p;
+            p.stutter = 1.0f;
+            const auto hits = run (p, 2.0);              // 16 steps -> 32..64 hits
+            bool samePitch = true;
+            for (const auto& h : hits)
+                samePitch = samePitch && h.note == 60;
+            expect ((int) hits.size() >= 30,
+                    "stutter ratchets every step into repeats ("
+                    + juce::String ((int) hits.size()) + " hits from 16 steps)");
+            expect (samePitch, "ratchet repeats keep the step's pitch");
+        }
+
+        {
+            Arp::Params p;
+            p.jump = 1.0f;
+            const auto hits = run (p, 2.0);
+            bool octaves = ! hits.empty();
+            for (const auto& h : hits)
+                octaves = octaves && (h.note == 48 || h.note == 72);
+            expect (octaves, "jump 1 lands an octave up or down every step");
+        }
+
+        {
+            Arp::Params p;
+            p.humanize = 1.0f;
+            const auto hits = run (p, 2.0);
+            int minVel = 127, maxVel = 1;
+            for (const auto& h : hits)
+            {
+                minVel = juce::jmin (minVel, h.velocity);
+                maxVel = juce::jmax (maxVel, h.velocity);
+            }
+            expect (maxVel - minVel >= 10,
+                    "humanize spreads velocities (" + juce::String (minVel)
+                    + ".." + juce::String (maxVel) + ")");
+        }
+    }
+
     static void extraEnginesTest()
     {
         std::cout << "extraEnginesTest\n";
@@ -1660,6 +1760,7 @@ int main (int argc, char* argv[])
     randomizerProducesSoundTest();
     midiLearnTest();
     arpeggiatorTest();
+    arpChanceTest();
     extraEnginesTest();
     filterExtrasTest();
     dualFilterTest();

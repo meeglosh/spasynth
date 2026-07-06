@@ -215,6 +215,10 @@ private:
         std::atomic<float>* latch = nullptr;
         std::atomic<float>* phrase = nullptr;
         std::atomic<float>* velMode = nullptr;
+        std::atomic<float>* chance = nullptr;
+        std::atomic<float>* stutter = nullptr;
+        std::atomic<float>* jump = nullptr;
+        std::atomic<float>* humanize = nullptr;
     };
 
     struct Raw

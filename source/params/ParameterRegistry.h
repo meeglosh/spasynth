@@ -245,6 +245,12 @@ namespace id
         inline constexpr const char* latch   = "arp.latch";
         inline constexpr const char* phrase  = "arp.phrase";
         inline constexpr const char* velMode = "arp.velMode";
+
+        // Probability controls (Elektron-style trig conditions).
+        inline constexpr const char* chance   = "arp.chance";     // step fires vs rests
+        inline constexpr const char* stutter  = "arp.stutter";    // ratchet chance (2-4 repeats)
+        inline constexpr const char* jump     = "arp.jump";       // random +/- octave chance
+        inline constexpr const char* humanize = "arp.humanize";   // velocity randomization
     }
 
     // Organic Chaos section.

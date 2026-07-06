@@ -107,6 +107,10 @@ SPASynthProcessor::SPASynthProcessor()
         raw.arp.latch    = apvts.getRawParameterValue (arpid::latch);
         raw.arp.phrase   = apvts.getRawParameterValue (arpid::phrase);
         raw.arp.velMode  = apvts.getRawParameterValue (arpid::velMode);
+        raw.arp.chance   = apvts.getRawParameterValue (arpid::chance);
+        raw.arp.stutter  = apvts.getRawParameterValue (arpid::stutter);
+        raw.arp.jump     = apvts.getRawParameterValue (arpid::jump);
+        raw.arp.humanize = apvts.getRawParameterValue (arpid::humanize);
     }
 
     raw.dests.reserve ((size_t) params::numModDests());
@@ -574,6 +578,10 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         ap.latch        = raw.arp.latch->load() >= 0.5f;
         ap.phrase       = (int) raw.arp.phrase->load();
         ap.velocityMode = (int) raw.arp.velMode->load();
+        ap.chance       = raw.arp.chance->load();
+        ap.stutter      = raw.arp.stutter->load();
+        ap.jump         = raw.arp.jump->load();
+        ap.humanize     = raw.arp.humanize->load();
         ap.bpm          = 120.0;
         ap.sampleRate   = currentSampleRate;
 

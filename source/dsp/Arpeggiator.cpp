@@ -14,6 +14,7 @@ void Arpeggiator::reset()
 {
     numHeld = 0;
     numActive = 0;
+    numPending = 0;
     arrivalCounter = 0;
     stepCounter = 0;
     walkIndex = 0;
@@ -54,6 +55,7 @@ void Arpeggiator::releaseAllActive (juce::MidiBuffer& out, int samplePos)
     for (int i = 0; i < numActive; ++i)
         out.addEvent (juce::MidiMessage::noteOff (1, active[i].note), samplePos);
     numActive = 0;
+    numPending = 0;   // unfired ratchet repeats die with their step
 }
 
 int Arpeggiator::pickNoteIndex (const Params& p, int sequenceLength)
@@ -86,6 +88,13 @@ void Arpeggiator::triggerStep (juce::MidiBuffer& out, int samplePos, const Param
     if (numHeld == 0)
         return;
 
+    // Chance: a skipped step is a rest — the pattern position still advances.
+    if (p.chance < 0.999f && random.nextFloat() >= p.chance)
+    {
+        ++stepCounter;
+        return;
+    }
+
     // Sorted-by-pitch view of the held notes (insertion sort into a small
     // local array — numHeld <= 32).
     int sorted[maxHeld];
@@ -95,7 +104,13 @@ void Arpeggiator::triggerStep (juce::MidiBuffer& out, int samplePos, const Param
         for (int j = i; j > 0 && held[sorted[j]].note < held[sorted[j - 1]].note; --j)
             std::swap (sorted[j], sorted[j - 1]);
 
-    const auto offBeat = stepBeat + (double) p.gate * beatsPerStep * 0.98;
+    // Stutter: the whole step ratchets into 2-4 equal repeats. Jump: the
+    // step (repeats included) lands an octave away. Both roll once per step.
+    const auto repeats = (p.stutter > 0.0f && random.nextFloat() < p.stutter)
+                       ? 2 + random.nextInt (3) : 1;
+    const auto subBeats = beatsPerStep / (double) repeats;
+    const auto jumpSemis = (p.jump > 0.0f && random.nextFloat() < p.jump)
+                         ? (random.nextBool() ? 12 : -12) : 0;
 
     const auto velocityFor = [&] (juce::uint8 played, int step, int patternLen) -> juce::uint8
     {
@@ -106,14 +121,32 @@ void Arpeggiator::triggerStep (juce::MidiBuffer& out, int samplePos, const Param
         return played;
     };
 
+    // Humanize rolls per hit, so ratchet repeats breathe individually.
+    const auto humanized = [&] (juce::uint8 v) -> juce::uint8
+    {
+        if (p.humanize <= 0.0f)
+            return v;
+        const auto delta = (int) std::lround ((random.nextFloat() * 2.0f - 1.0f)
+                                              * p.humanize * 48.0f);
+        return (juce::uint8) juce::jlimit (1, 127, (int) v + delta);
+    };
+
     const auto emit = [&] (int midiNote, juce::uint8 velocity)
     {
-        const auto note = (juce::uint8) juce::jlimit (0, 127, midiNote);
+        const auto note = (juce::uint8) juce::jlimit (0, 127, midiNote + jumpSemis);
         if (numActive < maxActive)
         {
-            out.addEvent (juce::MidiMessage::noteOn (1, note, velocity), samplePos);
-            active[numActive++] = { note, offBeat };
+            out.addEvent (juce::MidiMessage::noteOn (1, note, humanized (velocity)),
+                          samplePos);
+            active[numActive++] = { note, stepBeat + (double) p.gate * subBeats * 0.98 };
         }
+
+        // Later repeats usually land past this block; schedule them by beat.
+        for (int r = 1; r < repeats && numPending < maxPending; ++r)
+            pending[numPending++] = { note, humanized (velocity),
+                                      stepBeat + (double) r * subBeats,
+                                      stepBeat + ((double) r + (double) p.gate * 0.98)
+                                          * subBeats };
     };
 
     if (p.mode == params::ArpMode::chord)
@@ -315,7 +348,10 @@ void Arpeggiator::process (juce::MidiBuffer& midi, int numSamples, const Params&
     {
         // Follow the host; resync on jumps (loop points, relocations).
         if (std::abs (p.ppqAtBlockStart - lastHostPpq) > blockBeats * 4.0 + 0.25)
+        {
             stepCounter = (int) std::floor (p.ppqAtBlockStart / beatsPerStep + 1.0e-6);
+            numPending = 0;   // scheduled repeats are stale after a relocation
+        }
         blockStartBeat = p.ppqAtBlockStart;
         lastHostPpq = p.ppqAtBlockStart + blockBeats;
         beatClock = blockStartBeat + blockBeats;
@@ -340,7 +376,25 @@ void Arpeggiator::process (juce::MidiBuffer& midi, int numSamples, const Params&
         }
     }
 
-    if (numHeld == 0 && numActive == 0)
+    // --- Ratchet repeats due inside this block ---------------------------------
+    for (int i = numPending - 1; i >= 0; --i)
+    {
+        if (pending[i].onBeat < blockEndBeat)
+        {
+            const auto beatOffset = juce::jmax (0.0, pending[i].onBeat - blockStartBeat);
+            const auto pos = juce::jlimit (0, numSamples - 1,
+                                           (int) (beatOffset * samplesPerBeat));
+            if (numActive < maxActive)
+            {
+                out.addEvent (juce::MidiMessage::noteOn (1, pending[i].note,
+                                                         pending[i].velocity), pos);
+                active[numActive++] = { pending[i].note, pending[i].offBeat };
+            }
+            pending[i] = pending[--numPending];
+        }
+    }
+
+    if (numHeld == 0 && numActive == 0 && numPending == 0)
     {
         midi.swapWith (out);
         return;

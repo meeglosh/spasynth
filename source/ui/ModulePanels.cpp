@@ -468,7 +468,11 @@ ArpPanel::ArpPanel (juce::AudioProcessorValueTreeState& apvts)
       velMode (apvts, id::arp::velMode),
       octaves (apvts, id::arp::octaves, "OCTAVES", true),
       gate (apvts, id::arp::gate, "GATE", true),
-      swing (apvts, id::arp::swing, "SWING", true)
+      swing (apvts, id::arp::swing, "SWING", true),
+      chance (apvts, id::arp::chance, "CHANCE", true),
+      stutter (apvts, id::arp::stutter, "STUTTER", true),
+      jump (apvts, id::arp::jump, "JUMP", true),
+      humanize (apvts, id::arp::humanize, "HUMAN", true)
 {
     addAndMakeVisible (enable);
     addAndMakeVisible (latch);
@@ -479,6 +483,10 @@ ArpPanel::ArpPanel (juce::AudioProcessorValueTreeState& apvts)
     addAndMakeVisible (octaves);
     addAndMakeVisible (gate);
     addAndMakeVisible (swing);
+    addAndMakeVisible (chance);
+    addAndMakeVisible (stutter);
+    addAndMakeVisible (jump);
+    addAndMakeVisible (humanize);
 }
 
 void ArpPanel::paint (juce::Graphics& g)
@@ -507,11 +515,20 @@ void ArpPanel::resized()
     velMode.setBounds (row2.reduced (0, 1));
 
     area.removeFromTop (2);
-    const auto cellW = area.getWidth() / 3;
-    auto knobRow = area.withHeight (juce::jmin (area.getHeight(), 68));
+    const auto knobH = juce::jmin (area.getHeight() / 2, 64);
+
+    auto knobRow = area.removeFromTop (knobH);
+    const auto cellW = knobRow.getWidth() / 3;
     octaves.setBounds (knobRow.removeFromLeft (cellW));
     gate.setBounds (knobRow.removeFromLeft (cellW));
     swing.setBounds (knobRow);
+
+    auto chanceRow = area.withHeight (knobH);
+    const auto chanceW = chanceRow.getWidth() / 4;
+    chance.setBounds (chanceRow.removeFromLeft (chanceW));
+    stutter.setBounds (chanceRow.removeFromLeft (chanceW));
+    jump.setBounds (chanceRow.removeFromLeft (chanceW));
+    humanize.setBounds (chanceRow);
 }
 
 // =============================== FXPanel ===================================

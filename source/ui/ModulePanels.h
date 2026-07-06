@@ -121,8 +121,8 @@ private:
     std::array<Drift, 6> drifts;   // pitch, phase, position, amp, sat, dist
 };
 
-// Arpeggiator: compact three-row layout (toggles+mode+rate / phrase+vel /
-// octave-gate-swing knobs).
+// Arpeggiator: compact four-row layout (toggles+mode+rate / phrase+vel /
+// octave-gate-swing knobs / chance-stutter-jump-humanize knobs).
 class ArpPanel : public juce::Component
 {
 public:
@@ -134,6 +134,7 @@ private:
     Toggle enable, latch;
     Choice mode, division, phrase, velMode;
     Knob octaves, gate, swing;
+    Knob chance, stutter, jump, humanize;
 };
 
 // One FX tab: character scope on top, the section's registry controls below.

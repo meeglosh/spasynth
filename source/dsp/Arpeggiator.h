@@ -25,6 +25,15 @@ public:
         int phrase = 0;           // index into arpPhrases()
         int velocityMode = 0;     // 0 played, 1 fixed, 2 accent
 
+        // Probability controls. chance: odds a step fires (a skipped step is
+        // a rest — the pattern position still advances). stutter: odds a step
+        // ratchets into 2-4 repeats. jump: odds the step lands an octave up
+        // or down. humanize: random velocity spread (0..1 -> up to +/-48).
+        float chance = 1.0f;
+        float stutter = 0.0f;
+        float jump = 0.0f;
+        float humanize = 0.0f;
+
         double bpm = 120.0;
         bool hostPlaying = false;
         double ppqAtBlockStart = 0.0;
@@ -41,6 +50,7 @@ public:
 private:
     static constexpr int maxHeld = 32;
     static constexpr int maxActive = 34;   // chord mode can stack all held
+    static constexpr int maxPending = 96;  // chord mode x up to 3 extra repeats
 
     struct Held
     {
@@ -53,6 +63,16 @@ private:
     {
         juce::uint8 note = 0;
         double offBeat = 0.0;   // absolute beat position to release at
+    };
+
+    // Ratchet repeats scheduled beyond the current block (a step usually
+    // outlives the audio block, so later sub-hits fire in future blocks).
+    struct PendingHit
+    {
+        juce::uint8 note = 0;
+        juce::uint8 velocity = 0;
+        double onBeat = 0.0;
+        double offBeat = 0.0;
     };
 
     void addHeld (juce::uint8 note, juce::uint8 velocity);
@@ -69,6 +89,9 @@ private:
 
     Active active[maxActive];
     int numActive = 0;
+
+    PendingHit pending[maxPending];
+    int numPending = 0;
 
     int stepCounter = 0;
     int walkIndex = 0;

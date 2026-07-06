@@ -257,13 +257,19 @@ FilterPanel::FilterPanel (SPASynthProcessor& p)
       type (p.getAPVTS(), id::filter1Type),
       cutoff (p.getAPVTS(), id::filter1Cutoff, "CUTOFF"),
       resonance (p.getAPVTS(), id::filter1Resonance, "RES"),
-      drive (p.getAPVTS(), id::filter1Drive, "DRIVE")
+      drive (p.getAPVTS(), id::filter1Drive, "DRIVE"),
+      keytrack (p.getAPVTS(), id::filter1Keytrack, "KEYTRK"),
+      envAmount (p.getAPVTS(), id::filter1EnvAmount, "ENV 2", true),
+      mix (p.getAPVTS(), id::filter1Mix, "MIX")
 {
     addAndMakeVisible (display);
     addAndMakeVisible (type);
     addAndMakeVisible (cutoff);
     addAndMakeVisible (resonance);
     addAndMakeVisible (drive);
+    addAndMakeVisible (keytrack);
+    addAndMakeVisible (envAmount);
+    addAndMakeVisible (mix);
 }
 
 void FilterPanel::paint (juce::Graphics& g)
@@ -280,10 +286,17 @@ void FilterPanel::resized()
     type.setBounds (area.removeFromTop (22).reduced (2, 0));
 
     const auto cellW = area.getWidth() / 3;
-    auto knobRow = area.withHeight (juce::jmin (area.getHeight(), 66));
-    cutoff.setBounds (knobRow.removeFromLeft (cellW));
-    resonance.setBounds (knobRow.removeFromLeft (cellW));
-    drive.setBounds (knobRow);
+    const auto rowH = juce::jmin (72, area.getHeight() / 2);
+
+    auto row1 = area.removeFromTop (rowH);
+    cutoff.setBounds (row1.removeFromLeft (cellW));
+    resonance.setBounds (row1.removeFromLeft (cellW));
+    drive.setBounds (row1);
+
+    auto row2 = area.removeFromTop (rowH);
+    keytrack.setBounds (row2.removeFromLeft (cellW));
+    envAmount.setBounds (row2.removeFromLeft (cellW));
+    mix.setBounds (row2);
 }
 
 // =============================== EnvPanel ==================================

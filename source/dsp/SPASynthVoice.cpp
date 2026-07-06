@@ -15,7 +15,7 @@ namespace
             int pulseWidth, fmIndex, pluckDamp;
         };
         std::array<Slot, params::numOscSlots> slots {};
-        int cutoff, resonance, drive;
+        int cutoff, resonance, drive, filterEnvAmt, filterMix;
         int ampA, ampD, ampS, ampR;
         int env2A, env2D, env2S, env2R;
         int env3A, env3D, env3S, env3R;
@@ -50,9 +50,11 @@ namespace
                     slot.pluckDamp    = params::modDestIndex (id::oscSlot (s, id::osc::pluckDamp));
                 }
 
-                l.cutoff    = params::modDestIndex (id::filter1Cutoff);
-                l.resonance = params::modDestIndex (id::filter1Resonance);
-                l.drive     = params::modDestIndex (id::filter1Drive);
+                l.cutoff       = params::modDestIndex (id::filter1Cutoff);
+                l.resonance    = params::modDestIndex (id::filter1Resonance);
+                l.drive        = params::modDestIndex (id::filter1Drive);
+                l.filterEnvAmt = params::modDestIndex (id::filter1EnvAmount);
+                l.filterMix    = params::modDestIndex (id::filter1Mix);
 
                 l.ampA = params::modDestIndex (id::ampAttack);
                 l.ampD = params::modDestIndex (id::ampDecay);
@@ -409,8 +411,20 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
         slotGains[(size_t) s] = juce::Decibels::decibelsToGain (denorm (eff, d.level), -60.0f);
     }
 
+    // Cutoff with keytracking (relative to C3) and the hardwired Env 2
+    // amount (+/- 4 octaves at full depth) - the classic filter-envelope
+    // convenience found on every comparable synth.
+    const auto envAmt = denorm (eff, lookup.filterEnvAmt);
+    const auto keytrackOctaves = shared.filterKeytrack
+                               * (float) (currentNote - 60) / 12.0f;
+    const auto envOctaves = envAmt * env2Value * 4.0f;
+    const auto finalCutoff = juce::jlimit (20.0f, 20000.0f,
+        denorm (eff, lookup.cutoff) * std::exp2 (keytrackOctaves + envOctaves));
+
+    filterMixValue = denorm (eff, lookup.filterMix);
+
     filter.setParams (shared.filterType,
-                      denorm (eff, lookup.cutoff),
+                      finalCutoff,
                       denorm (eff, lookup.resonance),
                       denorm (eff, lookup.drive));
 
@@ -449,7 +463,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                 tel->slotPosition[(size_t) s].store (pos, std::memory_order_relaxed);
             }
 
-            tel->filterCutoffHz.store (denorm (eff, lookup.cutoff), std::memory_order_relaxed);
+            tel->filterCutoffHz.store (finalCutoff, std::memory_order_relaxed);
             tel->filterResonance.store (denorm (eff, lookup.resonance), std::memory_order_relaxed);
 
             tel->envValue[0].store (ampEnvLast, std::memory_order_relaxed);
@@ -565,8 +579,10 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
             ampEnvLast = envValue;
             const auto gain = envValue * (0.2f + 0.8f * velocity) * chaosAmpGain;
 
-            auto outL = filter.processSample (0, sumL);
-            auto outR = right != nullptr ? filter.processSample (1, sumR) : 0.0f;
+            auto outL = sumL + (filter.processSample (0, sumL) - sumL) * filterMixValue;
+            auto outR = right != nullptr
+                      ? sumR + (filter.processSample (1, sumR) - sumR) * filterMixValue
+                      : 0.0f;
 
             // Chaos saturation: warm tanh, level-compensated.
             if (satDrive > 0.001f)

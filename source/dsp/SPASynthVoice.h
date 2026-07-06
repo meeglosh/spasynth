@@ -57,6 +57,7 @@ struct SharedState
 
     std::array<SlotStatic, params::maxOscSlots> slots {};
     params::FilterType filterType = params::FilterType::lp12;
+    float filterKeytrack = 0.0f;
 
     // Normalized (0..1) base values for every mod destination, indexed by the
     // registry's dense mod-dest index.
@@ -150,6 +151,7 @@ private:
     // latency breaks the cycle), plus the current shaper drives.
     float chaosDepth = 0.0f, chaosRate = 2.0f, chaosMix = 1.0f;
     float satDrive = 0.0f, distDrive = 0.0f, chaosAmpGain = 1.0f;
+    float filterMixValue = 1.0f;   // per-chunk dry/wet for the filter
 
     // Per-slot pan gains for sample/granular modes (wavetable pan is handled
     // inside the unison oscillator), and last chunk's effective grain position

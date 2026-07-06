@@ -1337,6 +1337,73 @@ namespace
         }
     }
 
+    static void filterExtrasTest()
+    {
+        std::cout << "filterExtrasTest\n";
+
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto brightness = [&] (std::function<void (spa::SPASynthProcessor&)> configure,
+                                     int note)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);  // saw-ish
+            setParam (proc, id::filter1Type, 1.0f);                     // LP 24
+            setParam (proc, id::filter1Cutoff, 300.0f);
+            if (configure)
+                configure (proc);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+            for (int b = 0; b < 20; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+            }
+            float hf = 0.0f;
+            for (int i = 1; i < blockSize; ++i)
+                hf += std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1));
+            return hf / (float) blockSize;
+        };
+
+        // Keytracking: with full tracking, a high note opens the filter.
+        const auto highNoTrack = brightness ({}, 96);
+        const auto highTracked = brightness ([] (auto& proc)
+        {
+            setParam (proc, id::filter1Keytrack, 1.0f);
+        }, 96);
+        expect (highTracked > highNoTrack * 1.5f,
+                "keytracking opens cutoff for high notes (untracked "
+                + juce::String (highNoTrack) + " vs tracked "
+                + juce::String (highTracked) + ")");
+
+        // Env amount: positive env2 depth brightens the sustain phase.
+        const auto noEnv = brightness ({}, 48);
+        const auto withEnv = brightness ([] (auto& proc)
+        {
+            setParam (proc, id::filter1EnvAmount, 1.0f);
+        }, 48);
+        expect (withEnv > noEnv * 1.5f,
+                "env amount opens the filter (dry " + juce::String (noEnv)
+                + " vs env " + juce::String (withEnv) + ")");
+
+        // Mix 0 bypasses the filter entirely.
+        const auto filtered = brightness ({}, 60);
+        const auto bypassed = brightness ([] (auto& proc)
+        {
+            setParam (proc, id::filter1Mix, 0.0f);
+        }, 60);
+        expect (bypassed > filtered * 2.0f,
+                "mix 0 bypasses the LP filter (filtered " + juce::String (filtered)
+                + " vs bypassed " + juce::String (bypassed) + ")");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1365,6 +1432,7 @@ int main (int argc, char* argv[])
     midiLearnTest();
     arpeggiatorTest();
     extraEnginesTest();
+    filterExtrasTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

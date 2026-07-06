@@ -147,6 +147,9 @@ namespace id
     inline constexpr const char* filter1Cutoff    = "filter1.cutoff";
     inline constexpr const char* filter1Resonance = "filter1.resonance";
     inline constexpr const char* filter1Drive     = "filter1.drive";
+    inline constexpr const char* filter1Keytrack  = "filter1.keytrack";
+    inline constexpr const char* filter1EnvAmount = "filter1.envAmount";
+    inline constexpr const char* filter1Mix       = "filter1.mix";
 
     inline constexpr const char* ampAttack  = "ampEnv.attack";
     inline constexpr const char* ampDecay   = "ampEnv.decay";

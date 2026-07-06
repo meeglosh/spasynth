@@ -26,6 +26,7 @@ SPASynthProcessor::SPASynthProcessor()
 {
     raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
+    raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {
@@ -455,6 +456,7 @@ void SPASynthProcessor::updateSharedState (int blockLength)
     }
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
+    shared.filterKeytrack = raw.filterKeytrack->load();
 
     // Normalized base values for every mod destination.
     const auto& dests = params::modDestinations();

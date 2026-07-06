@@ -335,6 +335,9 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
                            .biasStrength = 0.5f } });
+    p.push_back ({ id::filter1Keytrack, "Keytrack", Section::filter1,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
 
     addADSRParams (p, Section::ampEnv, "ampEnv");
     addADSRParams (p, Section::env2, "env2");
@@ -441,6 +444,15 @@ static std::vector<ParamDef> buildCoreDefs()
                             .biasStrength = 0.4f } });
 
     addEngineDestParams (p);   // appended: keeps existing dest indices stable
+
+    // Filter convenience mods (also appended for dest-index stability).
+    p.push_back ({ id::filter1EnvAmount, "Env Amt", Section::filter1,
+                   ParamKind::floatParam, { -1.0f, 1.0f }, 0.0f, "",
+                   true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.35f } });
+    p.push_back ({ id::filter1Mix, "Mix", Section::filter1,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   true, { .enabled = true, .minNorm = 0.5f, .biasCentre = 0.95f,
+                           .biasStrength = 0.5f } });
 
     // --- FX chain -------------------------------------------------------
     namespace fx = id::fx;

@@ -68,6 +68,7 @@ private:
     FilterDisplay display;
     Choice type;
     Knob cutoff, resonance, drive;
+    Knob keytrack, envAmount, mix;
 };
 
 // One ADSR page: curve + four knobs.

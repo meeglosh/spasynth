@@ -150,6 +150,24 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
     velocity = noteVelocity;
     pitchBendSemitones = 2.0f * ((float) currentPitchWheelPosition - 8192.0f) / 8192.0f;
 
+    // Portamento: glide from the last struck note (legato mode only when the
+    // previous key was still held). The synthesiser hook updates lastNote
+    // after this returns, so it still points at the note before this one.
+    glideTarget = (float) midiNoteNumber;
+    glideNote = glideTarget;
+    glideRate = 0.0f;
+    if (shared.glide != nullptr
+        && shared.glideMode != params::GlideMode::off
+        && shared.glide->lastNote >= 0.0f
+        && shared.glideTimeMs > 0.0f
+        && std::abs (shared.glide->lastNote - glideTarget) > 0.01f
+        && (shared.glideMode == params::GlideMode::always
+            || shared.glide->previousKeyHeld))
+    {
+        glideNote = shared.glide->lastNote;
+        glideRate = (glideTarget - glideNote) / (shared.glideTimeMs * 0.001f);
+    }
+
     if (shared.telemetry != nullptr)
         noteSerial = shared.telemetry->noteSerial.fetch_add (1) + 1;
 
@@ -164,7 +182,7 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
 
         if (stat.mode == params::OscMode::pluck)
         {
-            const auto hz = 440.0f * std::exp2 (((float) midiNoteNumber - 69.0f) / 12.0f);
+            const auto hz = 440.0f * std::exp2 ((glideNote - 69.0f) / 12.0f);
             plucks[(size_t) s].noteOn (hz, random);
         }
 
@@ -223,6 +241,15 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
 {
     const auto& lookup = DestLookup::get();
     const auto sampleRate = getSampleRate();
+
+    // --- Portamento: ramp the sounding pitch toward the struck note ---------
+    if (! juce::exactlyEqual (glideNote, glideTarget))
+    {
+        glideNote += glideRate * (float) chunkLen / (float) sampleRate;
+        if ((glideRate >= 0.0f && glideNote >= glideTarget)
+            || (glideRate <= 0.0f && glideNote <= glideTarget))
+            glideNote = glideTarget;
+    }
 
     // --- Organic Chaos walkers ----------------------------------------------
     // Advanced with last chunk's effective depth/rate/mix (chaos feeds the
@@ -341,7 +368,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
 
         if (stat.mode == params::OscMode::wavetable)
         {
-            const auto note = (float) currentNote + pitchOffset;
+            const auto note = glideNote + pitchOffset;
 
             oscs[(size_t) s].updateBlock ({
                 stat.table,
@@ -359,7 +386,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
         {
             // Sample/granular: keytrack transposes relative to the root note.
             const auto keySemis = stat.keytrack
-                                ? (float) (currentNote - stat.rootNote) : 0.0f;
+                                ? glideNote - (float) stat.rootNote : 0.0f;
 
             // Equal-power pan for the stereo sample paths.
             const auto pan = juce::jlimit (-1.0f, 1.0f, denorm (eff, d.pan));
@@ -384,7 +411,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                   || stat.mode == params::OscMode::noise
                   || stat.mode == params::OscMode::pluck)
             {
-                const auto note = (float) currentNote + pitchOffset;
+                const auto note = glideNote + pitchOffset;
                 const auto hz = 440.0f * std::exp2 ((note - 69.0f) / 12.0f);
 
                 slotPulseWidth[(size_t) s] = denorm (eff, d.pulseWidth);
@@ -424,7 +451,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     // convenience found on every comparable synth.
     const auto envAmt = denorm (eff, lookup.filterEnvAmt);
     const auto keytrackOctaves = shared.filterKeytrack
-                               * (float) (currentNote - 60) / 12.0f;
+                               * (glideNote - 60.0f) / 12.0f;
     const auto envOctaves = envAmt * env2Value * 4.0f;
     const auto finalCutoff = juce::jlimit (20.0f, 20000.0f,
         denorm (eff, lookup.cutoff) * std::exp2 (keytrackOctaves + envOctaves));
@@ -440,7 +467,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     {
         const auto f2EnvAmt = denorm (eff, lookup.f2EnvAmt);
         const auto f2Keytrack = shared.filter2Keytrack
-                              * (float) (currentNote - 60) / 12.0f;
+                              * (glideNote - 60.0f) / 12.0f;
         const auto f2Cutoff = juce::jlimit (20.0f, 20000.0f,
             denorm (eff, lookup.f2Cutoff)
             * std::exp2 (f2Keytrack + f2EnvAmt * env2Value * 4.0f));
@@ -491,7 +518,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
             tel->filterResonance.store (denorm (eff, lookup.resonance), std::memory_order_relaxed);
             if (shared.filter2Enabled)
             {
-                const auto f2KeyOct = shared.filter2Keytrack * (float) (currentNote - 60) / 12.0f;
+                const auto f2KeyOct = shared.filter2Keytrack * (glideNote - 60.0f) / 12.0f;
                 tel->filter2CutoffHz.store (juce::jlimit (20.0f, 20000.0f,
                     denorm (eff, lookup.f2Cutoff)
                     * std::exp2 (f2KeyOct + denorm (eff, lookup.f2EnvAmt) * env2Value * 4.0f)),

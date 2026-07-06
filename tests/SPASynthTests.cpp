@@ -1463,6 +1463,130 @@ namespace
                 "series result is repeatable");
     }
 
+    // Fundamental frequency estimate via positive-going zero crossings.
+    static float zeroCrossingHz (const juce::AudioBuffer<float>& capture,
+                                 int start, int len, double sampleRate)
+    {
+        const auto* d = capture.getReadPointer (0);
+        int crossings = 0;
+        for (int i = start + 1; i < start + len; ++i)
+            if (d[i - 1] < 0.0f && d[i] >= 0.0f)
+                ++crossings;
+        return (float) ((double) crossings * sampleRate / (double) len);
+    }
+
+    static void glideTest()
+    {
+        std::cout << "glideTest\n";
+
+        namespace id = spa::params::id;
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        // Renders numBlocks into one long capture buffer; queued MIDI fires in
+        // the first block.
+        const auto capture = [] (spa::SPASynthProcessor& proc, juce::MidiBuffer& midi,
+                                 int numBlocks)
+        {
+            juce::AudioBuffer<float> block (2, blockSize);
+            juce::AudioBuffer<float> out (1, numBlocks * blockSize);
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                proc.processBlock (block, midi);
+                midi.clear();
+                out.copyFrom (0, b * blockSize, block, 0, 0, blockSize);
+            }
+            return out;
+        };
+
+        const auto hz = [] (float note) { return 440.0f * std::exp2 ((note - 69.0f) / 12.0f); };
+        const auto loHz = hz (48.0f);   // ~130.8
+        const auto hiHz = hz (72.0f);   // ~523.3
+
+        const auto makeProc = [] (float mode, float timeMs)
+        {
+            auto proc = std::make_unique<spa::SPASynthProcessor>();
+            proc->prepareToPlay (sampleRate, blockSize);
+            setParam (*proc, id::glideMode, mode);
+            setParam (*proc, id::glideTime, timeMs);
+            setParam (*proc, id::ampRelease, 0.02f);
+            return proc;
+        };
+
+        // --- Always: the new note ramps in from the previous one -------------
+        {
+            auto proc = makeProc (1.0f, 600.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+            capture (*proc, midi, 24);
+
+            midi.addEvent (juce::MidiMessage::noteOff (1, 48), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 100), 0);
+            const auto out = capture (*proc, midi, 100);
+
+            const auto early = zeroCrossingHz (out, 2400, 4800, sampleRate);   // 50-150 ms
+            const auto late = zeroCrossingHz (out, out.getNumSamples() - 14400,
+                                              14400, sampleRate);              // last 300 ms
+            expect (early > 0.8f * loHz && early < 0.6f * hiHz,
+                    "Always glides through intermediate pitch (early "
+                    + juce::String (early) + " Hz)");
+            expect (std::abs (late - hiHz) < 0.05f * hiHz,
+                    "glide lands on the target (late " + juce::String (late) + " Hz)");
+        }
+
+        // --- Off: the new note jumps straight to pitch -----------------------
+        {
+            auto proc = makeProc (0.0f, 600.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+            capture (*proc, midi, 24);
+
+            midi.addEvent (juce::MidiMessage::noteOff (1, 48), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 100), 0);
+            const auto out = capture (*proc, midi, 30);
+
+            const auto early = zeroCrossingHz (out, 2400, 4800, sampleRate);
+            expect (std::abs (early - hiHz) < 0.08f * hiHz,
+                    "Off jumps straight to the target (early "
+                    + juce::String (early) + " Hz)");
+        }
+
+        // --- Legato: detached notes do not glide -----------------------------
+        {
+            auto proc = makeProc (2.0f, 800.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+            capture (*proc, midi, 12);
+            midi.addEvent (juce::MidiMessage::noteOff (1, 48), 0);
+            capture (*proc, midi, 12);   // fully released before the next note
+
+            midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 100), 0);
+            const auto out = capture (*proc, midi, 30);
+
+            const auto early = zeroCrossingHz (out, 2400, 4800, sampleRate);
+            expect (std::abs (early - hiHz) < 0.08f * hiHz,
+                    "Legato does not glide after a released key (early "
+                    + juce::String (early) + " Hz)");
+        }
+
+        // --- Legato: overlapping notes glide ----------------------------------
+        {
+            auto proc = makeProc (2.0f, 800.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+            capture (*proc, midi, 24);
+
+            midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 100), 0);
+            midi.addEvent (juce::MidiMessage::noteOff (1, 48), 32);   // released just after
+            const auto out = capture (*proc, midi, 30);
+
+            const auto early = zeroCrossingHz (out, 4800, 4800, sampleRate);   // 100-200 ms
+            expect (early > 0.8f * loHz && early < 0.5f * hiHz,
+                    "Legato glides while the previous key overlaps (early "
+                    + juce::String (early) + " Hz)");
+        }
+    }
+
     static void presetBrowserFilterTest()
     {
         std::cout << "presetBrowserFilterTest\n";
@@ -1539,6 +1663,7 @@ int main (int argc, char* argv[])
     extraEnginesTest();
     filterExtrasTest();
     dualFilterTest();
+    glideTest();
     libraryScanTest();
     libraryDiscoveryTest();
     presetRoundTripTest();

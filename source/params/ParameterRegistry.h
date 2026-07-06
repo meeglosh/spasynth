@@ -144,6 +144,10 @@ namespace id
 {
     inline constexpr const char* masterGain = "global.masterGain";
 
+    // Portamento (global, applied per voice from the last struck note).
+    inline constexpr const char* glideMode = "global.glideMode";   // Off/Always/Legato
+    inline constexpr const char* glideTime = "global.glideTime";
+
     inline constexpr const char* filter1Type      = "filter1.type";
     inline constexpr const char* filter1Cutoff    = "filter1.cutoff";
     inline constexpr const char* filter1Resonance = "filter1.resonance";
@@ -319,6 +323,10 @@ enum class FilterType
 
 // Oscillator phase behaviour on note-on.
 enum class PhaseMode { reset, random, free_ };
+
+// Portamento behaviour — choice order is load-bearing, append-only.
+// legato only glides when the previous note is still held.
+enum class GlideMode { off, always, legato };
 
 // Oscillator slot engine — choice order is load-bearing, append-only.
 enum class OscMode { wavetable, sample, granular, analog, fm, noise, pluck };

@@ -55,6 +55,21 @@ struct SharedState
         float depth = 0.0f;
     };
 
+    // Portamento. GlideState is written by the synthesiser's note hooks in
+    // MIDI event order (audio thread) and read by voices in startNote: the
+    // glide origin (last note struck) and whether a previous key was still
+    // physically held when this one landed (legato).
+    struct GlideState
+    {
+        float lastNote = -1.0f;         // -1 = nothing struck yet
+        int keysDown = 0;
+        bool previousKeyHeld = false;
+    };
+
+    params::GlideMode glideMode = params::GlideMode::off;
+    float glideTimeMs = 80.0f;
+    GlideState* glide = nullptr;   // owned by the processor, audio thread only
+
     std::array<SlotStatic, params::maxOscSlots> slots {};
     params::FilterType filterType = params::FilterType::lp12;
     float filterKeytrack = 0.0f;
@@ -98,6 +113,39 @@ struct SharedState
         bool distOn = false;
         float distortion = 0.2f;
     } chaos;
+};
+
+// Synthesiser wrapper that maintains the glide state around each note event.
+// Voices read it inside startNote (which fires within Synthesiser::noteOn),
+// so lastNote must be updated AFTER the base call: new voices glide FROM the
+// previous note, not from themselves.
+class GlideSynthesiser : public juce::Synthesiser
+{
+public:
+    explicit GlideSynthesiser (SharedState::GlideState& g) : glide (g) {}
+
+    void noteOn (int channel, int note, float velocity) override
+    {
+        glide.previousKeyHeld = glide.keysDown > 0;
+        ++glide.keysDown;
+        juce::Synthesiser::noteOn (channel, note, velocity);
+        glide.lastNote = (float) note;
+    }
+
+    void noteOff (int channel, int note, float velocity, bool allowTailOff) override
+    {
+        glide.keysDown = juce::jmax (0, glide.keysDown - 1);
+        juce::Synthesiser::noteOff (channel, note, velocity, allowTailOff);
+    }
+
+    void allNotesOff (int channel, bool allowTailOff) override
+    {
+        glide.keysDown = 0;
+        juce::Synthesiser::allNotesOff (channel, allowTailOff);
+    }
+
+private:
+    SharedState::GlideState& glide;
 };
 
 class SPASynthVoice : public juce::SynthesiserVoice
@@ -145,6 +193,11 @@ private:
 
     int currentNote = -1;
     int noteSerial = -1;       // telemetry writer arbitration
+
+    // Portamento: the pitch actually sounding, ramped toward the struck note
+    // per modulation chunk. Equal to the note when glide is off.
+    float glideNote = -1.0f, glideTarget = -1.0f;
+    float glideRate = 0.0f;    // semitones per second
     float velocity = 1.0f;
     float pitchBendSemitones = 0.0f;
     float ampEnvLast = 0.0f;   // amp env value fed back as mod source

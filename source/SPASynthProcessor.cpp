@@ -25,6 +25,8 @@ SPASynthProcessor::SPASynthProcessor()
       apvts (*this, nullptr, "PARAMS", params::createLayout())
 {
     raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
+    raw.glideMode = apvts.getRawParameterValue (params::id::glideMode);
+    raw.glideTime = apvts.getRawParameterValue (params::id::glideTime);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
     raw.filter2Enable = apvts.getRawParameterValue (params::id::filter2Enable);
@@ -151,6 +153,7 @@ SPASynthProcessor::SPASynthProcessor()
     }
 
     shared.telemetry = &telemetry;
+    shared.glide = &glideState;
     midiLearn = std::make_unique<MidiLearnManager> (apvts);
 
     synth.addSound (new dsp::SPASynthSound());
@@ -471,6 +474,9 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.fmRatio     = rs.fmRatio->load();
         slot.noiseColor  = (int) rs.noiseColor->load();
     }
+
+    shared.glideMode = (params::GlideMode) (int) raw.glideMode->load();
+    shared.glideTimeMs = raw.glideTime->load();
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
     shared.filterKeytrack = raw.filterKeytrack->load();

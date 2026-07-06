@@ -108,7 +108,8 @@ private:
     dsp::SharedState shared;   // written on audio thread, read by voices
     dsp::Telemetry telemetry;
     dsp::Arpeggiator arp;
-    juce::Synthesiser synth;
+    dsp::SharedState::GlideState glideState;   // updated by the synth's note hooks
+    dsp::GlideSynthesiser synth { glideState };
     dsp::FXChain fxChain;
     dsp::FXChain::Params fxParams;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
@@ -219,6 +220,8 @@ private:
     struct Raw
     {
         std::atomic<float>* masterGain = nullptr;
+        std::atomic<float>* glideMode = nullptr;
+        std::atomic<float>* glideTime = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;
         std::atomic<float>* filter2Enable = nullptr;

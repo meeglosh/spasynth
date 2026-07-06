@@ -49,6 +49,11 @@ private:
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };
     juce::Slider wildnessSlider;
     juce::Label wildnessLabel;
+    juce::ComboBox glideModeBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> glideModeAttachment;
+    juce::Slider glideSlider;
+    juce::Label glideLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     juce::TextButton themeButton;
     juce::Slider masterSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterAttachment;

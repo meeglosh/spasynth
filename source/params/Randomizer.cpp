@@ -28,7 +28,8 @@ LockGroup lockGroupFor (Section s)
         case Section::oscA:
         case Section::oscB:
         case Section::oscC:     return LockGroup::oscillators;
-        case Section::filter1:  return LockGroup::filter;
+        case Section::filter1:
+        case Section::filter2:  return LockGroup::filter;
         case Section::ampEnv:
         case Section::env2:
         case Section::env3:     return LockGroup::envelopes;

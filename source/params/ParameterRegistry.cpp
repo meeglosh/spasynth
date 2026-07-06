@@ -316,6 +316,16 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { -60.0f, 6.0f, 0.01f, 2.5f }, -6.0f, "dB",
                    false, { .enabled = false } });
 
+    // Portamento: randomizing pitch-slide behaviour is disorienting, so
+    // RANDOMIZE ALL leaves both alone.
+    p.push_back ({ id::glideMode, "Glide Mode", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Off", "Always", "Legato" } });
+    p.push_back ({ id::glideTime, "Glide Time", Section::global,
+                   ParamKind::floatParam, { 1.0f, 2000.0f, 1.0f, 0.35f }, 80.0f, "ms",
+                   false, { .enabled = false } });
+
     for (int slot = 0; slot < numOscSlots; ++slot)
         addOscSlotParams (p, slot);
 

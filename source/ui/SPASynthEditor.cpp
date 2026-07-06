@@ -59,6 +59,28 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     wildnessLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (wildnessLabel);
 
+    glideModeBox.setTooltip ("Portamento: Always, or Legato (only while a key is held)");
+    glideModeBox.getProperties().set ("paramID", juce::String (params::id::glideMode));
+    if (const auto* def = params::find (params::id::glideMode))
+        glideModeBox.addItemList (def->choices, 1);
+    glideModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        processor.getAPVTS(), params::id::glideMode, glideModeBox);
+    addAndMakeVisible (glideModeBox);
+
+    glideSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    glideSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    glideSlider.getProperties().set ("inlineValueSuffix", " ms");
+    glideSlider.setTooltip ("Glide time");
+    glideSlider.getProperties().set ("paramID", juce::String (params::id::glideTime));
+    glideAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+        processor.getAPVTS(), params::id::glideTime, glideSlider);
+    addAndMakeVisible (glideSlider);
+
+    glideLabel.setText ("GLIDE", juce::dontSendNotification);
+    glideLabel.setFont (metrics::smallFont());
+    glideLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (glideLabel);
+
     themeButton.setTooltip ("Switch light/dark theme");
     themeButton.onClick = [this]
     {
@@ -219,6 +241,8 @@ void ContentComponent::refreshAll()
 
     wildnessLabel.setColour (juce::Label::textColourId,
                              t.isDark ? t.textSecondary : juce::Colour (0xffb9bbbd));
+    glideLabel.setColour (juce::Label::textColourId,
+                          t.isDark ? t.textSecondary : juce::Colour (0xffb9bbbd));
     randomizeButton.setColour (juce::TextButton::buttonColourId, t.accent);
     randomizeButton.setColour (juce::TextButton::textColourOffId,
                                t.isDark ? t.display : juce::Colours::white);
@@ -309,7 +333,7 @@ void ContentComponent::resized()
     auto header = bounds.removeFromTop (metrics::headerHeight);
     header.removeFromLeft (52);  // logo (wordmark lives in the brand band)
 
-    auto right = header.removeFromRight (362).reduced (0, 9);
+    auto right = header.removeFromRight (476).reduced (0, 9);
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
@@ -317,6 +341,11 @@ void ContentComponent::resized()
     auto wildArea = right.removeFromRight (44);
     wildnessLabel.setBounds (wildArea.removeFromBottom (11));
     wildnessSlider.setBounds (wildArea);
+    auto glideArea = right.removeFromRight (44);
+    glideLabel.setBounds (glideArea.removeFromBottom (11));
+    glideSlider.setBounds (glideArea);
+    glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
+    right.removeFromRight (6);
     randomizeButton.setBounds (right.reduced (4, 3));
 
     auto presetArea = header.reduced (metrics::unit, 12);

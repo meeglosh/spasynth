@@ -1,0 +1,44 @@
+SPASynth Quickstart
+===================
+
+1. FIRST SOUND
+   Load SPASynth in your DAW (or open the standalone app) and play. The
+   Init patch is a single wavetable oscillator — instant sound, no setup.
+
+2. BROWSE THE PRESETS
+   Click the preset name at the top. A browser slides out with every
+   factory preset, three per library pack:
+     Keys     the SFX as a playable, keytracked instrument
+     Texture  a granular cloud scrubbed by a slow LFO
+     Pulse    a wavetable voice whose filter is pumped by the SFX itself
+   Search, filter by pack or type, and star your favorites.
+
+3. RANDOMIZE ALL
+   The orange button rolls a brand-new patch. WILD (next to it) sets how
+   polite or unhinged the rolls are. Lock any section first (the LOCKS
+   row) to keep what you like — lock FILTER and OSC, then roll just the
+   modulation, for instance.
+
+4. LOAD YOUR OWN SOUNDS
+   Any oscillator slot can be a Sample or Granular player: choose the
+   mode, hit LOAD, and drop in any WAV — from the Silverplatter library
+   or your own recordings. Its amplitude and pitch followers appear as
+   mod sources (SFX A/B/C) in the matrix: route "SFX A Amp" to filter
+   cutoff and the sound plays the filter.
+
+5. ORGANIC CHAOS
+   The CHAOS section adds slow analog-style instability: pitch, phase,
+   position, amp, saturation and distortion drift, each with its own
+   toggle. DEPTH/RATE/MIX are mod destinations too — try an envelope
+   opening the chaos as notes sustain.
+
+6. MAKE IT MOVE
+   Right-click any knob for MIDI Learn. The arpeggiator's CHANCE,
+   STUTTER, JUMP and HUMAN knobs turn patterns into performances; GLIDE
+   (top right) adds portamento — try Legato mode with a long time.
+
+7. MAKE IT YOURS
+   The split-color circle in the header opens the accent color picker.
+   One color or two — your call.
+
+Have fun. The RANDOMIZE ALL button is the tour guide.

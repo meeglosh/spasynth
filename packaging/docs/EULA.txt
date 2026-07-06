@@ -1,0 +1,38 @@
+SPASynth End User License Agreement
+Silverplatter Audio
+====================================
+
+This is a license, not a lecture. In plain terms:
+
+1. WHAT YOU MAY DO
+   - Install and use SPASynth on any computers you personally own or
+     use, for any musical or audio work, commercial or not.
+   - Use the included Silverplatter Audio library sounds in your music,
+     film, game, podcast and sound design work, royalty-free, forever.
+   - Render, mangle, resample and process the sounds into your
+     productions without credit (credit is always appreciated).
+
+2. WHAT YOU MAY NOT DO
+   - Redistribute, resell, share or upload the SPASynth software or the
+     library audio files themselves, individually or repackaged, free or
+     paid. The license covers sounds *inside your work*, not the raw
+     files as a competing product or "sample pack".
+   - Claim ownership of the underlying recordings.
+
+3. THE HONOR SYSTEM
+   SPASynth ships with no copy protection, no activation, no dongles and
+   no phone-home. We sell to people who pay for the tools they love.
+   Please honor that.
+
+4. THE FINE PRINT
+   The software is provided "as is", without warranty of any kind. In no
+   event shall Silverplatter Audio be liable for any claim, damages or
+   other liability arising from the use of the software. This license is
+   personal to the purchaser and is not transferable except as a
+   complete, permanent transfer of the product to another person (you
+   delete your copies; they inherit this license).
+
+If you have questions about what's allowed, just ask:
+https://www.silverplatteraudio.com
+
+(c) Silverplatter Audio. All rights reserved.

@@ -9,7 +9,11 @@ __MACOSX/
 
 # Build output
 build/
+build-release/
 cmake-build-*/
+
+# Release deliverables (installers, library zips, Shopify folders)
+/dist/
 
 # IDE
 .vscode/

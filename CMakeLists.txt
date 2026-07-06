@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SPASynth VERSION 0.1.0 LANGUAGES C CXX)
+project(SPASynth VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -75,7 +75,8 @@ target_compile_definitions(SPASynth PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0)
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    SPASYNTH_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(SPASynth
     PRIVATE
@@ -101,7 +102,8 @@ if(SPASYNTH_BUILD_TESTS)
     target_compile_definitions(SPASynthTests PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_MODAL_LOOPS_PERMITTED=1)
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        SPASYNTH_VERSION="${PROJECT_VERSION}")
     target_link_libraries(SPASynthTests
         PRIVATE
             SPAAssets

@@ -29,6 +29,39 @@ Built plugins are copied to the user plugin folders automatically
 cmake --build build --target SPASynthTests && ctest --test-dir build
 ```
 
+## Release / packaging
+
+One command builds the whole Shopify deliverable (universal Release build,
+tests, macOS installer, library zips, download folders for both SKUs):
+
+```sh
+./scripts/build_release.sh              # full run (library packaging included)
+./scripts/build_release.sh -            # skip library packaging (faster)
+```
+
+Output lands in `dist/shopify/SPASynth-{Standard,Pro}-<version>/`. The
+Windows installer comes from CI (`spasynth-installer-Windows` artifact,
+built with Inno Setup from `installers/windows/SPASynth.iss`) — drop it
+into both folders, zip them, and upload to Shopify.
+
+Pipeline pieces, all runnable standalone:
+
+- `scripts/build_library.sh` — raw pack zips → 24/48 pack folders.
+- `scripts/package_library.sh` — pack folders → per-pack customer zips +
+  the Standard edition's starter selection (5 sounds per pack). Zips embed
+  the full `Silverplatter Audio/SPASynth Library/<Pack>/` path so extracting
+  into `/Users/Shared` (macOS) or `C:\Users\Public\Documents` (Windows)
+  lands on SPASynth's auto-discovery paths.
+- `installers/macos/build_installer.sh` — pkgbuild/productbuild with AU /
+  VST3 / Standalone choices. Unsigned by default; set
+  `SPASYNTH_CODESIGN_IDENTITY`, `SPASYNTH_INSTALLER_IDENTITY` and
+  (optionally) `SPASYNTH_NOTARIZE_PROFILE` to sign + notarize.
+- `installers/windows/SPASynth.iss` — Inno Setup; define `SignToolCmd` to sign.
+
+SKU model: one binary, content-differentiated. Standard ships the starter
+library; every full pack is an add-on zip that installs the same way. Pro
+ships all 88 packs. No DRM anywhere, by design.
+
 ## Layout
 
 - `source/params/` — the parameter registry: single source of truth for every

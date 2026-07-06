@@ -461,7 +461,7 @@ void ContentComponent::paint (juce::Graphics& g)
     g.setFont (metrics::smallFont());
     g.drawText (juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
                 footer.reduced (10, 0), juce::Justification::centredRight);
-    g.drawText ("v0.1", footer.reduced (10, 0), juce::Justification::centredLeft);
+    g.drawText ("v" SPASYNTH_VERSION, footer.reduced (10, 0), juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));
     g.setFont (metrics::labelFont());
     g.drawText ("SPASynth", footer, juce::Justification::centred);

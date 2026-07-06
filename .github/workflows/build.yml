@@ -35,6 +35,22 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      # Installers ship unsigned from CI; Mike signs/notarizes locally for
+      # store releases (see installers/macos/build_installer.sh).
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(sed -n 's/^project(SPASynth VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Build installer (macOS)
+        if: runner.os == 'macOS'
+        run: ./installers/macos/build_installer.sh build dist/installers
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.version.outputs.version }} /DArtefacts=..\..\build\SPASynth_artefacts\Release /O..\..\dist\installers installers\windows\SPASynth.iss'
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -43,4 +59,11 @@ jobs:
             build/SPASynth_artefacts/**/VST3/**
             build/SPASynth_artefacts/**/AU/**
             build/SPASynth_artefacts/**/Standalone/**
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: spasynth-installer-${{ runner.os }}
+          path: dist/installers/*
           if-no-files-found: error

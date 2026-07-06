@@ -41,12 +41,32 @@ namespace
                 addAndMakeVisible (*selector);
             }
 
+            // LINK ties both accents to the one selector, for a single-colour UI.
+            linkButton.setClickingTogglesState (true);
+            linkButton.setToggleState (library::getAccentsLinked(),
+                                       juce::dontSendNotification);
+            linkButton.setTooltip ("Use one color for both accents");
+            linkButton.onClick = [this]
+            {
+                library::setAccentsLinked (linkButton.getToggleState());
+                if (linkButton.getToggleState())
+                    applyColors();   // snap the mod accent to the audio pick
+                resized();
+                repaint();
+            };
+            addAndMakeVisible (linkButton);
+
             resetButton.onClick = [this]
             {
+                // The defaults are two distinct colours, so reset also unlinks.
+                linkButton.setToggleState (false, juce::dontSendNotification);
+                library::setAccentsLinked (false);
                 resetAccentColors();
                 const auto& theme = currentTheme();
                 audioSelector.setCurrentColour (theme.accent, juce::dontSendNotification);
                 modSelector.setCurrentColour (theme.accentMod, juce::dontSendNotification);
+                resized();
+                repaint();
                 if (onChanged)
                     onChanged();
             };
@@ -63,10 +83,26 @@ namespace
 
         void resized() override
         {
+            const auto linked = linkButton.getToggleState();
+            modLabel.setVisible (! linked);
+            modSelector.setVisible (! linked);
+            audioLabel.setText (linked ? "ACCENT COLOR" : "AUDIO ACCENT",
+                                juce::dontSendNotification);
+
             auto area = getLocalBounds().reduced (8);
             auto footer = area.removeFromBottom (26);
+            linkButton.setBounds (footer.removeFromLeft (64).withHeight (24));
             resetButton.setBounds (footer.withSizeKeepingCentre (120, 24));
             area.removeFromBottom (6);
+
+            if (linked)
+            {
+                // One selector rules both — give it the full width.
+                audioLabel.setBounds (area.removeFromTop (16));
+                audioSelector.setBounds (area.withSizeKeepingCentre (
+                    juce::jmin (area.getWidth(), 300), area.getHeight()));
+                return;
+            }
 
             auto left = area.removeFromLeft (area.getWidth() / 2 - 4);
             audioLabel.setBounds (left.removeFromTop (16));
@@ -78,12 +114,22 @@ namespace
         }
 
     private:
-        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        void applyColors()
         {
-            setAccentColors (audioSelector.getCurrentColour().withAlpha (1.0f),
-                             modSelector.getCurrentColour().withAlpha (1.0f));
+            const auto audio = audioSelector.getCurrentColour().withAlpha (1.0f);
+            const auto mod = linkButton.getToggleState()
+                           ? audio : modSelector.getCurrentColour().withAlpha (1.0f);
+            if (linkButton.getToggleState())
+                modSelector.setCurrentColour (mod, juce::dontSendNotification);
+
+            setAccentColors (audio, mod);
             if (onChanged)
                 onChanged();
+        }
+
+        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        {
+            applyColors();
         }
 
         static constexpr int selectorFlags = juce::ColourSelector::showColourAtTop
@@ -92,6 +138,7 @@ namespace
         std::function<void()> onChanged;
         juce::Label audioLabel, modLabel;
         juce::ColourSelector audioSelector { selectorFlags }, modSelector { selectorFlags };
+        juce::TextButton linkButton { "LINK" };
         juce::TextButton resetButton { "RESET TO DEFAULT" };
     };
 }

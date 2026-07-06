@@ -28,6 +28,10 @@ juce::Colour getAccentColor (juce::Colour fallback);
 juce::Colour getAccentModColor (juce::Colour fallback);
 void setAccentColors (juce::Colour accent, juce::Colour accentMod);
 
+// Whether the picker links both accents to one colour input.
+bool getAccentsLinked();
+void setAccentsLinked (bool linked);
+
 // Favorite presets (machine preference, like the theme). Keys are
 // "<category>/<name>" so they survive the presets root moving.
 juce::StringArray getFavoritePresets();

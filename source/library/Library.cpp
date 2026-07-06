@@ -173,6 +173,17 @@ void setAccentColors (juce::Colour accent, juce::Colour accentMod)
     settings().saveIfNeeded();
 }
 
+bool getAccentsLinked()
+{
+    return settings().getBoolValue ("accentsLinked", false);
+}
+
+void setAccentsLinked (bool linked)
+{
+    settings().setValue ("accentsLinked", linked);
+    settings().saveIfNeeded();
+}
+
 juce::StringArray getFavoritePresets()
 {
     auto keys = juce::StringArray::fromLines (settings().getValue ("favoritePresets"));

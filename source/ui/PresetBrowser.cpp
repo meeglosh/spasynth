@@ -11,6 +11,18 @@ namespace
     constexpr const char* chipLabels[] = { "ALL", "KEYS", "TEXTURE", "PULSE", "USER" };
     constexpr const char* chipTypes[]  = { "",    "Keys", "Texture", "Pulse", "User" };
     constexpr int chipRadioGroup = 0x5751;
+
+    // The browser runs 2pt larger than the module grid (its LookAndFeel-drawn
+    // controls get the same boost via the "browser"/"chip" componentIDs).
+    juce::Font browserFont()
+    {
+        return metrics::labelFont().withHeight (metrics::labelFont().getHeight() + 2.0f);
+    }
+
+    juce::Font browserSmallFont()
+    {
+        return metrics::smallFont().withHeight (metrics::smallFont().getHeight() + 2.0f);
+    }
 }
 
 juce::String PresetBrowser::typeOf (const library::PresetManager::PresetInfo& p)
@@ -65,6 +77,7 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     setComponentID ("presetBrowser");
     setWantsKeyboardFocus (true);
 
+    closeButton.setComponentID ("browser");
     closeButton.setTooltip ("Close the preset browser (Esc)");
     closeButton.onClick = [this] { if (onClose) onClose(); };
     addAndMakeVisible (closeButton);
@@ -86,6 +99,7 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     }
     typeChips[0].setToggleState (true, juce::dontSendNotification);
 
+    categoryBox.setComponentID ("browser");
     categoryBox.setTextWhenNothingSelected ("All Packs");
     categoryBox.onChange = [this] { applyFilter(); };
     addAndMakeVisible (categoryBox);
@@ -100,14 +114,16 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     list.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (list);
 
-    countLabel.setFont (metrics::smallFont());
+    countLabel.setFont (browserSmallFont());
     countLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (countLabel);
 
+    libraryButton.setComponentID ("browser");
     libraryButton.setTooltip ("Point SPASynth at the Silverplatter library folder");
     libraryButton.onClick = [this] { if (onChooseLibrary) onChooseLibrary(); };
     addAndMakeVisible (libraryButton);
 
+    rescanButton.setComponentID ("browser");
     rescanButton.setTooltip ("Rescan the library and preset folders");
     rescanButton.onClick = [this] { processor.refreshLibrary(); };
     addAndMakeVisible (rescanButton);
@@ -157,7 +173,7 @@ void PresetBrowser::refresh()
     if (categoryBox.getSelectedId() == 0)
         categoryBox.setSelectedId (1, juce::dontSendNotification);
 
-    searchBox.setFont (metrics::labelFont());
+    searchBox.setFont (browserFont());
     searchBox.setColour (juce::TextEditor::backgroundColourId, t.display);
     searchBox.setColour (juce::TextEditor::textColourId, t.textPrimary);
     searchBox.setColour (juce::TextEditor::outlineColourId, t.outline);
@@ -235,18 +251,18 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int
     const auto starZone = r.removeFromRight (30);
     const bool favorite = favoriteKeys.contains (favoriteKey (p));
     g.setColour (favorite ? t.accent : t.textSecondary.withAlpha (0.45f));
-    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+    g.setFont (juce::Font (juce::FontOptions (15.0f)));
     g.drawText (favorite ? juce::String::fromUTF8 ("\xe2\x98\x85")     // ★
                          : juce::String::fromUTF8 ("\xe2\x98\x86"),    // ☆
                 starZone, juce::Justification::centred);
 
     auto text = r.reduced (8, 4);
     g.setColour (t.textPrimary);
-    g.setFont (metrics::labelFont());
+    g.setFont (browserFont());
     g.drawText (p.name, text.removeFromTop (text.getHeight() / 2),
                 juce::Justification::centredLeft, true);
     g.setColour (t.textSecondary);
-    g.setFont (metrics::smallFont());
+    g.setFont (browserSmallFont());
     g.drawText (p.category, text, juce::Justification::centredLeft, true);
 
     g.setColour (t.outline.withAlpha (0.5f));
@@ -307,7 +323,7 @@ void PresetBrowser::paint (juce::Graphics& g)
     g.drawVerticalLine (bounds.getRight() - 1, 0.0f, (float) getHeight());
 
     g.setColour (t.textSecondary);
-    g.setFont (metrics::sectionFont());
+    g.setFont (metrics::sectionFont().withHeight (metrics::sectionFont().getHeight() + 2.0f));
     g.drawText ("PRESETS", titleArea, juce::Justification::centredLeft);
 
     draw::displayWell (g, listWell.toFloat().expanded (2.0f));

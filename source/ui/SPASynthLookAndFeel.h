@@ -35,12 +35,24 @@ public:
                        int buttonX, int buttonY, int buttonW, int buttonH,
                        juce::ComboBox&) override;
 
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return metrics::labelFont(); }
+    // The preset browser runs 2pt larger than the module grid; its controls
+    // opt in via the "browser" (and "chip") componentIDs.
+    static juce::Font boosted (juce::Font f) { return f.withHeight (f.getHeight() + 2.0f); }
+
+    juce::Font getComboBoxFont (juce::ComboBox& c) override
+    {
+        return c.getComponentID() == "browser" ? boosted (metrics::labelFont())
+                                               : metrics::labelFont();
+    }
     juce::Font getPopupMenuFont() override { return metrics::labelFont(); }
     juce::Font getTextButtonFont (juce::TextButton& b, int) override
     {
         // Filter chips (preset browser) are tighter than regular buttons.
-        return b.getComponentID() == "chip" ? metrics::smallFont() : metrics::labelFont();
+        if (b.getComponentID() == "chip")
+            return boosted (metrics::smallFont());
+        if (b.getComponentID() == "browser")
+            return boosted (metrics::labelFont());
+        return metrics::labelFont();
     }
     juce::Font getLabelFont (juce::Label&) override { return metrics::labelFont(); }
 

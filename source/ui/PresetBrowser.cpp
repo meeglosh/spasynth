@@ -242,7 +242,7 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int
 
     if (rowIsSelected)
     {
-        g.setColour (t.accent.withAlpha (t.isDark ? 0.13f : 0.20f));
+        g.setColour (t.accent.withAlpha (0.13f));
         g.fillRect (r);
         g.setColour (t.accent);
         g.fillRect (r.removeFromLeft (2));
@@ -317,7 +317,7 @@ void PresetBrowser::paint (juce::Graphics& g)
         juce::Colours::transparentBlack, (float) shadow.getRight(), 0.0f, false));
     g.fillRect (shadow);
 
-    g.setColour (t.isDark ? t.panel : t.panel.brighter (0.03f));
+    g.setColour (t.panel);
     g.fillRect (bounds);
     g.setColour (t.outline);
     g.drawVerticalLine (bounds.getRight() - 1, 0.0f, (float) getHeight());

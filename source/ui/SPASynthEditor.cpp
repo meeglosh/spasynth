@@ -10,8 +10,123 @@ namespace spa
 namespace ui
 {
 
-ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeToggled)
-    : processor (p), onThemeToggled (std::move (themeToggled)),
+namespace
+{
+    // Drop-down colour picker for the two accents. Changes apply (and
+    // persist) live as the user drags around the colour space.
+    class AccentPicker : public juce::Component,
+                         private juce::ChangeListener
+    {
+    public:
+        explicit AccentPicker (std::function<void()> changed)
+            : onChanged (std::move (changed))
+        {
+            const auto& t = currentTheme();
+
+            const auto setUpLabel = [this] (juce::Label& l, const juce::String& text)
+            {
+                l.setText (text, juce::dontSendNotification);
+                l.setFont (metrics::sectionFont());
+                l.setJustificationType (juce::Justification::centred);
+                addAndMakeVisible (l);
+            };
+            setUpLabel (audioLabel, "AUDIO ACCENT");
+            setUpLabel (modLabel, "MOD ACCENT");
+
+            audioSelector.setCurrentColour (t.accent, juce::dontSendNotification);
+            modSelector.setCurrentColour (t.accentMod, juce::dontSendNotification);
+            for (auto* selector : { &audioSelector, &modSelector })
+            {
+                selector->addChangeListener (this);
+                addAndMakeVisible (*selector);
+            }
+
+            resetButton.onClick = [this]
+            {
+                resetAccentColors();
+                const auto& theme = currentTheme();
+                audioSelector.setCurrentColour (theme.accent, juce::dontSendNotification);
+                modSelector.setCurrentColour (theme.accentMod, juce::dontSendNotification);
+                if (onChanged)
+                    onChanged();
+            };
+            addAndMakeVisible (resetButton);
+
+            setSize (480, 260);
+        }
+
+        ~AccentPicker() override
+        {
+            audioSelector.removeChangeListener (this);
+            modSelector.removeChangeListener (this);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (8);
+            auto footer = area.removeFromBottom (26);
+            resetButton.setBounds (footer.withSizeKeepingCentre (120, 24));
+            area.removeFromBottom (6);
+
+            auto left = area.removeFromLeft (area.getWidth() / 2 - 4);
+            audioLabel.setBounds (left.removeFromTop (16));
+            audioSelector.setBounds (left);
+
+            area.removeFromLeft (8);
+            modLabel.setBounds (area.removeFromTop (16));
+            modSelector.setBounds (area);
+        }
+
+    private:
+        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        {
+            setAccentColors (audioSelector.getCurrentColour().withAlpha (1.0f),
+                             modSelector.getCurrentColour().withAlpha (1.0f));
+            if (onChanged)
+                onChanged();
+        }
+
+        static constexpr int selectorFlags = juce::ColourSelector::showColourAtTop
+                                           | juce::ColourSelector::showColourspace;
+
+        std::function<void()> onChanged;
+        juce::Label audioLabel, modLabel;
+        juce::ColourSelector audioSelector { selectorFlags }, modSelector { selectorFlags };
+        juce::TextButton resetButton { "RESET TO DEFAULT" };
+    };
+}
+
+void ContentComponent::AccentButton::paintButton (juce::Graphics& g,
+                                                  bool highlighted, bool down)
+{
+    const auto& t = currentTheme();
+    auto bounds = getLocalBounds().toFloat();
+    const auto diameter = juce::jmin (bounds.getWidth(), bounds.getHeight()) - 4.0f;
+    const auto circle = bounds.withSizeKeepingCentre (diameter, diameter);
+
+    juce::Path half;
+    half.addPieSegment (circle, 0.0f, juce::MathConstants<float>::pi, 0.0f);
+    g.setColour (t.accent);
+    g.fillPath (half);
+
+    half.clear();
+    half.addPieSegment (circle, juce::MathConstants<float>::pi,
+                        juce::MathConstants<float>::twoPi, 0.0f);
+    g.setColour (t.accentMod);
+    g.fillPath (half);
+
+    g.setColour (t.outline);
+    g.drawEllipse (circle, 1.0f);
+
+    if (highlighted || down)
+    {
+        g.setColour (juce::Colours::white.withAlpha (down ? 0.25f : 0.12f));
+        g.fillEllipse (circle);
+    }
+}
+
+ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
+    : processor (p), onThemeChanged (std::move (themeChanged)),
       chaosPanel (p),
       arpPanel (p.getAPVTS()),
       matrixPanel (p.getAPVTS()),
@@ -81,14 +196,9 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     glideLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (glideLabel);
 
-    themeButton.setTooltip ("Switch light/dark theme");
-    themeButton.onClick = [this]
-    {
-        setDarkTheme (! currentTheme().isDark);
-        if (onThemeToggled)
-            onThemeToggled();
-    };
-    addAndMakeVisible (themeButton);
+    accentButton.setTooltip ("Customize the accent colors");
+    accentButton.onClick = [this] { showAccentPicker(); };
+    addAndMakeVisible (accentButton);
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -239,15 +349,10 @@ void ContentComponent::refreshAll()
 {
     const auto& t = currentTheme();
 
-    wildnessLabel.setColour (juce::Label::textColourId,
-                             t.isDark ? t.textSecondary : juce::Colour (0xffb9bbbd));
-    glideLabel.setColour (juce::Label::textColourId,
-                          t.isDark ? t.textSecondary : juce::Colour (0xffb9bbbd));
+    wildnessLabel.setColour (juce::Label::textColourId, t.textSecondary);
+    glideLabel.setColour (juce::Label::textColourId, t.textSecondary);
     randomizeButton.setColour (juce::TextButton::buttonColourId, t.accent);
-    randomizeButton.setColour (juce::TextButton::textColourOffId,
-                               t.isDark ? t.display : juce::Colours::white);
-    themeButton.setButtonText (t.isDark ? juce::String::fromUTF8 ("\xe2\x98\xbc")
-                                        : juce::String::fromUTF8 ("\xe2\x98\xbe"));
+    randomizeButton.setColour (juce::TextButton::textColourOffId, t.display);
 
     const auto presetName = processor.getPresetManager().getCurrentName();
     presetNameButton.setButtonText (
@@ -291,7 +396,7 @@ void ContentComponent::paint (juce::Graphics& g)
     drawTrackedCentred (metrics::brandSubFont(), "SILVERPLATTER AUDIO",
                         band.withTrimmedTop (21), juce::Colour (0xff7f8d97));
 
-    // Header is always dark (Massive X does this in its light theme too).
+    // Header strip.
     auto header = getLocalBounds().withTrimmedTop (metrics::brandBandHeight)
                       .removeFromTop (metrics::headerHeight);
     g.setColour (t.header);
@@ -337,7 +442,7 @@ void ContentComponent::resized()
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
-    themeButton.setBounds (right.removeFromRight (32).reduced (2, 6));
+    accentButton.setBounds (right.removeFromRight (32).reduced (2, 6));
     auto glideArea = right.removeFromRight (44);
     glideLabel.setBounds (glideArea.removeFromBottom (11));
     glideSlider.setBounds (glideArea);
@@ -410,6 +515,22 @@ void ContentComponent::resized()
     presetBrowser->setBounds (presetBrowserOpen
                                   ? drawerArea
                                   : drawerArea.translated (-drawerArea.getWidth() - 12, 0));
+}
+
+void ContentComponent::showAccentPicker()
+{
+    auto picker = std::make_unique<AccentPicker> ([this]
+    {
+        if (onThemeChanged)
+            onThemeChanged();
+    });
+
+    // Parent to the editor shell (outside this component's scale transform).
+    if (auto* top = getTopLevelComponent())
+        juce::CallOutBox::launchAsynchronously (
+            std::move (picker),
+            top->getLocalArea (&accentButton, accentButton.getLocalBounds()),
+            top);
 }
 
 void ContentComponent::togglePresetBrowser()

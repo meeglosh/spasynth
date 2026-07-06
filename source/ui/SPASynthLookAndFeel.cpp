@@ -6,29 +6,37 @@ namespace spa::ui
 
 namespace
 {
-    std::atomic<bool> darkThemeActive { true };
-    bool themeInitialised = false;
+    // The one theme instance (message thread only). Accents load from the
+    // user's saved preference on first access.
+    Theme& mutableTheme()
+    {
+        static Theme theme = []
+        {
+            auto t = Theme::dark();
+            t.accent = library::getAccentColor (t.accent);
+            t.accentMod = library::getAccentModColor (t.accentMod);
+            return t;
+        }();
+        return theme;
+    }
 }
 
 const Theme& currentTheme()
 {
-    static const Theme darkTheme = Theme::dark();
-    static const Theme lightTheme = Theme::light();
-
-    if (! themeInitialised)
-    {
-        darkThemeActive.store (library::getDarkThemeEnabled());
-        themeInitialised = true;
-    }
-
-    return darkThemeActive.load() ? darkTheme : lightTheme;
+    return mutableTheme();
 }
 
-void setDarkTheme (bool dark)
+void setAccentColors (juce::Colour audio, juce::Colour mod)
 {
-    darkThemeActive.store (dark);
-    themeInitialised = true;
-    library::setDarkThemeEnabled (dark);
+    mutableTheme().accent = audio;
+    mutableTheme().accentMod = mod;
+    library::setAccentColors (audio, mod);
+}
+
+void resetAccentColors()
+{
+    const auto defaults = Theme::dark();
+    setAccentColors (defaults.accent, defaults.accentMod);
 }
 
 namespace draw
@@ -39,17 +47,17 @@ void panel (juce::Graphics& g, juce::Rectangle<float> bounds)
     const auto& t = currentTheme();
 
     // Soft elevation shadow (two feathered passes — cheap and convincing).
-    g.setColour (juce::Colours::black.withAlpha (t.isDark ? 0.35f : 0.18f));
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
     g.fillRoundedRectangle (bounds.translated (0.0f, 2.5f).expanded (1.0f),
                             metrics::cornerRadius + 2.0f);
-    g.setColour (juce::Colours::black.withAlpha (t.isDark ? 0.20f : 0.10f));
+    g.setColour (juce::Colours::black.withAlpha (0.20f));
     g.fillRoundedRectangle (bounds.translated (0.0f, 4.5f).expanded (2.5f),
                             metrics::cornerRadius + 4.0f);
 
     // Panel face with a whisper of vertical gradient.
-    g.setGradientFill (juce::ColourGradient (t.panel.brighter (t.isDark ? 0.05f : 0.02f),
+    g.setGradientFill (juce::ColourGradient (t.panel.brighter (0.05f),
                                              bounds.getX(), bounds.getY(),
-                                             t.panel.darker (t.isDark ? 0.06f : 0.02f),
+                                             t.panel.darker (0.06f),
                                              bounds.getX(), bounds.getBottom(), false));
     g.fillRoundedRectangle (bounds, metrics::cornerRadius);
 
@@ -57,7 +65,7 @@ void panel (juce::Graphics& g, juce::Rectangle<float> bounds)
     g.drawRoundedRectangle (bounds.reduced (0.5f), metrics::cornerRadius, 1.0f);
 
     // Hairline top highlight — the "edge catch" the mock's panels have.
-    g.setColour (juce::Colours::white.withAlpha (t.isDark ? 0.045f : 0.35f));
+    g.setColour (juce::Colours::white.withAlpha (0.045f));
     g.drawLine (bounds.getX() + metrics::cornerRadius, bounds.getY() + 1.0f,
                 bounds.getRight() - metrics::cornerRadius, bounds.getY() + 1.0f, 1.0f);
 }
@@ -129,7 +137,7 @@ void displayWell (juce::Graphics& g, juce::Rectangle<float> bounds)
     // Recessed well: vertical gradient, slightly darker at the top.
     g.setGradientFill (juce::ColourGradient (t.display.darker (0.25f),
                                              bounds.getX(), bounds.getY(),
-                                             t.display.brighter (t.isDark ? 0.08f : 0.02f),
+                                             t.display.brighter (0.08f),
                                              bounds.getX(), bounds.getBottom(), false));
     g.fillRoundedRectangle (bounds, 3.0f);
     g.setColour (t.outline);
@@ -174,7 +182,7 @@ void SPASynthLookAndFeel::refreshPalette()
     setColour (juce::TextButton::buttonColourId, t.knobFace);
     setColour (juce::TextButton::buttonOnColourId, t.accentMod.withAlpha (0.85f));
     setColour (juce::TextButton::textColourOffId, t.textPrimary);
-    setColour (juce::TextButton::textColourOnId, t.isDark ? t.display : t.textPrimary);
+    setColour (juce::TextButton::textColourOnId, t.display);
     setColour (juce::ComboBox::backgroundColourId, t.display);
     setColour (juce::ComboBox::textColourId, t.textPrimary);
     setColour (juce::ComboBox::outlineColourId, t.outline);
@@ -216,7 +224,7 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     {
         const auto shadowR = faceRadius * 1.18f;
         juce::ColourGradient shadow (
-            juce::Colours::black.withAlpha (t.isDark ? 0.55f : 0.30f),
+            juce::Colours::black.withAlpha (0.55f),
             centre.x, centre.y + faceRadius * 0.28f,
             juce::Colours::transparentBlack,
             centre.x, centre.y + faceRadius * 0.28f + shadowR, true);
@@ -234,7 +242,7 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
                    faceRadius * 2.0f, faceRadius * 2.0f);
 
     // Bevel: bright top rim, dark bottom rim.
-    g.setColour (juce::Colours::white.withAlpha (t.isDark ? 0.10f : 0.55f));
+    g.setColour (juce::Colours::white.withAlpha (0.10f));
     g.drawEllipse (centre.x - faceRadius, centre.y - faceRadius,
                    faceRadius * 2.0f, faceRadius * 2.0f, 1.0f);
     g.setColour (juce::Colours::black.withAlpha (0.35f));
@@ -293,7 +301,7 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     const auto inner = centre.getPointOnCircumference (faceRadius * 0.30f, angle);
     g.setColour (juce::Colours::black.withAlpha (0.4f));
     g.drawLine (inner.x + 0.7f, inner.y + 1.0f, tip.x + 0.7f, tip.y + 1.0f, lineW);
-    g.setColour (t.isDark ? juce::Colours::white : t.textPrimary);
+    g.setColour (juce::Colours::white);
     g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW * 0.9f);
 
     // Press state for label-less knobs that opt in: a value chip across the
@@ -400,7 +408,7 @@ void SPASynthLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button&
     if (down)
         colour = colour.darker (0.15f);
     else if (highlighted)
-        colour = colour.brighter (t.isDark ? 0.07f : 0.04f);
+        colour = colour.brighter (0.07f);
 
     g.setColour (colour);
     g.fillRoundedRectangle (bounds, metrics::cornerRadius);
@@ -425,7 +433,7 @@ void SPASynthLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
 
     const auto knobX = button.getToggleState() ? pill.getRight() - pillH + 2.0f
                                                : pill.getX() + 2.0f;
-    g.setColour (t.isDark ? t.textPrimary : juce::Colours::white);
+    g.setColour (t.textPrimary);
     g.fillEllipse (knobX, pill.getY() + 2.0f, pillH - 4.0f, pillH - 4.0f);
 
     g.setColour (t.textSecondary);

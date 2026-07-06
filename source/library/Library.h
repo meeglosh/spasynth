@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_data_structures/juce_data_structures.h>
+#include <juce_graphics/juce_graphics.h>
 #include <vector>
 
 namespace spa::library
@@ -21,9 +22,11 @@ std::vector<Pack> scanLibrary (const juce::File& root);
 juce::File getLibraryRoot();
 void setLibraryRoot (const juce::File&);
 
-// UI theme preference (dark by default), remembered across sessions.
-bool getDarkThemeEnabled();
-void setDarkThemeEnabled (bool dark);
+// UI accent colour overrides, remembered across sessions. Getters return
+// the fallback when the user has never customized.
+juce::Colour getAccentColor (juce::Colour fallback);
+juce::Colour getAccentModColor (juce::Colour fallback);
+void setAccentColors (juce::Colour accent, juce::Colour accentMod);
 
 // Favorite presets (machine preference, like the theme). Keys are
 // "<category>/<name>" so they survive the presets root moving.

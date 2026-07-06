@@ -154,14 +154,22 @@ void setLibraryRoot (const juce::File& root)
     settings().saveIfNeeded();
 }
 
-bool getDarkThemeEnabled()
+juce::Colour getAccentColor (juce::Colour fallback)
 {
-    return settings().getBoolValue ("darkTheme", true);
+    const auto stored = settings().getValue ("accentColor");
+    return stored.isNotEmpty() ? juce::Colour::fromString (stored) : fallback;
 }
 
-void setDarkThemeEnabled (bool dark)
+juce::Colour getAccentModColor (juce::Colour fallback)
 {
-    settings().setValue ("darkTheme", dark);
+    const auto stored = settings().getValue ("accentModColor");
+    return stored.isNotEmpty() ? juce::Colour::fromString (stored) : fallback;
+}
+
+void setAccentColors (juce::Colour accent, juce::Colour accentMod)
+{
+    settings().setValue ("accentColor", accent.toString());
+    settings().setValue ("accentModColor", accentMod.toString());
     settings().saveIfNeeded();
 }
 

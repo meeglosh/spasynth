@@ -24,7 +24,7 @@ class ContentComponent : public juce::Component,
                          private juce::ChangeListener
 {
 public:
-    ContentComponent (SPASynthProcessor&, std::function<void()> onThemeToggled);
+    ContentComponent (SPASynthProcessor&, std::function<void()> onThemeChanged);
     ~ContentComponent() override;
 
     void paint (juce::Graphics&) override;
@@ -35,11 +35,20 @@ public:
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePresetBrowser();
+    void showAccentPicker();
     void chooseLibraryFolder();
     void saveUserPreset();
 
+    // Header button showing the two accents as a split circle; clicking
+    // drops down the colour picker.
+    struct AccentButton : juce::Button
+    {
+        AccentButton() : juce::Button ("accentColors") {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    };
+
     SPASynthProcessor& processor;
-    std::function<void()> onThemeToggled;
+    std::function<void()> onThemeChanged;   // LnF palette refresh + repaint
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
 
@@ -54,7 +63,7 @@ private:
     juce::Slider glideSlider;
     juce::Label glideLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
-    juce::TextButton themeButton;
+    AccentButton accentButton;
     juce::Slider masterSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterAttachment;
     std::array<juce::TextButton, params::numLockGroups> lockButtons;

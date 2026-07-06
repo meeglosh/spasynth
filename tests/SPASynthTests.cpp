@@ -1027,19 +1027,26 @@ namespace
                       (float) (int) spa::params::OscMode::sample);
         }
 
-        const auto previousPreference = spa::library::getDarkThemeEnabled();
+        // Remember the user's accents so the custom-accent render below
+        // doesn't pollute their settings.
+        const auto savedAccent = spa::ui::currentTheme().accent;
+        const auto savedAccentMod = spa::ui::currentTheme().accentMod;
 
-        for (const bool dark : { true, false })
+        for (const bool customAccents : { false, true })
         {
-            spa::ui::setDarkTheme (dark);
+            // Second pass: violet/lime accents to verify the colour picker's
+            // reach across the whole UI.
+            spa::ui::setAccentColors (customAccents ? juce::Colour (0xffa06cf0) : savedAccent,
+                                      customAccents ? juce::Colour (0xff8fd14f) : savedAccentMod);
+
             std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
             editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
 
-            // Front the delay FX tab in dark mode so wrap-heavy layouts get
-            // visual review too.
-            if (dark)
+            // Default pass: front the wrap-heavy tabs and the preset drawer
+            // so they get visual review; accent pass shows the plain grid.
+            if (! customAccents)
             {
-                std::function<void (juce::Component&)> frontDelay =
+                std::function<void (juce::Component&)> frontExtras =
                     [&] (juce::Component& c)
                 {
                     if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
@@ -1052,13 +1059,14 @@ namespace
                     if (auto* browser = dynamic_cast<spa::ui::PresetBrowser*> (&c))
                         browser->openImmediately();
                     for (auto* child : c.getChildren())
-                        frontDelay (*child);
+                        frontExtras (*child);
                 };
-                frontDelay (*editor);
+                frontExtras (*editor);
             }
 
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
-            const auto file = outDir.getChildFile (dark ? "spasynth-dark.png" : "spasynth-light.png");
+            const auto file = outDir.getChildFile (customAccents ? "spasynth-accent.png"
+                                                                 : "spasynth-dark.png");
             file.deleteFile();
             juce::PNGImageFormat png;
             juce::FileOutputStream stream (file);
@@ -1067,7 +1075,7 @@ namespace
             std::cout << "snapshot: " << file.getFullPathName() << "\n";
         }
 
-        spa::ui::setDarkTheme (previousPreference);  // don't pollute user settings
+        spa::ui::setAccentColors (savedAccent, savedAccentMod);
     }
 
     static void midiLearnTest()

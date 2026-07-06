@@ -57,17 +57,36 @@ for sku in Standard Pro; do
         if [[ "$sku" == "Standard" ]]; then
             cp "$DIST/library/SPASynth Starter Library.zip" "$folder/Library/"
         else
-            cp "$DIST/library/packs/"*.zip "$folder/Library/"
+            cp "$DIST/library/SPASynth Pro Library"*.zip "$folder/Library/"
         fi
     fi
 done
 
 echo ""
 echo "=== done ==="
-echo "Shopify folders: $DIST/shopify/"
+echo ""
+echo "Upload to Shopify Digital Downloads as individual file attachments"
+echo "(every file is under the 5 GB cap; don't wrap them in one giant zip):"
+echo ""
+echo "  'SPASynth Standard' product — attach:"
+echo "     shopify/SPASynth-Standard-$VERSION/SPASynth-$VERSION-macOS.pkg"
+echo "     shopify/SPASynth-Standard-$VERSION/SPASynth-$VERSION-Windows.exe   (from CI)"
+echo "     shopify/SPASynth-Standard-$VERSION/Library/SPASynth Starter Library.zip"
+echo "     shopify/SPASynth-Standard-$VERSION/{README,QUICKSTART,EULA}.txt"
+echo ""
+echo "  'SPASynth Pro' product — attach:"
+echo "     shopify/SPASynth-Pro-$VERSION/SPASynth-$VERSION-macOS.pkg"
+echo "     shopify/SPASynth-Pro-$VERSION/SPASynth-$VERSION-Windows.exe        (from CI)"
+echo "     shopify/SPASynth-Pro-$VERSION/Library/SPASynth Pro Library (Part N).zip  (all parts)"
+echo "     shopify/SPASynth-Pro-$VERSION/{README,QUICKSTART,EULA}.txt"
+echo ""
+echo "  'Standard -> Pro Upgrade' product — attach:"
+echo "     the same Pro Library part zips (library only; they already own the synth)"
+echo ""
+echo "  Add-on pack products (later): library/packs/<Pack>.zip, one per product"
+echo ""
 echo "Remaining manual steps:"
-echo "  1. Drop the CI-built SPASynth-$VERSION-Windows.exe into each shopify folder"
-echo "  2. Zip each folder and upload to Shopify (Digital Downloads)"
+echo "  1. Download the spasynth-installer-Windows CI artifact into both shopify folders"
 [[ -z "${SPASYNTH_INSTALLER_IDENTITY:-}" ]] \
-    && echo "  3. (pkg is UNSIGNED - set SPASYNTH_*_IDENTITY env vars and re-run step 2)"
+    && echo "  2. (pkg is UNSIGNED - set SPASYNTH_*_IDENTITY env vars and re-run)"
 exit 0

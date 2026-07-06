@@ -4,9 +4,13 @@
 #   ./scripts/package_library.sh <library folder> <output folder>
 #
 # Produces, under <output folder>:
-#   packs/<Pack Name>.zip          one zip per pack (Pro bundle + add-on SKUs)
-#   SPASynth Starter Library.zip   5 representative sounds from every pack
-#                                  (the Standard edition's included content)
+#   packs/<Pack Name>.zip             one zip per pack (add-on pack SKUs)
+#   SPASynth Starter Library.zip      5 representative sounds from every pack
+#                                     (the Standard edition's included content)
+#   SPASynth Pro Library (Part N).zip the full library, split into volumes of
+#                                     whole packs under the Shopify Digital
+#                                     Downloads 5 GB file cap (override with
+#                                     SPASYNTH_VOLUME_CAP_MB, default 4500)
 #
 # Every zip contains the full "Silverplatter Audio/SPASynth Library/<Pack>/"
 # path, so customers extract into /Users/Shared (macOS) or
@@ -64,6 +68,47 @@ else
     (cd "$stage" && zip -q -r -X "$STARTER" "Silverplatter Audio")
     rm -rf "$stage"
     echo "packaged: starter library"
+fi
+
+# --- Pro library volumes --------------------------------------------------------
+# Whole packs per volume; every volume extracts with the same one instruction.
+VOLCAP_MB=${SPASYNTH_VOLUME_CAP_MB:-4500}
+existing_volumes=("$OUT"/SPASynth\ Pro\ Library*.zip(N))
+if (( ${#existing_volumes[@]} > 0 )); then
+    echo "skip: pro library volumes (already packaged)"
+else
+    vol=1
+    volMB=0
+    stage=$(mktemp -d)
+
+    flush_volume() {
+        [[ $volMB -eq 0 ]] && return
+        (cd "$stage" && zip -q -r -X "$OUT/SPASynth Pro Library (Part $vol).zip" \
+                            "Silverplatter Audio")
+        rm -rf "$stage"
+        echo "packaged: pro volume $vol (${volMB} MB)"
+        stage=$(mktemp -d)
+        (( vol++ )) || true
+        volMB=0
+    }
+
+    for pack in "$LIB"/*(-/); do
+        name=$(basename "$pack")
+        packMB=$(du -smL "$pack" | cut -f1)
+        (( volMB > 0 && volMB + packMB > VOLCAP_MB )) && flush_volume
+
+        mkdir -p "$stage/$PREFIX"
+        cp -RLc "$pack" "$stage/$PREFIX/$name" 2>/dev/null \
+            || cp -RL "$pack" "$stage/$PREFIX/$name"
+        (( volMB += packMB )) || true
+    done
+    flush_volume
+    rm -rf "$stage"
+
+    # A library that fits one volume doesn't need part numbering.
+    if [[ $vol -eq 2 && -f "$OUT/SPASynth Pro Library (Part 1).zip" ]]; then
+        mv "$OUT/SPASynth Pro Library (Part 1).zip" "$OUT/SPASynth Pro Library.zip"
+    fi
 fi
 
 echo "library packages in: $OUT"

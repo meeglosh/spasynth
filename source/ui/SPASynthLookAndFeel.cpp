@@ -301,7 +301,9 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     if (slider.isMouseButtonDown()
         && slider.getProperties().contains ("inlineValueSuffix"))
     {
-        const auto text = juce::String (slider.getValue(), 1)
+        const auto magnitude = std::abs (slider.getValue());
+        const auto text = juce::String (slider.getValue(),
+                                        magnitude >= 1000.0 ? 0 : 1)
                         + slider.getProperties()["inlineValueSuffix"].toString();
         g.setFont (metrics::smallFont());
 

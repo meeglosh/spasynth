@@ -338,14 +338,15 @@ void ContentComponent::resized()
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
     themeButton.setBounds (right.removeFromRight (32).reduced (2, 6));
-    auto wildArea = right.removeFromRight (44);
-    wildnessLabel.setBounds (wildArea.removeFromBottom (11));
-    wildnessSlider.setBounds (wildArea);
     auto glideArea = right.removeFromRight (44);
     glideLabel.setBounds (glideArea.removeFromBottom (11));
     glideSlider.setBounds (glideArea);
     glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
     right.removeFromRight (6);
+    // WILD sits right beside RANDOMIZE ALL — it shapes what the button rolls.
+    auto wildArea = right.removeFromRight (44);
+    wildnessLabel.setBounds (wildArea.removeFromBottom (11));
+    wildnessSlider.setBounds (wildArea);
     randomizeButton.setBounds (right.reduced (4, 3));
 
     auto presetArea = header.reduced (metrics::unit, 12);

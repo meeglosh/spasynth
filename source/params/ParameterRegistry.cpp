@@ -726,9 +726,20 @@ static std::unique_ptr<juce::RangedAudioParameter> makeParameter (const ParamDef
             break;
     }
 
+    // Displayed values never need more than 2 decimals (and big values like
+    // cutoff frequencies need fewer) — raw float noise like 0.6434523 is
+    // useless to read, in the plugin UI and host automation lanes alike.
+    const auto formatValue = [] (float value, int)
+    {
+        const auto magnitude = std::abs (value);
+        return juce::String (value, magnitude >= 1000.0f ? 0
+                                  : magnitude >= 100.0f ? 1 : 2);
+    };
+
     return std::make_unique<juce::AudioParameterFloat> (
         pid, def.name, def.range, def.defaultValue,
-        juce::AudioParameterFloatAttributes().withLabel (def.unit));
+        juce::AudioParameterFloatAttributes().withLabel (def.unit)
+            .withStringFromValueFunction (formatValue));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout()

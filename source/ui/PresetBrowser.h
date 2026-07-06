@@ -1,0 +1,87 @@
+#pragma once
+
+#include "Theme.h"
+#include "../library/PresetManager.h"
+
+namespace spa
+{
+
+class SPASynthProcessor;
+
+namespace ui
+{
+
+// UAD-style preset drawer: slides in from the left over the module grid.
+// Live search, type chips (factory presets come in Keys/Texture/Pulse
+// flavours, plus User), a pack filter, and persisted favourites. Clicking a
+// row loads it; the star toggles favourite. Esc or the X closes the drawer.
+class PresetBrowser : public juce::Component,
+                      private juce::ChangeListener,
+                      private juce::ListBoxModel
+{
+public:
+    PresetBrowser (SPASynthProcessor&,
+                   std::function<void()> onClose,
+                   std::function<void()> onChooseLibrary);
+    ~PresetBrowser() override;
+
+    // --- pure filtering (testable without a UI) ------------------------------
+    struct Filter
+    {
+        juce::String search;        // case-insensitive substring of name/pack
+        juce::String type;          // "", "Keys", "Texture", "Pulse", "User"
+        juce::String category;      // "" = all packs
+        bool favoritesOnly = false;
+    };
+
+    static juce::String typeOf (const library::PresetManager::PresetInfo&);
+    static juce::String favoriteKey (const library::PresetManager::PresetInfo&);
+    static std::vector<int> filterIndices (
+        const std::vector<library::PresetManager::PresetInfo>&,
+        const Filter&, const juce::StringArray& favoriteKeys);
+
+    // The parent stores the drawer's on-screen bounds every resized(); the
+    // open/close animation slides between these and off-screen left.
+    void setOpenBounds (juce::Rectangle<int> b) { openBounds = b; }
+    juce::Rectangle<int> getOpenBounds() const { return openBounds; }
+    void openImmediately();   // no animation — snapshot tests front the drawer
+
+    void refresh();   // re-pull presets, categories, theme colours
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void applyFilter();
+
+    int getNumRows() override;
+    void paintListBoxItem (int row, juce::Graphics&, int width, int height,
+                           bool rowIsSelected) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
+
+    SPASynthProcessor& processor;
+    std::function<void()> onClose, onChooseLibrary;
+
+    juce::TextButton closeButton { juce::String::fromUTF8 ("\xc3\x97") };   // ×
+    juce::TextEditor searchBox;
+    std::array<juce::TextButton, 5> typeChips;
+    juce::ComboBox categoryBox;
+    juce::TextButton favoritesChip { juce::String::fromUTF8 ("\xe2\x98\x85") };  // ★
+    juce::ListBox list { {}, this };
+    juce::Label countLabel;
+    juce::TextButton libraryButton { "SET LIBRARY..." }, rescanButton { "RESCAN" };
+
+    std::vector<library::PresetManager::PresetInfo> presets;   // snapshot
+    std::vector<int> filtered;                                 // indices into presets
+    juce::StringArray favoriteKeys;                            // cached settings
+    juce::Rectangle<int> openBounds, titleArea, listWell;
+
+    static constexpr int shadowWidth = 10;   // cast onto the content behind
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetBrowser)
+};
+
+} // namespace ui
+} // namespace spa

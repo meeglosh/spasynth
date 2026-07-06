@@ -37,7 +37,11 @@ public:
 
     juce::Font getComboBoxFont (juce::ComboBox&) override { return metrics::labelFont(); }
     juce::Font getPopupMenuFont() override { return metrics::labelFont(); }
-    juce::Font getTextButtonFont (juce::TextButton&, int) override { return metrics::labelFont(); }
+    juce::Font getTextButtonFont (juce::TextButton& b, int) override
+    {
+        // Filter chips (preset browser) are tighter than regular buttons.
+        return b.getComponentID() == "chip" ? metrics::smallFont() : metrics::labelFont();
+    }
     juce::Font getLabelFont (juce::Label&) override { return metrics::labelFont(); }
 
     int getTabButtonBestWidth (juce::TabBarButton&, int tabDepth) override;

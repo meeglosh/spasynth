@@ -165,6 +165,30 @@ void setDarkThemeEnabled (bool dark)
     settings().saveIfNeeded();
 }
 
+juce::StringArray getFavoritePresets()
+{
+    auto keys = juce::StringArray::fromLines (settings().getValue ("favoritePresets"));
+    keys.removeEmptyStrings();
+    return keys;
+}
+
+bool isPresetFavorite (const juce::String& key)
+{
+    return getFavoritePresets().contains (key);
+}
+
+void setPresetFavorite (const juce::String& key, bool favorite)
+{
+    auto keys = getFavoritePresets();
+    if (favorite)
+        keys.addIfNotAlreadyThere (key);
+    else
+        keys.removeString (key);
+
+    settings().setValue ("favoritePresets", keys.joinIntoString ("\n"));
+    settings().saveIfNeeded();
+}
+
 juce::File defaultPresetsRoot()
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)

@@ -26,7 +26,8 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addAndMakeVisible (prevPresetButton);
     nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); };
     addAndMakeVisible (nextPresetButton);
-    presetNameButton.onClick = [this] { showPresetMenu(); };
+    presetNameButton.onClick = [this] { togglePresetBrowser(); };
+    presetNameButton.setTooltip ("Browse presets");
     addAndMakeVisible (presetNameButton);
     savePresetButton.onClick = [this] { saveUserPreset(); };
     addAndMakeVisible (savePresetButton);
@@ -135,6 +136,13 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addAndMakeVisible (matrixPanel);
     addAndMakeVisible (outputMeter);
 
+    // Added last so the drawer slides over every module.
+    presetBrowser = std::make_unique<PresetBrowser> (
+        processor,
+        [this] { togglePresetBrowser(); },
+        [this] { chooseLibraryFolder(); });
+    addChildComponent (*presetBrowser);
+
     processor.addChangeListener (this);
     processor.getPresetManager().addChangeListener (this);
     refreshAll();
@@ -221,6 +229,9 @@ void ContentComponent::refreshAll()
     presetNameButton.setButtonText (
         presetName == "Init" && ! library::findLibraryRoot().isDirectory()
             ? "Set library folder..." : presetName);
+
+    if (presetBrowser != nullptr)
+        presetBrowser->refresh();   // theme colours
 
     repaint();
 }
@@ -359,44 +370,33 @@ void ContentComponent::resized()
     fxTabs.setBounds (row3.removeFromLeft (row3.getWidth() * 44 / 100));
     row3.removeFromLeft (gap);
     matrixPanel.setBounds (row3);
+
+    // --- Preset drawer (overlay, left) ----------------------------------------
+    const auto drawerArea = getLocalBounds()
+                                .withTrimmedTop (metrics::brandBandHeight + metrics::headerHeight)
+                                .withTrimmedBottom (metrics::footerHeight)
+                                .removeFromLeft (320);
+    presetBrowser->setOpenBounds (drawerArea);
+    presetBrowser->setBounds (presetBrowserOpen
+                                  ? drawerArea
+                                  : drawerArea.translated (-drawerArea.getWidth() - 12, 0));
 }
 
-void ContentComponent::showPresetMenu()
+void ContentComponent::togglePresetBrowser()
 {
-    auto& pm = processor.getPresetManager();
-    const auto presets = pm.getPresets();  // snapshot for stable indices
+    presetBrowserOpen = ! presetBrowserOpen;
 
-    juce::PopupMenu menu;
+    const auto open = presetBrowser->getOpenBounds();
+    const auto closed = open.translated (-open.getWidth() - 12, 0);
 
-    for (const auto& category : pm.getCategories())
-    {
-        juce::PopupMenu sub;
-        for (size_t i = 0; i < presets.size(); ++i)
-            if (presets[i].category == category)
-                sub.addItem ((int) i + 1, presets[i].name);
-        menu.addSubMenu (category, sub);
-    }
+    presetBrowser->setVisible (true);
+    presetBrowser->toFront (false);
+    juce::Desktop::getInstance().getAnimator().animateComponent (
+        presetBrowser.get(), presetBrowserOpen ? open : closed,
+        1.0f, 170, false, 1.0, 0.7);
 
-    if (! presets.empty())
-        menu.addSeparator();
-
-    constexpr int chooseLibraryItem = 1000000;
-    constexpr int rescanItem = 1000001;
-    menu.addItem (chooseLibraryItem, "Set Library Folder...");
-    menu.addItem (rescanItem, "Rescan Library && Presets");
-
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetNameButton),
-                        [this] (int result)
-    {
-        if (result == 0)
-            return;
-        if (result == chooseLibraryItem)
-            chooseLibraryFolder();
-        else if (result == rescanItem)
-            processor.refreshLibrary();
-        else
-            processor.getPresetManager().loadPreset (result - 1);
-    });
+    if (presetBrowserOpen)
+        presetBrowser->grabKeyboardFocus();   // Esc closes
 }
 
 void ContentComponent::chooseLibraryFolder()

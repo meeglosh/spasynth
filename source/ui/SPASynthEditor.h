@@ -8,6 +8,7 @@
 #include "ModulePanels.h"
 #include "SectionPanel.h"
 #include "MatrixPanel.h"
+#include "PresetBrowser.h"
 
 namespace spa
 {
@@ -33,7 +34,7 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
-    void showPresetMenu();
+    void togglePresetBrowser();
     void chooseLibraryFolder();
     void saveUserPreset();
 
@@ -63,6 +64,10 @@ private:
     juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
     MatrixPanel matrixPanel;
     OutputMeter outputMeter;
+
+    // Preset drawer: slides over the left side of the module grid.
+    std::unique_ptr<PresetBrowser> presetBrowser;
+    bool presetBrowserOpen = false;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 

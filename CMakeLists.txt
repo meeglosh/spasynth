@@ -64,6 +64,7 @@ set(SPASYNTH_SOURCES
     source/ui/SectionPanel.cpp
     source/ui/Displays.cpp
     source/ui/ModulePanels.cpp
+    source/ui/PresetBrowser.cpp
     source/ui/SPASynthEditor.cpp)
 
 target_sources(SPASynth PRIVATE ${SPASYNTH_SOURCES})

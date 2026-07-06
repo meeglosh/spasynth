@@ -1049,6 +1049,8 @@ namespace
                         if (tabs->getTabNames().contains ("FILTER 2"))
                             tabs->setCurrentTabIndex (1);
                     }
+                    if (auto* browser = dynamic_cast<spa::ui::PresetBrowser*> (&c))
+                        browser->openImmediately();
                     for (auto* child : c.getChildren())
                         frontDelay (*child);
                 };
@@ -1461,6 +1463,52 @@ namespace
                 "series result is repeatable");
     }
 
+    static void presetBrowserFilterTest()
+    {
+        std::cout << "presetBrowserFilterTest\n";
+
+        using Info = spa::library::PresetManager::PresetInfo;
+        using Browser = spa::ui::PresetBrowser;
+
+        const std::vector<Info> presets {
+            { "Anvil Keys",    "Anvil", {} },
+            { "Anvil Texture", "Anvil", {} },
+            { "Bells Pulse",   "Bells", {} },
+            { "My Lead",       "User",  {} },
+        };
+
+        expect (Browser::typeOf (presets[0]) == "Keys", "factory type derives from name suffix");
+        expect (Browser::typeOf (presets[3]) == "User", "user category wins over name");
+        expect (Browser::typeOf ({ "Weird Name", "Bells", {} }).isEmpty(),
+                "unknown factory shape has no type");
+
+        const auto names = [&] (const std::vector<int>& idx)
+        {
+            juce::StringArray out;
+            for (auto i : idx)
+                out.add (presets[(size_t) i].name);
+            return out.joinIntoString (",");
+        };
+
+        expect (Browser::filterIndices (presets, {}, {}).size() == 4,
+                "empty filter passes everything");
+        expect (names (Browser::filterIndices (presets, { {}, "Keys", {}, false }, {}))
+                    == "Anvil Keys", "type chip filters by preset flavour");
+        expect (names (Browser::filterIndices (presets, { "bells", {}, {}, false }, {}))
+                    == "Bells Pulse", "search is case-insensitive");
+        expect (names (Browser::filterIndices (presets, { {}, {}, "Anvil", false }, {}))
+                    == "Anvil Keys,Anvil Texture", "category filters by pack");
+        expect (names (Browser::filterIndices (presets, { {}, {}, {}, true },
+                                               juce::StringArray ("Bells/Bells Pulse")))
+                    == "Bells Pulse", "favorites-only keeps starred keys");
+        expect (names (Browser::filterIndices (presets, { "anvil", "Texture", {}, false }, {}))
+                    == "Anvil Texture", "filters combine (search + type)");
+        expect (Browser::filterIndices (presets, { "zzz", {}, {}, false }, {}).empty(),
+                "no match yields an empty list");
+        expect (Browser::favoriteKey (presets[2]) == "Bells/Bells Pulse",
+                "favorite key is category/name");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1495,6 +1543,7 @@ int main (int argc, char* argv[])
     libraryDiscoveryTest();
     presetRoundTripTest();
     factoryPresetGenerationTest();
+    presetBrowserFilterTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

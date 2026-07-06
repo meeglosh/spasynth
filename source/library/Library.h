@@ -25,6 +25,12 @@ void setLibraryRoot (const juce::File&);
 bool getDarkThemeEnabled();
 void setDarkThemeEnabled (bool dark);
 
+// Favorite presets (machine preference, like the theme). Keys are
+// "<category>/<name>" so they survive the presets root moving.
+juce::StringArray getFavoritePresets();
+bool isPresetFavorite (const juce::String& key);
+void setPresetFavorite (const juce::String& key, bool favorite);
+
 // Quick structural check: does this folder look like an SPASynth library
 // (at least one pack subfolder containing WAVs)?
 bool looksLikeLibrary (const juce::File&);

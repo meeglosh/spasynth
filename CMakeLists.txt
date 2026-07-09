@@ -38,7 +38,16 @@ juce_add_plugin(SPASynth
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     # Standalone app icon (macOS .icns / Windows .ico), generated from
     # assets/branding/app_icon.svg via make_app_icon.sh.
-    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/app_icon.png")
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/app_icon.png"
+    # macOS TCC hard-crashes (SIGABRT) any app that touches Bluetooth or the
+    # microphone without a usage string in Info.plist. The standalone's
+    # "Bluetooth MIDI" panel uses Core Bluetooth, and enabling an audio input
+    # opens a capture device — declare both so the OS shows a permission
+    # prompt instead of killing the app.
+    BLUETOOTH_PERMISSION_ENABLED TRUE
+    BLUETOOTH_PERMISSION_TEXT "SPASynth uses Bluetooth to connect wireless MIDI controllers."
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "SPASynth uses audio input only if you enable an input device.")
 
 juce_add_binary_data(SPAAssets
     NAMESPACE SPAAssets

@@ -41,13 +41,22 @@ if [[ -n "${SPASYNTH_CODESIGN_IDENTITY:-}" ]]; then
 fi
 
 # --- Component packages -------------------------------------------------------
-pkgbuild --quiet --component "$ARTEFACTS/VST3/SPASynth.vst3" \
+# Each component MUST get a unique --identifier. All three bundles share one
+# CFBundleIdentifier (com.silverplatteraudio.spasynth), and pkgbuild derives
+# the package id from it when --identifier is omitted — so the three payloads
+# would collide on one receipt id and macOS Installer would lay down only one
+# (the bug where AU/VST3 silently didn't install). --version must match the
+# distribution pkg-refs too.
+pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.vst3" --version "$VERSION" \
+         --component "$ARTEFACTS/VST3/SPASynth.vst3" \
          --install-location "/Library/Audio/Plug-Ins/VST3" \
          "$WORK/SPASynthVST3.pkg"
-pkgbuild --quiet --component "$ARTEFACTS/AU/SPASynth.component" \
+pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.au" --version "$VERSION" \
+         --component "$ARTEFACTS/AU/SPASynth.component" \
          --install-location "/Library/Audio/Plug-Ins/Components" \
          "$WORK/SPASynthAU.pkg"
-pkgbuild --quiet --component "$ARTEFACTS/Standalone/SPASynth.app" \
+pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.app" --version "$VERSION" \
+         --component "$ARTEFACTS/Standalone/SPASynth.app" \
          --install-location "/Applications" \
          "$WORK/SPASynthApp.pkg"
 

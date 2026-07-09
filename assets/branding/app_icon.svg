@@ -1,0 +1,26 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- App icon: brand-dark rounded tile + the Silverplatter platter mark,
+       matching the plugin's dark theme. Regenerate the PNG with
+       ./assets/branding/make_app_icon.sh -->
+  <defs>
+    <linearGradient id="tile" x1="512" y1="82" x2="512" y2="942" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b242b"/>
+      <stop offset="1" stop-color="#0c1114"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded tile (Apple continuous-corner proportion ~0.2237 of the side). -->
+  <rect x="82" y="82" width="860" height="860" rx="192" fill="url(#tile)"/>
+  <rect x="82.5" y="82.5" width="859" height="859" rx="191.5" fill="none"
+        stroke="#2c3841" stroke-width="1"/>
+  <!-- Top edge catch, echoing the plugin panels. -->
+  <rect x="82" y="82" width="860" height="860" rx="192" fill="none"
+        stroke="#ffffff" stroke-opacity="0.05" stroke-width="2"/>
+
+  <!-- The platter mark (from SPAudio_logo_white.svg, viewBox 0..2655),
+       centered and scaled to ~600px. scale 0.226, translate 512-1327.5*0.226. -->
+  <g transform="translate(212.02 212.02) scale(0.22599)" fill="#e7ecef">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M1327.5 2655C2060.66 2655 2655 2060.66 2655 1327.5C2655 594.342 2060.66 0 1327.5 0C594.342 0 0 594.342 0 1327.5C0 2060.66 594.342 2655 1327.5 2655ZM1702.5 2181C2174.98 2181 2558 1797.98 2558 1325.5C2558 853.02 2174.98 470 1702.5 470C1230.02 470 847 853.02 847 1325.5C847 1797.98 1230.02 2181 1702.5 2181Z"/>
+    <circle cx="1520.5" cy="1325.5" r="457.5"/>
+  </g>
+</svg>

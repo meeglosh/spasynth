@@ -35,7 +35,10 @@ juce_add_plugin(SPASynth
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD ${SPASYNTH_COPY_PLUGIN}
     VST3_CATEGORIES Instrument Synth
-    AU_MAIN_TYPE kAudioUnitType_MusicDevice)
+    AU_MAIN_TYPE kAudioUnitType_MusicDevice
+    # Standalone app icon (macOS .icns / Windows .ico), generated from
+    # assets/branding/app_icon.svg via make_app_icon.sh.
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/app_icon.png")
 
 juce_add_binary_data(SPAAssets
     NAMESPACE SPAAssets

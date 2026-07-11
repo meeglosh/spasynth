@@ -41,24 +41,48 @@ if [[ -n "${SPASYNTH_CODESIGN_IDENTITY:-}" ]]; then
 fi
 
 # --- Component packages -------------------------------------------------------
-# Each component MUST get a unique --identifier. All three bundles share one
-# CFBundleIdentifier (com.silverplatteraudio.spasynth), and pkgbuild derives
-# the package id from it when --identifier is omitted — so the three payloads
-# would collide on one receipt id and macOS Installer would lay down only one
-# (the bug where AU/VST3 silently didn't install). --version must match the
-# distribution pkg-refs too.
-pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.vst3" --version "$VERSION" \
-         --component "$ARTEFACTS/VST3/SPASynth.vst3" \
-         --install-location "/Library/Audio/Plug-Ins/VST3" \
-         "$WORK/SPASynthVST3.pkg"
-pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.au" --version "$VERSION" \
-         --component "$ARTEFACTS/AU/SPASynth.component" \
-         --install-location "/Library/Audio/Plug-Ins/Components" \
-         "$WORK/SPASynthAU.pkg"
-pkgbuild --quiet --identifier "com.silverplatteraudio.spasynth.app" --version "$VERSION" \
-         --component "$ARTEFACTS/Standalone/SPASynth.app" \
-         --install-location "/Applications" \
-         "$WORK/SPASynthApp.pkg"
+# Two identifier traps here, both caused by all three bundles sharing one
+# CFBundleIdentifier (com.silverplatteraudio.spasynth):
+#  1. Each component MUST get a unique --identifier: pkgbuild derives the
+#     package id from the bundle id when omitted, so the three payloads would
+#     collide on one receipt and Installer would lay down only one (the bug
+#     where AU/VST3 silently didn't install).
+#  2. Bundles MUST be marked non-relocatable: pkgbuild components are
+#     relocatable by default, so if LaunchServices already knows the bundle id
+#     anywhere else (a previous install, a moved copy, a dev build tree),
+#     Installer "atomically shoves" the payload at that bundle instead of the
+#     install-location — the receipt says installed but the plugin never lands
+#     (the bug where the AU vanished on upgrade installs). Fixed by analyzing a
+#     component plist and forcing BundleIsRelocatable=false.
+build_component_pkg() {
+    local bundle="$1" identifier="$2" location="$3" out="$4"
+    local stage="$WORK/stage-$identifier"
+    mkdir -p "$stage"
+    ditto "$bundle" "$stage/${bundle:t}"   # ditto preserves signatures/xattrs
+    pkgbuild --analyze --root "$stage" "$WORK/$identifier.plist" > /dev/null
+    # --analyze sometimes omits the key (implicit default: true) and sometimes
+    # emits it; force it false on every bundle entry either way.
+    python3 -c '
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as f: entries = plistlib.load(f)
+for e in entries: e["BundleIsRelocatable"] = False
+with open(path, "wb") as f: plistlib.dump(entries, f)
+' "$WORK/$identifier.plist"
+    pkgbuild --quiet --identifier "$identifier" --version "$VERSION" \
+             --root "$stage" --component-plist "$WORK/$identifier.plist" \
+             --install-location "$location" \
+             "$out"
+}
+build_component_pkg "$ARTEFACTS/VST3/SPASynth.vst3" \
+    "com.silverplatteraudio.spasynth.vst3" "/Library/Audio/Plug-Ins/VST3" \
+    "$WORK/SPASynthVST3.pkg"
+build_component_pkg "$ARTEFACTS/AU/SPASynth.component" \
+    "com.silverplatteraudio.spasynth.au" "/Library/Audio/Plug-Ins/Components" \
+    "$WORK/SPASynthAU.pkg"
+build_component_pkg "$ARTEFACTS/Standalone/SPASynth.app" \
+    "com.silverplatteraudio.spasynth.app" "/Applications" \
+    "$WORK/SPASynthApp.pkg"
 
 # --- Distribution (choices + license) -----------------------------------------
 mkdir -p "$WORK/resources"

@@ -49,6 +49,34 @@ juce_add_plugin(SPASynth
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "SPASynth uses audio input only if you enable an input device.")
 
+# Give the AU and VST3 bundles their own CFBundleIdentifier (the standalone
+# keeps the base id — it owns the TCC permission grants). JUCE stamps one
+# shared BUNDLE_ID into every format, but macOS Installer tracks pkg payload
+# bundles BY bundle id: three payloads sharing one id collide in PackageKit's
+# upgrade bookkeeping ("parent bundle will be atomically shoved") and an
+# upgrade install can silently delete the AU right after laying it down.
+# Per-format ids are also what Arturia/Soundtoys/Softube ship. Hosts identify
+# the AU by type/subtype/manufacturer and the VST3 by class UUID, so existing
+# sessions are unaffected. JUCE generates each format's Info.plist at
+# configure time (juceaide, inside juce_add_plugin), so patching here is
+# deterministic; the compiled JucePlugin_CFBundleIdentifier is only used to
+# name the CoreMIDI client and needn't match.
+if(APPLE)
+    get_target_property(_spasynth_gen_dir SPASynth JUCE_GENERATED_SOURCES_DIRECTORY)
+    foreach(_fmt_suffix "AU;au" "VST3;vst3")
+        list(GET _fmt_suffix 0 _fmt)
+        list(GET _fmt_suffix 1 _suffix)
+        execute_process(
+            COMMAND /usr/libexec/PlistBuddy
+                    -c "Set :CFBundleIdentifier com.silverplatteraudio.spasynth.${_suffix}"
+                    "${_spasynth_gen_dir}/SPASynth_${_fmt}/Info.plist"
+            RESULT_VARIABLE _plist_result)
+        if(NOT _plist_result EQUAL 0)
+            message(FATAL_ERROR "Failed to set per-format bundle id for SPASynth_${_fmt}")
+        endif()
+    endforeach()
+endif()
+
 juce_add_binary_data(SPAAssets
     NAMESPACE SPAAssets
     SOURCES

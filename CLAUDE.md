@@ -16,7 +16,7 @@ arp probability controls (chance/stutter/jump/humanize), user-tintable accent
 colors (light mode removed), license.txt ownership stamp in the footer,
 2-decimal value readouts, and the full packaging pipeline.
 
-**Smoke testing found + fixed three shipping bugs (all committed/pushed):**
+**Smoke testing found + fixed four shipping bugs (all committed/pushed):**
 1. `33abff0` — installer only laid down the Standalone; AU/VST3 silently
    didn't install. Cause: all three component pkgs shared one identifier
    (`com.silverplatteraudio.spasynth`, derived from the common
@@ -30,14 +30,34 @@ colors (light mode removed), license.txt ownership stamp in the footer,
    Info.plist. Fix: `BLUETOOTH_PERMISSION_ENABLED/_TEXT` +
    `MICROPHONE_PERMISSION_ENABLED/_TEXT` in `juce_add_plugin` (mic added
    pre-emptively — audio input would TCC-crash the same way).
+4. The AU *installed then vanished* on upgrade installs (receipt written,
+   bundle gone from `/Library/...`; Logic never saw it). Root cause: all
+   three bundles shared one CFBundleIdentifier, and PackageKit keys its
+   payload "atomic shove" bookkeeping on the bundle id — three same-id
+   payloads in one install collide and the AU gets trashed right after
+   landing (`/var/log/install.log` showed "Parent bundle … will be
+   atomically shoved" ×3 with one id; the fixed pkg logs three distinct
+   ids). Fix: per-format CFBundleIdentifier patched into the JUCE-generated
+   plists at configure time (CMakeLists.txt — AU = `…spasynth.au`, VST3 =
+   `…spasynth.vst3`, standalone keeps the base id since it owns the TCC
+   grants), plus `BundleIsRelocatable=false` component plists in
+   `build_installer.sh`. Same scheme Arturia/Soundtoys/Softube ship. Host
+   compat unaffected (AU identity = aumu/SpSy/SpAu; VST3 = class UUID).
 
-Release artefacts + `dist/installers/SPASynth-1.0.0-macOS.pkg` were rebuilt
-with all three fixes and verified (unique ids, icon present, permission
-strings present). **Immediate next step: Mike reinstalls the fresh pkg and
-confirms** — `sudo installer -pkg dist/installers/SPASynth-1.0.0-macOS.pkg
--target /` (needs admin; can't be run from the agent shell), then check AU +
-VST3 appear, the app icon shows, and Bluetooth MIDI prompts instead of
-crashing. The pkg is still UNSIGNED, so first launch needs right-click → Open.
+**macOS smoke test now PASSES end-to-end**: the reinstalled pkg laid down
+all three formats and they stayed put; icon + Bluetooth prompt OK; auval +
+pluginval pass on the installed copies; SPASynth loads and plays in Logic.
+The pkg is still UNSIGNED, so first launch needs right-click → Open.
+
+Dev-machine notes from the bug-4 session:
+- Both build trees had stale CMake caches from the `~/arsenal` →
+  `~/spasynth` folder rename; both were reconfigured from scratch.
+- installd (as root) had earlier "relocated" an app payload INTO the build
+  tree — a root-owned `build-release/SPASynth_artefacts/Release/Standalone/
+  SPASynth.app.root-junk` remains; Mike can `sudo rm -rf` it whenever.
+- Logic caches per-version validation verdicts: after replacing a
+  same-version AU, use Plug-in Manager → Reset & Rescan Selection, then
+  RESTART Logic (the plugin menu is built at launch).
 
 **Remaining for launch (Mike's manual steps, nothing to code):**
 1. Set signing env vars (`SPASYNTH_CODESIGN_IDENTITY`,
@@ -49,8 +69,8 @@ crashing. The pkg is still UNSIGNED, so first launch needs right-click → Open.
    `dist/shopify/` folders. (Windows standalone gets the icon automatically
    from the same `ICON_BIG`.)
 3. Real-DAW smoke test on both platforms (ideally a clean user account).
-   macOS pass is underway (the three fixes above came out of it); Windows
-   not yet exercised.
+   macOS pass is DONE (the four fixes above came out of it); Windows not
+   yet exercised.
 4. Upload per the attachment list `build_release.sh` prints: Standard (pkg,
    exe, `SPASynth Starter Library.zip`, 3 docs), Pro (pkg, exe, 11 × 
    `SPASynth Pro Library (Part N).zip`, docs), Upgrade (the 11 parts only).

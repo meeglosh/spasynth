@@ -145,10 +145,11 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::position), letter + "Position", section,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    true, { .enabled = true } });
+    // Coarse never randomizes (like rootNote): semitone jumps break the key
+    // the user is writing in. Fine still rolls — detune is character, not key.
     p.push_back ({ pid (id::osc::coarse), letter + "Coarse", section,
                    ParamKind::floatParam, { -24.0f, 24.0f, 1.0f }, 0.0f, "st",
-                   true, { .enabled = true, .minNorm = 0.25f, .maxNorm = 0.75f,
-                           .biasCentre = 0.5f, .biasStrength = 0.8f } });
+                   true, { .enabled = false } });
     p.push_back ({ pid (id::osc::fine), letter + "Fine", section,
                    ParamKind::floatParam, { -100.0f, 100.0f, 1.0f }, 0.0f, "ct",
                    true, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.9f } });

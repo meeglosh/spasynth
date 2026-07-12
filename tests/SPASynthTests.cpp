@@ -747,14 +747,23 @@ namespace
 
         // Constrained bounds hold at default wildness: cutoff never below its
         // minNorm window, resonance never in the self-oscillation zone.
-        bool boundsOk = true;
+        // Coarse tune never rolls at all — semitone jumps break the song key
+        // (fine detune still does).
+        const auto coarseBefore = apvts.getParameter (
+            id::oscSlot (0, id::osc::coarse))->getValue();
+        bool boundsOk = true, coarseOk = true;
         for (int roll = 0; roll < 30; ++roll)
         {
             proc.randomizeAll();
             boundsOk = boundsOk
                     && apvts.getParameter (id::filter1Resonance)->getValue() <= 0.86f;
+            coarseOk = coarseOk
+                    && juce::approximatelyEqual (
+                           apvts.getParameter (id::oscSlot (0, id::osc::coarse))->getValue(),
+                           coarseBefore);
         }
         expect (boundsOk, "randomization respects per-param constrained ranges");
+        expect (coarseOk, "coarse tune is excluded from randomization");
 
         // Locks: filter section untouched when locked.
         proc.setLockGroupLocked ((int) params::LockGroup::filter, true);

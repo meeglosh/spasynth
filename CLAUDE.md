@@ -49,6 +49,28 @@ all three formats and they stayed put; icon + Bluetooth prompt OK; auval +
 pluginval pass on the installed copies; SPASynth loads and plays in Logic.
 The pkg is still UNSIGNED, so first launch needs right-click → Open.
 
+Follow-up polish from the same smoke-test day (all committed/pushed; Logic
+behaviour confirmed by Mike where noted):
+- `2251488` — library discovery falls back to any WAV-holding folder inside
+  a "Silverplatter Audio" dir when no folder named "SPASynth Library"
+  exists. (Mike's "samples not loading" was the dev symlink still pointing
+  at ~/arsenal after the repo folder rename — repointed.)
+- `91bd70d` — macOS Tahoe + Logic's AUHostingService opens the editor with
+  a stale hit-test region (top strip dead until a knob moves; Apple bug,
+  hits non-JUCE plugins too, REAPER/standalone immune). Workaround: 1px
+  resize nudge + repaint after the editor first shows (AU/macOS only,
+  `parentHierarchyChanged`). Confirmed fixed in Logic.
+- `f1d18c6` — loading state while slot content loads: sweep bar + dimmed
+  stale waveform + "loading..." header label; per-slot atomic pendingLoads
+  counters on the processor; third snapshot `spasynth-loading.png`.
+- `f7aee02` — both accents default to Silverplatter teal #51D0BF (the old
+  orange/cyan pair read too close to MiniFreak); LINK defaults on and the
+  picker's RESET re-links.
+- `ff537aa` — brand wordmark centred on true glyph ink via path bounds
+  (GlyphArrangement's box is advance-based; tracked text sat 5.5px left).
+- `826cf82` — coarse tune excluded from RANDOMIZE ALL (semitone jumps break
+  the song key; fine detune still rolls; same pattern as rootNote).
+
 Dev-machine notes from the bug-4 session:
 - Both build trees had stale CMake caches from the `~/arsenal` →
   `~/spasynth` folder rename; both were reconfigured from scratch.
@@ -58,6 +80,11 @@ Dev-machine notes from the bug-4 session:
 - Logic caches per-version validation verdicts: after replacing a
   same-version AU, use Plug-in Manager → Reset & Rescan Selection, then
   RESTART Logic (the plugin menu is built at launch).
+- Dev builds copy Debug plugins into ~/Library, which shadow the installed
+  /Library release copies in Logic — clear them (`rm -rf ~/Library/Audio/
+  Plug-Ins/{Components/SPASynth.component,VST3/SPASynth.vst3}`) whenever
+  Mike is smoke-testing the installed release.
+- GitHub repo renamed to `meeglosh/spasynth` (remote updated).
 
 **Remaining for launch (Mike's manual steps, nothing to code):**
 1. Set signing env vars (`SPASYNTH_CODESIGN_IDENTITY`,

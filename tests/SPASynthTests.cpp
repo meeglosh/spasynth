@@ -462,7 +462,13 @@ namespace
         spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         proc.loadSampleFromFile (0, file);
+
+        // The in-flight flag drives the UI loading state: set synchronously
+        // at launch, cleared only when the install lands on the message
+        // thread (which needs the pump below).
+        expect (proc.isSampleLoading (0), "slot reports loading while in flight");
         expect (waitForSample (proc, 0, 15000), "sample loads with analysis");
+        expect (! proc.isSampleLoading (0), "loading flag clears once installed");
 
         // Classic sample mode, keytrack off -> plays at source pitch (440 Hz).
         setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
@@ -1103,6 +1109,29 @@ namespace
         }
 
         spa::ui::setAccentColors (savedAccent, savedAccentMod);
+
+        // Third pass: the sample-loading state. Deterministic because the
+        // pending-load decrement is queued behind the message loop, which
+        // this render never pumps — the overlay is guaranteed on screen.
+        {
+            const auto src = writeRampSine (0.5, 48000.0);
+            proc.loadSampleFromFile (0, src);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+            const auto file = outDir.getChildFile ("spasynth-loading.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+
+            waitForSample (proc, 0, 15000);   // let the load land before teardown
+            src.deleteFile();
+        }
     }
 
     // The preset-name button must be clickable the moment the editor opens —

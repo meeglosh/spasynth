@@ -48,6 +48,28 @@ void DisplayComponent::paint (juce::Graphics& g)
     paintDisplay (g, bounds.reduced (3.0f));
 }
 
+// A background load is in flight for this slot: sweeping accent bar +
+// caption. Callers markDirty() after painting this so the 24 Hz display
+// timer keeps the sweep moving until the load lands.
+static void paintLoadingOverlay (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    const auto& t = currentTheme();
+
+    const auto phase = (float) (juce::Time::getMillisecondCounter() % 1200u) / 1200.0f;
+    const auto barWidth = area.getWidth() * 0.18f;
+    const auto x = area.getX() - barWidth + phase * (area.getWidth() + barWidth);
+
+    g.setGradientFill (juce::ColourGradient (
+        t.accent.withAlpha (0.0f),  x, 0.0f,
+        t.accent.withAlpha (0.35f), x + barWidth, 0.0f, false));
+    g.fillRect (juce::Rectangle<float> (x, area.getY(), barWidth, area.getHeight())
+                    .getIntersection (area));
+
+    g.setColour (t.textSecondary);
+    g.setFont (metrics::labelFont());
+    g.drawText ("loading...", area.toNearestInt(), juce::Justification::centred);
+}
+
 // ============================ WaveDisplay ==================================
 
 WaveDisplay::WaveDisplay (SPASynthProcessor& p, int slotIndex)
@@ -86,6 +108,13 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     if (mode == params::OscMode::wavetable)
     {
+        if (processor.isWavetableLoading (slot))
+        {
+            paintLoadingOverlay (g, area);
+            markDirty();   // keep the 24 Hz timer animating the sweep
+            return;
+        }
+
         const auto table = processor.getWavetable (slot);
         if (table == nullptr || table->getNumFrames() == 0)
             return;
@@ -194,8 +223,16 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     // Sample / granular: waveform overview.
     const auto sample = processor.getSample (slot);
+    const bool loading = processor.isSampleLoading (slot);
     if (sample == nullptr || sample->lengthSamples() < 2)
     {
+        if (loading)
+        {
+            paintLoadingOverlay (g, area);
+            markDirty();   // keep the 24 Hz timer animating the sweep
+            return;
+        }
+
         g.setColour (t.textSecondary.withAlpha (0.6f));
         g.setFont (metrics::labelFont());
         g.drawText ("no SFX loaded", area.toNearestInt(), juce::Justification::centred);
@@ -239,6 +276,16 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     const auto mx = area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, marker);
     g.setColour (t.textPrimary);
     g.drawLine (mx, area.getY(), mx, area.getBottom(), 1.2f);
+
+    // A replacement is still loading: dim the stale waveform so it reads as
+    // outgoing, and run the sweep on top.
+    if (loading)
+    {
+        g.setColour (t.background.withAlpha (0.6f));
+        g.fillRect (area);
+        paintLoadingOverlay (g, area);
+        markDirty();   // keep the 24 Hz timer animating the sweep
+    }
 }
 
 // ============================ EnvDisplay ===================================

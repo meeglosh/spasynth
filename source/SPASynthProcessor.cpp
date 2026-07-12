@@ -214,6 +214,12 @@ void SPASynthProcessor::installSample (int slot, std::shared_ptr<const dsp::Samp
 
 void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
 {
+    // Count the in-flight load (and broadcast) so the UI can show a loading
+    // state; the decrement lives in the completion lambda — NOT in
+    // installSample — so direct installs never underflow the counter.
+    slotSamples[(size_t) slot].pendingLoads.fetch_add (1);
+    sendChangeMessage();
+
     juce::Thread::launch ([this, slot, file]
     {
         auto result = dsp::loadSampleFromFile (file);
@@ -221,6 +227,7 @@ void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
         juce::MessageManager::callAsync ([this, slot, loaded = std::move (result),
                                           path = file.getFullPathName()]() mutable
         {
+            slotSamples[(size_t) slot].pendingLoads.fetch_sub (1);
             installSample (slot, std::move (loaded.sample), path, loaded.error);
         });
     });
@@ -357,6 +364,10 @@ void SPASynthProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavet
 
 void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
 {
+    // Same loading-state bookkeeping as loadSampleFromFile.
+    slotTables[(size_t) slot].pendingLoads.fetch_add (1);
+    sendChangeMessage();
+
     juce::Thread::launch ([this, slot, file]
     {
         auto result = dsp::loadWavetableFromFile (file);
@@ -364,6 +375,7 @@ void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
         juce::MessageManager::callAsync ([this, slot, loaded = std::move (result),
                                           path = file.getFullPathName()]() mutable
         {
+            slotTables[(size_t) slot].pendingLoads.fetch_sub (1);
             installTable (slot, std::move (loaded.table), path, loaded.error);
         });
     });

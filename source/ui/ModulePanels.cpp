@@ -103,11 +103,17 @@ juce::String OscStrip::contentName() const
     switch (currentMode())
     {
         case params::OscMode::wavetable:
+            if (processor.isWavetableLoading (slot))
+                return "loading...";
             return processor.getWavetableName (slot);
 
         case params::OscMode::sample:
         case params::OscMode::granular:
         {
+            // While a new file is in flight, neither the previous name nor a
+            // stale error is the truth — say so.
+            if (processor.isSampleLoading (slot))
+                return "loading...";
             const auto error = processor.getSampleError (slot);
             if (error.isNotEmpty())
                 return "! " + error;

@@ -57,6 +57,18 @@ public:
     juce::String getSampleName (int slot) const;
     juce::String getSampleError (int slot) const;
 
+    // True while a background load for the slot is still in flight — the UI
+    // shows a loading state instead of stale/empty content (big SFX files
+    // take a visible moment when a preset switches).
+    bool isWavetableLoading (int slot) const
+    {
+        return slotTables[(size_t) slot].pendingLoads.load() > 0;
+    }
+    bool isSampleLoading (int slot) const
+    {
+        return slotSamples[(size_t) slot].pendingLoads.load() > 0;
+    }
+
     // Content access for UI displays (message thread).
     std::shared_ptr<const dsp::Wavetable> getWavetable (int slot) const
     {
@@ -129,6 +141,7 @@ private:
         std::atomic<const dsp::Wavetable*> live { nullptr }; // audio thread
         juce::String path;                                    // "" = factory
         juce::String error;
+        std::atomic<int> pendingLoads { 0 };                  // in-flight background loads
     };
     std::shared_ptr<const dsp::Wavetable> factoryTable;
     std::array<SlotTable, params::maxOscSlots> slotTables;
@@ -141,6 +154,7 @@ private:
         std::atomic<const dsp::SampleData*> live { nullptr }; // audio thread
         juce::String path;
         juce::String error;
+        std::atomic<int> pendingLoads { 0 };                  // in-flight background loads
     };
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread

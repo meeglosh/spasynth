@@ -1141,6 +1141,41 @@ namespace
             waitForSample (proc, 0, 15000);   // let the load land before teardown
             src.deleteFile();
         }
+
+        // Marketing pass: the shot for the website. Full synth visible (no
+        // drawer), a presentable sample name in osc A's header, rendered at
+        // 2x for retina displays. Accents come from the machine settings
+        // like every render — regenerate from a defaults machine state.
+        {
+            const auto niceName = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                .getChildFile ("Glass Marimba Hit 03_SPAudio.wav");
+            const auto src = writeRampSine (0.5, 48000.0);
+            src.copyFileTo (niceName);
+            src.deleteFile();
+            proc.loadSampleFromFile (0, niceName);
+            // waitForSample() is satisfied by the PREVIOUS pass's sample, so
+            // wait on the in-flight flag — otherwise this render captures the
+            // loading overlay instead of the marimba waveform.
+            const auto deadline = juce::Time::getMillisecondCounter() + 15000u;
+            while (proc.isSampleLoading (0)
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            const auto image = editor->createComponentSnapshot (
+                editor->getLocalBounds(), true, 2.0f);
+            const auto file = outDir.getChildFile ("spasynth-marketing.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+
+            niceName.deleteFile();
+        }
     }
 
     // The preset-name button must be clickable the moment the editor opens —

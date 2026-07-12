@@ -180,6 +180,11 @@ synth with an organic-chaos engine and a one-button patch randomizer.
 
 ## Available assets
 
+- `docs/spasynth-marketing.png` — THE hero shot for the website: full UI at
+  2x/retina (2760×1800), default teal accents, no drawer, a sample loaded
+  in oscillator A. Regenerate any time with
+  `SPASynthTests --snapshot <dir>` (renders pick up the machine's saved
+  accent colors — use a defaults machine state).
 - `docs/spasynth-dark.png` — full UI screenshot (default colors, preset
   browser open, FILTER 2 and DELAY panels visible)
 - `docs/spasynth-accent.png` — same UI re-tinted violet/lime, demonstrating

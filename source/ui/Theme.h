@@ -11,8 +11,9 @@ namespace spa::ui
 //
 // Direction (per reference set: Serum 2 / Massive X / Pigments / MiniFreak):
 // flat graphite surfaces, hairline rules, display-first modules, thin-ring
-// knobs. The two accents default to orange = audio/energy and cool cyan =
-// modulation, and are user-tintable via the header colour picker.
+// knobs. Both accents default to the Silverplatter teal (#51D0BF — the old
+// orange/cyan pair read too close to MiniFreak) and are user-tintable via
+// the header colour picker, where the two roles can diverge.
 struct Theme
 {
     juce::Colour background;      // window
@@ -21,8 +22,8 @@ struct Theme
     juce::Colour header;          // top bar
     juce::Colour textPrimary;
     juce::Colour textSecondary;
-    juce::Colour accent;          // orange — audio signal, primary actions
-    juce::Colour accentMod;       // cyan — modulation (LFO/env/matrix/chaos)
+    juce::Colour accent;          // audio signal, primary actions
+    juce::Colour accentMod;       // modulation (LFO/env/matrix/chaos)
     juce::Colour outline;         // hairlines
     juce::Colour knobFace;
     juce::Colour knobTrack;
@@ -37,8 +38,8 @@ struct Theme
         t.header        = juce::Colour (0xff090d10);
         t.textPrimary   = juce::Colour (0xffe7ecef);
         t.textSecondary = juce::Colour (0xff7f8d97);
-        t.accent        = juce::Colour (0xfff08b3a);
-        t.accentMod     = juce::Colour (0xff4fc4d6);
+        t.accent        = juce::Colour (0xff51d0bf);
+        t.accentMod     = juce::Colour (0xff51d0bf);
         t.outline       = juce::Colour (0xff222d35);
         t.knobFace      = juce::Colour (0xff1e262d);
         t.knobTrack     = juce::Colour (0xff2c3841);

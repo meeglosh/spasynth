@@ -201,7 +201,8 @@ void setAccentColors (juce::Colour accent, juce::Colour accentMod)
 
 bool getAccentsLinked()
 {
-    return settings().getBoolValue ("accentsLinked", false);
+    // Linked by default: both accents ship as one colour (#51D0BF).
+    return settings().getBoolValue ("accentsLinked", true);
 }
 
 void setAccentsLinked (bool linked)

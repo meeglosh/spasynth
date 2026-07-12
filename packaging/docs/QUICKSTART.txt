@@ -14,7 +14,7 @@ SPASynth Quickstart
    Search, filter by pack or type, and star your favorites.
 
 3. RANDOMIZE ALL
-   The orange button rolls a brand-new patch. WILD (next to it) sets how
+   The big accented button rolls a brand-new patch. WILD (next to it) sets how
    polite or unhinged the rolls are. Lock any section first (the LOCKS
    row) to keep what you like — lock FILTER and OSC, then roll just the
    modulation, for instance.

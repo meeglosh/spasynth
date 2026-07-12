@@ -34,8 +34,8 @@ synth with an organic-chaos engine and a one-button patch randomizer.
      brand position — lean into it.)
 - **Brand voice:** warm, confident, minimal. Silverplatter Audio's aesthetic
   is mid-century-modern minimalism; the plugin UI is a deep blue-teal dark
-  theme with orange (audio) and cyan (modulation) accents — which the user
-  can re-tint to any colors they like.
+  theme accented in Silverplatter teal (`#51D0BF`) — which the user can
+  re-tint to any colors they like (audio and modulation accents can differ).
 
 ## Complete feature set (v1.0.0)
 
@@ -187,8 +187,8 @@ synth with an organic-chaos engine and a one-button patch randomizer.
 - `assets/branding/` — Silverplatter Audio logo SVGs (black + white, square
   and banner variants)
 - UI palette (default theme): background `#0c1114`, panels `#151c21`, text
-  `#e7ecef` / `#7f8d97`, audio accent `#f08b3a` (orange), modulation accent
-  `#4fc4d6` (cyan)
+  `#e7ecef` / `#7f8d97`, accents (audio + modulation) `#51d0bf`
+  (Silverplatter teal)
 
 ## Landing page guidance
 

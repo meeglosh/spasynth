@@ -58,9 +58,9 @@ namespace
 
             resetButton.onClick = [this]
             {
-                // The defaults are two distinct colours, so reset also unlinks.
-                linkButton.setToggleState (false, juce::dontSendNotification);
-                library::setAccentsLinked (false);
+                // Both accents default to one colour, so reset also re-links.
+                linkButton.setToggleState (true, juce::dontSendNotification);
+                library::setAccentsLinked (true);
                 resetAccentColors();
                 const auto& theme = currentTheme();
                 audioSelector.setCurrentColour (theme.accent, juce::dontSendNotification);

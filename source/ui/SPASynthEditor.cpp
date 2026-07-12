@@ -425,18 +425,26 @@ void ContentComponent::paint (juce::Graphics& g)
     g.fillRect (band);
     // Tracked text carries trailing kern space, so plain centred drawText
     // shifts the visible glyphs off-centre (worse the bigger the tracking).
-    // Centre on the actual glyph bounding box instead.
+    // GlyphArrangement's bounding box is advance-based and inherits the same
+    // phantom tail, so measure the true ink instead: render the glyphs to a
+    // path and centre the path's bounds. (Measured on the 1380px snapshot:
+    // advance-based centring left the wordmark 5.5px left of centre and the
+    // two lines 3.5px out of agreement with each other.)
     const auto drawTrackedCentred = [&g] (const juce::Font& font, const juce::String& text,
                                           juce::Rectangle<int> area, juce::Colour colour)
     {
         juce::GlyphArrangement glyphs;
         glyphs.addLineOfText (font, text, 0.0f, 0.0f);
-        const auto box = glyphs.getBoundingBox (0, -1, true);
-        glyphs.moveRangeOfGlyphs (0, -1,
-                                  (float) area.getCentreX() - box.getCentreX(),
-                                  (float) area.getCentreY() - box.getCentreY());
+
+        juce::Path ink;
+        glyphs.createPath (ink);
+        const auto box = ink.getBounds();
+        ink.applyTransform (juce::AffineTransform::translation (
+            (float) area.getCentreX() - box.getCentreX(),
+            (float) area.getCentreY() - box.getCentreY()));
+
         g.setColour (colour);
-        glyphs.draw (g);
+        g.fillPath (ink);
     };
 
     // The brand band is always dark, so its ink is always light.

@@ -710,4 +710,45 @@ void SPASynthEditor::resized()
     arsenalProcessor.getAPVTS().state.setProperty ("uiScale", (double) scale, nullptr);
 }
 
+void SPASynthEditor::parentHierarchyChanged()
+{
+   #if JUCE_MAC
+    // macOS Tahoe's AUHostingService (Logic/GarageBand only — REAPER and the
+    // standalone are fine) can open the editor with a stale hit-test region:
+    // parts of the UI, typically the top strip, receive no mouse events until
+    // the host renegotiates the view — users see the preset button dead until
+    // they wiggle any knob. Known Apple bug, documented on the JUCE forum for
+    // Tahoe 26.0-26.5 with no upstream fix as of JUCE 8.0.14 (hits non-JUCE
+    // plugins too). Once the editor is actually on screen, nudge the view
+    // size by one pixel and back — the resize round-trip makes the hosting
+    // service rebuild its geometry — and repaint fully afterwards. A resize
+    // is automation-safe, unlike faking a parameter gesture.
+    if (hostViewWakeupDone
+        || arsenalProcessor.wrapperType != juce::AudioProcessor::wrapperType_AudioUnit
+        || ! isShowing())
+        return;
+
+    hostViewWakeupDone = true;
+
+    juce::Component::SafePointer<SPASynthEditor> safe (this);
+    juce::Timer::callAfterDelay (150, [safe]
+    {
+        if (safe == nullptr)
+            return;
+
+        const auto w = safe->getWidth(), h = safe->getHeight();
+        safe->setSize (w + 1, h);
+
+        juce::Timer::callAfterDelay (60, [safe, w, h]
+        {
+            if (safe == nullptr)
+                return;
+
+            safe->setSize (w, h);
+            safe->repaint();
+        });
+    });
+   #endif
+}
+
 } // namespace spa

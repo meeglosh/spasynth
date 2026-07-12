@@ -102,6 +102,7 @@ public:
     ~SPASynthEditor() override;
 
     void resized() override;
+    void parentHierarchyChanged() override;
 
 private:
     void applyTheme();
@@ -110,6 +111,7 @@ private:
     ui::SPASynthLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this };
     std::unique_ptr<ui::ContentComponent> content;
+    bool hostViewWakeupDone = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthEditor)
 };

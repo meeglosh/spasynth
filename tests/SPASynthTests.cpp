@@ -1105,6 +1105,68 @@ namespace
         spa::ui::setAccentColors (savedAccent, savedAccentMod);
     }
 
+    // The preset-name button must be clickable the moment the editor opens —
+    // regression probe for the "Init unclickable until a knob moves" bug.
+    static void editorHitTestProbe()
+    {
+        std::cout << "editorHitTestProbe\n";
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setVisible (true);   // hosts do this when attaching the view
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        juce::TextButton* presetButton = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                if (b->getTooltip() == "Browse presets")
+                    presetButton = b;
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (presetButton != nullptr, "preset name button found");
+        if (presetButton == nullptr)
+            return;
+
+        auto probe = [&] (const char* when)
+        {
+            const auto centre = editor->getLocalPoint (presetButton,
+                presetButton->getLocalBounds().getCentre().toFloat());
+            auto* hit = editor->getComponentAt (centre.roundToInt());
+            const bool ok = hit == presetButton;
+            if (! ok)
+            {
+                std::cout << "  probe point in editor: " << centre.toString()
+                          << "  editor bounds: " << editor->getBounds().toString() << "\n"
+                          << "  button bounds (parent-rel): " << presetButton->getBounds().toString()
+                          << " visible=" << (int) presetButton->isVisible() << "\n";
+                for (auto* p = presetButton->getParentComponent(); p != nullptr;
+                     p = p->getParentComponent())
+                    std::cout << "  ancestor: " << typeid (*p).name()
+                              << " bounds=" << p->getBounds().toString()
+                              << " visible=" << (int) p->isVisible() << "\n";
+                if (hit != nullptr)
+                    std::cout << "  blocked by: " << typeid (*hit).name()
+                              << " name='" << hit->getName() << "'"
+                              << " bounds=" << hit->getBounds().toString() << "\n";
+                else
+                    std::cout << "  hit: (none)\n";
+            }
+            expect (ok, juce::String ("preset button is hit-testable ") + when);
+        };
+
+        probe ("right after construction");
+
+        // Give deferred work (async library refresh, timers) a chance to run,
+        // then re-probe — the bug showed up only before the first param nudge.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+        probe ("after the message loop has run");
+    }
+
     static void midiLearnTest()
     {
         std::cout << "midiLearnTest\n";
@@ -1818,6 +1880,7 @@ int main (int argc, char* argv[])
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();
+    editorHitTestProbe();
     midiLearnTest();
     arpeggiatorTest();
     arpChanceTest();

@@ -47,6 +47,14 @@ bool looksLikeLibrary (const juce::File&);
 // SPASynth at the library manually.
 std::vector<juce::File> defaultLibraryLocations();
 
+// Expands company dirs into an ordered candidate list: the canonical
+// "<dir>/<libraryName>" for every dir first, then every other existing
+// subfolder of each dir as a fallback (a renamed library, the starter
+// library dragged out of its zip, a lone add-on pack). Pure given its
+// inputs (testable); discoverLibrary() still vets every candidate.
+std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& companyDirs,
+                                                 const juce::String& libraryName);
+
 // Pure discovery over a candidate list (testable).
 juce::File discoverLibrary (const std::vector<juce::File>& candidates);
 

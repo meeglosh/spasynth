@@ -94,34 +94,60 @@ bool looksLikeLibrary (const juce::File& root)
 std::vector<juce::File> defaultLibraryLocations()
 {
     const juce::String company = "Silverplatter Audio";
-    const juce::String libraryName = "SPASynth Library";
 
-    std::vector<juce::File> candidates;
+    std::vector<juce::File> companyDirs;
 
     // Shared, user-writable, visible across accounts — the primary install
     // target (/Users/Shared on macOS, Public Documents on Windows).
-    candidates.push_back (juce::File::getSpecialLocation (juce::File::commonDocumentsDirectory)
-                              .getChildFile (company).getChildFile (libraryName));
+    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::commonDocumentsDirectory)
+                               .getChildFile (company));
 
     // System-wide application data.
    #if JUCE_MAC
-    candidates.push_back (juce::File ("/Library/Application Support")
-                              .getChildFile (company).getChildFile (libraryName));
+    companyDirs.push_back (juce::File ("/Library/Application Support").getChildFile (company));
    #else
-    candidates.push_back (juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
-                              .getChildFile (company).getChildFile (libraryName));
+    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+                               .getChildFile (company));
    #endif
 
     // Per-user application data.
-    candidates.push_back (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                             #if JUCE_MAC
-                              .getChildFile ("Application Support")
-                             #endif
-                              .getChildFile (company).getChildFile (libraryName));
+    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                              #if JUCE_MAC
+                               .getChildFile ("Application Support")
+                              #endif
+                               .getChildFile (company));
 
     // User documents (people drag content there more often than anywhere).
-    candidates.push_back (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                              .getChildFile (company).getChildFile (libraryName));
+    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                               .getChildFile (company));
+
+    return expandLibraryCandidates (companyDirs, "SPASynth Library");
+}
+
+std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& companyDirs,
+                                                 const juce::String& libraryName)
+{
+    std::vector<juce::File> candidates;
+
+    for (const auto& dir : companyDirs)
+        candidates.push_back (dir.getChildFile (libraryName));
+
+    // Fallback: any other folder sitting in a company dir. Customers end up
+    // here by dragging the inner folder out of the zip or renaming it — the
+    // README promises "no pointing, no scanning dialogs", so probe those too.
+    // discoverLibrary() vets each candidate with looksLikeLibrary(), and the
+    // canonical names above always win when present.
+    for (const auto& dir : companyDirs)
+    {
+        auto children = dir.findChildFiles (juce::File::findDirectories, false);
+        std::sort (children.begin(), children.end(),
+                   [] (const juce::File& a, const juce::File& b)
+                   { return a.getFullPathName().compareIgnoreCase (b.getFullPathName()) < 0; });
+
+        for (const auto& child : children)
+            if (std::find (candidates.begin(), candidates.end(), child) == candidates.end())
+                candidates.push_back (child);
+    }
 
     return candidates;
 }

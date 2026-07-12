@@ -889,6 +889,33 @@ namespace
         expect (lib::discoverLibrary ({ missing, emptyDir }) == juce::File(),
                 "discovery reports nothing when no candidate is valid");
 
+        // Candidate expansion: a company dir holding a non-canonically named
+        // library (starter library dragged out of its zip, renamed folder)
+        // is still discovered — but the canonical name wins when present.
+        const auto companyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                    .getNonexistentChildFile ("spasynth-company", "");
+        const auto starter = companyDir.getChildFile ("SPASynth Starter Library");
+        const auto starterPack = starter.getChildFile ("Some Pack");
+        starterPack.createDirectory();
+        starterPack.getChildFile ("a.wav").replaceWithData ("x", 1);
+
+        auto expanded = lib::expandLibraryCandidates ({ companyDir }, "SPASynth Library");
+        expect (! expanded.empty()
+                    && expanded.front() == companyDir.getChildFile ("SPASynth Library"),
+                "canonical library name is the first candidate");
+        expect (lib::discoverLibrary (expanded) == starter,
+                "renamed library inside a company dir is discovered as fallback");
+
+        const auto canonical = companyDir.getChildFile ("SPASynth Library");
+        const auto canonicalPack = canonical.getChildFile ("Real Pack");
+        canonicalPack.createDirectory();
+        canonicalPack.getChildFile ("b.wav").replaceWithData ("x", 1);
+        expect (lib::discoverLibrary (lib::expandLibraryCandidates ({ companyDir },
+                                                                    "SPASynth Library"))
+                    == canonical,
+                "canonical library outranks fallback folders");
+
+        companyDir.deleteRecursively();
         realLib.deleteRecursively();
         emptyDir.deleteRecursively();
     }

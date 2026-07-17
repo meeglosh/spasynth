@@ -544,6 +544,70 @@ namespace
         file.deleteFile();
     }
 
+    static juce::File makeFakeLibrary();   // defined later in this file
+
+    static void quickSwapTest()
+    {
+        std::cout << "quickSwapTest\n";
+
+        namespace id = spa::params::id;
+        namespace lib = spa::library;
+
+        const auto savedRoot = lib::getLibraryRoot();   // restore machine setting after
+        const auto root = makeFakeLibrary();            // Alpha/Beta packs, 3 wavs each
+        lib::setLibraryRoot (root);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        auto settle = [&]
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 15000u;
+            while (proc.isSampleLoading (0)
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        const auto alpha = root.getChildFile ("Alpha Pack");
+        proc.loadSampleFromFile (0, alpha.getChildFile ("two.wav"));
+        settle();
+
+        // Siblings are exactly this pack's wavs, name-sorted, none from Beta.
+        auto sibs = proc.getPackSiblings (0);
+        expect (sibs.size() == 3, "pack siblings are the 3 Alpha wavs");
+        bool allAlpha = true;
+        for (const auto& f : sibs)
+            allAlpha = allAlpha && f.getParentDirectory() == alpha;
+        expect (allAlpha, "siblings come only from the current pack");
+        expect (! sibs.isEmpty() && sibs.getFirst().getFileName() == "one.wav"
+                    && sibs.getLast().getFileName() == "two.wav",
+                "siblings are name-sorted (one, three, two)");
+
+        // Step +1 from two.wav (last) wraps to one.wav (first).
+        proc.swapSampleInPack (0, 1);
+        settle();
+        expect (proc.getSampleFile (0).getFileName() == "one.wav",
+                "swap +1 wraps to the first sibling");
+
+        // A file outside the library has no swap siblings.
+        const auto stray = writeRampSine (0.2, 48000.0);
+        proc.loadSampleFromFile (0, stray);
+        settle();
+        expect (proc.getPackSiblings (0).isEmpty(),
+                "a sample outside the library exposes no siblings");
+
+        // Latest request wins even when an earlier one is still resolving.
+        proc.loadSampleFromFile (0, alpha.getChildFile ("three.wav"));
+        proc.loadSampleFromFile (0, alpha.getChildFile ("two.wav"));
+        settle();
+        expect (proc.getSampleFile (0).getFileName() == "two.wav",
+                "the newest load request wins (no stale stomp)");
+
+        stray.deleteFile();
+        root.deleteRecursively();
+        lib::setLibraryRoot (savedRoot);
+    }
+
     static void sfxFollowerTest()
     {
         std::cout << "sfxFollowerTest\n";
@@ -1968,6 +2032,7 @@ int main (int argc, char* argv[])
     chaosMatrixSourceTest();
     samplePlaybackTest();
     granularTest();
+    quickSwapTest();
     sfxFollowerTest();
     fxDelayReverbTest();
     fxEQDistortionTest();

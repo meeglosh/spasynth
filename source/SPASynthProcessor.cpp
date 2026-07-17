@@ -217,20 +217,60 @@ void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
     // Count the in-flight load (and broadcast) so the UI can show a loading
     // state; the decrement lives in the completion lambda — NOT in
     // installSample — so direct installs never underflow the counter.
-    slotSamples[(size_t) slot].pendingLoads.fetch_add (1);
+    // requestSerial (message thread) makes the newest request win: rapid
+    // quick-swap auditioning fires many background loads that finish out of
+    // order, and a slow earlier analysis must not stomp the latest pick.
+    auto& ss = slotSamples[(size_t) slot];
+    const int serial = ++ss.requestSerial;
+    ss.pendingLoads.fetch_add (1);
     sendChangeMessage();
 
-    juce::Thread::launch ([this, slot, file]
+    juce::Thread::launch ([this, slot, file, serial]
     {
         auto result = dsp::loadSampleFromFile (file);
 
-        juce::MessageManager::callAsync ([this, slot, loaded = std::move (result),
+        juce::MessageManager::callAsync ([this, slot, serial, loaded = std::move (result),
                                           path = file.getFullPathName()]() mutable
         {
-            slotSamples[(size_t) slot].pendingLoads.fetch_sub (1);
+            auto& s = slotSamples[(size_t) slot];
+            s.pendingLoads.fetch_sub (1);
+            if (serial != s.requestSerial)
+                return;   // superseded by a newer request — drop this stale result
             installSample (slot, std::move (loaded.sample), path, loaded.error);
         });
     });
+}
+
+juce::Array<juce::File> SPASynthProcessor::getPackSiblings (int slot) const
+{
+    const auto file = getSampleFile (slot);
+    const auto root = library::findLibraryRoot();
+    if (! root.isDirectory() || ! file.isAChildOf (root))
+        return {};
+
+    auto wavs = file.getParentDirectory()
+                    .findChildFiles (juce::File::findFiles, false, "*.wav;*.WAV");
+    std::sort (wavs.begin(), wavs.end(),
+               [] (const juce::File& a, const juce::File& b)
+               { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
+    return wavs;
+}
+
+void SPASynthProcessor::swapSampleInPack (int slot, int offset)
+{
+    const auto sibs = getPackSiblings (slot);
+    if (sibs.isEmpty())
+        return;
+
+    const auto cur = getSampleFile (slot);
+    auto idx = sibs.indexOf (cur);
+    if (idx < 0)
+        idx = 0;
+
+    auto next = (idx + offset) % sibs.size();
+    if (next < 0)
+        next += sibs.size();
+    loadSampleFromFile (slot, sibs[next]);
 }
 
 juce::String SPASynthProcessor::getSampleName (int slot) const

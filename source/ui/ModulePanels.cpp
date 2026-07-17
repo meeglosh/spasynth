@@ -190,9 +190,135 @@ void OscStrip::chooseContent()
 void OscStrip::paint (juce::Graphics& g)
 {
     draw::panel (g, getLocalBounds().toFloat());
+
+    const auto m = currentMode();
+    const bool swap = (m == params::OscMode::sample || m == params::OscMode::granular);
+
+    // In swap modes the header's right side becomes the quick-swap widget, so
+    // suppress the plain readout there and paint the widget instead.
     draw::sectionHeader (g, getLocalBounds(),
-                         "Oscillator " + id::oscSlotLetter (slot), contentName(),
+                         "Oscillator " + id::oscSlotLetter (slot),
+                         swap ? juce::String() : contentName(),
                          currentTheme().accent);
+    if (swap)
+        paintSampleSwapper (g);
+}
+
+OscStrip::SwapLayout OscStrip::headerSwapLayout() const
+{
+    auto header = getLocalBounds().removeFromTop (20).reduced (8, 0);
+    constexpr int arrowW = 13;
+    SwapLayout L;
+    L.next = header.removeFromRight (arrowW);
+    const int nameW = juce::jlimit (70, 220, juce::roundToInt (header.getWidth() * 0.60f));
+    L.name = header.removeFromRight (nameW);
+    L.prev = header.removeFromRight (arrowW);
+    return L;
+}
+
+bool OscStrip::sampleSwapAvailable() const
+{
+    const auto f = processor.getSampleFile (slot);
+    if (f == juce::File())
+        return false;
+    const auto root = library::findLibraryRoot();
+    return root.isDirectory() && f.isAChildOf (root);
+}
+
+void OscStrip::paintSampleSwapper (juce::Graphics& g)
+{
+    const auto& t = currentTheme();
+    const auto L = headerSwapLayout();
+    const bool avail = sampleSwapAvailable();
+
+    auto nameArea = L.name;
+    const auto caretArea = avail ? nameArea.removeFromRight (12) : juce::Rectangle<int>();
+
+    const auto stringWidth = [] (const juce::String& s)
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (metrics::labelFont(), s, 0.0f, 0.0f);
+        return (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+    };
+    auto fitted = contentName();
+    if (stringWidth (fitted) > nameArea.getWidth())
+    {
+        while (fitted.length() > 4 && stringWidth (fitted + "...") > nameArea.getWidth())
+            fitted = fitted.dropLastCharacters (1).trimEnd();
+        fitted += "...";
+    }
+
+    g.setFont (metrics::labelFont());
+    g.setColour (t.textSecondary);
+    g.drawText (fitted, nameArea, juce::Justification::centredRight);
+
+    if (! avail)
+        return;
+
+    // Caret: the name is a dropdown.
+    auto c = caretArea.toFloat().withSizeKeepingCentre (7.0f, 4.0f);
+    juce::Path caret;
+    caret.addTriangle (c.getX(), c.getY(), c.getRight(), c.getY(), c.getCentreX(), c.getBottom());
+    g.setColour (t.textSecondary);
+    g.fillPath (caret);
+
+    // Prev / next step arrows.
+    const auto arrow = [&g, &t] (juce::Rectangle<int> r, bool left)
+    {
+        auto a = r.toFloat().withSizeKeepingCentre (4.0f, 7.0f);
+        juce::Path tri;
+        if (left)
+            tri.addTriangle (a.getRight(), a.getY(), a.getRight(), a.getBottom(), a.getX(), a.getCentreY());
+        else
+            tri.addTriangle (a.getX(), a.getY(), a.getX(), a.getBottom(), a.getRight(), a.getCentreY());
+        g.setColour (t.textSecondary);
+        g.fillPath (tri);
+    };
+    arrow (L.prev, true);
+    arrow (L.next, false);
+}
+
+void OscStrip::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        return;   // right-click is routed to MIDI-Learn by the editor
+
+    const auto m = currentMode();
+    if ((m != params::OscMode::sample && m != params::OscMode::granular)
+        || ! sampleSwapAvailable())
+        return;
+
+    const auto L = headerSwapLayout();
+    const auto p = e.getPosition();
+    if (L.prev.contains (p))
+        processor.swapSampleInPack (slot, -1);
+    else if (L.next.contains (p))
+        processor.swapSampleInPack (slot, +1);
+    else if (L.name.contains (p))
+        openSampleMenu();
+}
+
+void OscStrip::openSampleMenu()
+{
+    const auto sibs = processor.getPackSiblings (slot);
+    if (sibs.isEmpty())
+        return;
+
+    const auto cur = processor.getSampleFile (slot);
+    juce::PopupMenu menu;
+    for (int i = 0; i < sibs.size(); ++i)
+        menu.addItem (i + 1, sibs[i].getFileNameWithoutExtension(),
+                      true, sibs[i] == cur);   // tick the current sample
+
+    const auto L = headerSwapLayout();
+    juce::Component::SafePointer<OscStrip> safe (this);
+    menu.showMenuAsync (
+        juce::PopupMenu::Options().withTargetScreenArea (L.name + getScreenPosition()),
+        [safe, sibs] (int r)
+        {
+            if (safe != nullptr && r > 0)
+                safe->processor.loadSampleFromFile (safe->slot, sibs[r - 1]);
+        });
 }
 
 void OscStrip::resized()

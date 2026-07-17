@@ -56,6 +56,19 @@ public:
     void loadSampleFromFile (int slot, const juce::File& file);
     juce::String getSampleName (int slot) const;
     juce::String getSampleError (int slot) const;
+    juce::File getSampleFile (int slot) const
+    {
+        return juce::File (slotSamples[(size_t) slot].path);
+    }
+
+    // Quick-swap: the WAV files in the currently loaded sample's pack (its
+    // parent folder), name-sorted, but only when that sample lives under the
+    // library root. Empty otherwise (no sample, or a user file loaded from
+    // outside the library) — the UI hides the swap affordance in that case.
+    juce::Array<juce::File> getPackSiblings (int slot) const;
+    // Load the pack sibling at a signed offset from the current one, wrapping
+    // (arrows). No-op when getPackSiblings is empty.
+    void swapSampleInPack (int slot, int offset);
 
     // True while a background load for the slot is still in flight — the UI
     // shows a loading state instead of stale/empty content (big SFX files
@@ -155,6 +168,7 @@ private:
         juce::String path;
         juce::String error;
         std::atomic<int> pendingLoads { 0 };                  // in-flight background loads
+        int requestSerial = 0;   // latest-swap-wins: newest request supersedes older ones
     };
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread

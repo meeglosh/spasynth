@@ -25,6 +25,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
@@ -33,6 +34,15 @@ private:
     void chooseContent();
     params::OscMode currentMode() const;
     juce::String contentName() const;
+
+    // In-pack quick-swap affordance in the header (Sample/Granular modes):
+    // "< name v >" where the name opens a dropdown of the whole pack and the
+    // arrows step through it. Shown only when the loaded sample is in a pack.
+    struct SwapLayout { juce::Rectangle<int> prev, name, next; };
+    SwapLayout headerSwapLayout() const;
+    bool sampleSwapAvailable() const;
+    void paintSampleSwapper (juce::Graphics&);
+    void openSampleMenu();
 
     SPASynthProcessor& processor;
     const int slot;

@@ -256,23 +256,6 @@ juce::Array<juce::File> SPASynthProcessor::getPackSiblings (int slot) const
     return wavs;
 }
 
-void SPASynthProcessor::swapSampleInPack (int slot, int offset)
-{
-    const auto sibs = getPackSiblings (slot);
-    if (sibs.isEmpty())
-        return;
-
-    const auto cur = getSampleFile (slot);
-    auto idx = sibs.indexOf (cur);
-    if (idx < 0)
-        idx = 0;
-
-    auto next = (idx + offset) % sibs.size();
-    if (next < 0)
-        next += sibs.size();
-    loadSampleFromFile (slot, sibs[next]);
-}
-
 juce::String SPASynthProcessor::getSampleName (int slot) const
 {
     const auto& current = slotSamples[(size_t) slot].current;

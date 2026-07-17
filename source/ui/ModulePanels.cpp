@@ -204,16 +204,11 @@ void OscStrip::paint (juce::Graphics& g)
         paintSampleSwapper (g);
 }
 
-OscStrip::SwapLayout OscStrip::headerSwapLayout() const
+juce::Rectangle<int> OscStrip::headerNameRect() const
 {
     auto header = getLocalBounds().removeFromTop (20).reduced (8, 0);
-    constexpr int arrowW = 13;
-    SwapLayout L;
-    L.next = header.removeFromRight (arrowW);
-    const int nameW = juce::jlimit (70, 220, juce::roundToInt (header.getWidth() * 0.60f));
-    L.name = header.removeFromRight (nameW);
-    L.prev = header.removeFromRight (arrowW);
-    return L;
+    const int w = juce::jlimit (80, 240, juce::roundToInt (header.getWidth() * 0.62f));
+    return header.removeFromRight (w);
 }
 
 bool OscStrip::sampleSwapAvailable() const
@@ -228,10 +223,9 @@ bool OscStrip::sampleSwapAvailable() const
 void OscStrip::paintSampleSwapper (juce::Graphics& g)
 {
     const auto& t = currentTheme();
-    const auto L = headerSwapLayout();
     const bool avail = sampleSwapAvailable();
 
-    auto nameArea = L.name;
+    auto nameArea = headerNameRect();
     const auto caretArea = avail ? nameArea.removeFromRight (12) : juce::Rectangle<int>();
 
     const auto stringWidth = [] (const juce::String& s)
@@ -255,27 +249,12 @@ void OscStrip::paintSampleSwapper (juce::Graphics& g)
     if (! avail)
         return;
 
-    // Caret: the name is a dropdown.
+    // Caret: the name opens the in-pack dropdown.
     auto c = caretArea.toFloat().withSizeKeepingCentre (7.0f, 4.0f);
     juce::Path caret;
     caret.addTriangle (c.getX(), c.getY(), c.getRight(), c.getY(), c.getCentreX(), c.getBottom());
     g.setColour (t.textSecondary);
     g.fillPath (caret);
-
-    // Prev / next step arrows.
-    const auto arrow = [&g, &t] (juce::Rectangle<int> r, bool left)
-    {
-        auto a = r.toFloat().withSizeKeepingCentre (4.0f, 7.0f);
-        juce::Path tri;
-        if (left)
-            tri.addTriangle (a.getRight(), a.getY(), a.getRight(), a.getBottom(), a.getX(), a.getCentreY());
-        else
-            tri.addTriangle (a.getX(), a.getY(), a.getX(), a.getBottom(), a.getRight(), a.getCentreY());
-        g.setColour (t.textSecondary);
-        g.fillPath (tri);
-    };
-    arrow (L.prev, true);
-    arrow (L.next, false);
 }
 
 void OscStrip::mouseDown (const juce::MouseEvent& e)
@@ -288,13 +267,7 @@ void OscStrip::mouseDown (const juce::MouseEvent& e)
         || ! sampleSwapAvailable())
         return;
 
-    const auto L = headerSwapLayout();
-    const auto p = e.getPosition();
-    if (L.prev.contains (p))
-        processor.swapSampleInPack (slot, -1);
-    else if (L.next.contains (p))
-        processor.swapSampleInPack (slot, +1);
-    else if (L.name.contains (p))
+    if (headerNameRect().contains (e.getPosition()))
         openSampleMenu();
 }
 
@@ -310,10 +283,9 @@ void OscStrip::openSampleMenu()
         menu.addItem (i + 1, sibs[i].getFileNameWithoutExtension(),
                       true, sibs[i] == cur);   // tick the current sample
 
-    const auto L = headerSwapLayout();
     juce::Component::SafePointer<OscStrip> safe (this);
     menu.showMenuAsync (
-        juce::PopupMenu::Options().withTargetScreenArea (L.name + getScreenPosition()),
+        juce::PopupMenu::Options().withTargetScreenArea (headerNameRect() + getScreenPosition()),
         [safe, sibs] (int r)
         {
             if (safe != nullptr && r > 0)

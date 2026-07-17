@@ -66,9 +66,6 @@ public:
     // library root. Empty otherwise (no sample, or a user file loaded from
     // outside the library) — the UI hides the swap affordance in that case.
     juce::Array<juce::File> getPackSiblings (int slot) const;
-    // Load the pack sibling at a signed offset from the current one, wrapping
-    // (arrows). No-op when getPackSiblings is empty.
-    void swapSampleInPack (int slot, int offset);
 
     // True while a background load for the slot is still in flight — the UI
     // shows a loading state instead of stale/empty content (big SFX files

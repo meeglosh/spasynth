@@ -583,12 +583,6 @@ namespace
                     && sibs.getLast().getFileName() == "two.wav",
                 "siblings are name-sorted (one, three, two)");
 
-        // Step +1 from two.wav (last) wraps to one.wav (first).
-        proc.swapSampleInPack (0, 1);
-        settle();
-        expect (proc.getSampleFile (0).getFileName() == "one.wav",
-                "swap +1 wraps to the first sibling");
-
         // A file outside the library has no swap siblings.
         const auto stray = writeRampSine (0.2, 48000.0);
         proc.loadSampleFromFile (0, stray);

@@ -36,10 +36,9 @@ private:
     juce::String contentName() const;
 
     // In-pack quick-swap affordance in the header (Sample/Granular modes):
-    // "< name v >" where the name opens a dropdown of the whole pack and the
-    // arrows step through it. Shown only when the loaded sample is in a pack.
-    struct SwapLayout { juce::Rectangle<int> prev, name, next; };
-    SwapLayout headerSwapLayout() const;
+    // the sample name plus a caret opens a dropdown of the whole pack. Shown
+    // only when the loaded sample is in a pack.
+    juce::Rectangle<int> headerNameRect() const;
     bool sampleSwapAvailable() const;
     void paintSampleSwapper (juce::Graphics&);
     void openSampleMenu();

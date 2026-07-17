@@ -58,9 +58,9 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   root note, start offset, loop points. Ships pointed at the Silverplatter
   library.
 - **In-pack quick-swap** — audition every variant in a pack straight from the
-  oscillator: click the sample name for a dropdown of the whole pack, or step
-  through it with the arrows. No file dialogs, no browser trip. Turns 11,474
-  sounds into something you can actually explore while you play.
+  oscillator: click the sample name for a dropdown of the whole pack. No file
+  dialogs, no browser trip. Turns 11,474 sounds into something you can
+  actually explore while you play.
 - **Granular** — grain size, density, position, spray, and pitch over any
   sample; scrub the playhead with an LFO for evolving textures.
 - **Virtual Analog** — classic PolyBLEP shapes with pulse-width control.

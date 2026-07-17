@@ -71,7 +71,7 @@ packs (five representative sounds from each). Everything is here except the full
 
 **Inside the synth**
 - 7 synthesis engines per oscillator slot, across 3 slots: wavetable, sample/SFX, granular, virtual analog, 2-operator FM, noise, and Karplus-Strong pluck
-- In-pack quick-swap: audition every variant in a pack right from the oscillator, click the sample name for a dropdown of the whole pack or step through with the arrows, no file dialogs
+- In-pack quick-swap: audition every variant in a pack right from the oscillator, click the sample name for a dropdown of the whole pack, no file dialogs
 - The SFX-as-modulator system: every loaded sound is analyzed for loudness and pitch, and those contours become live modulation sources. Route a thunderstorm's loudness to the filter and the storm plays the synth.
 - Dual multimode filters, 8 types each, with series or parallel routing, drive, keytracking, envelope depth, and mix
 - Organic Chaos: per-voice analog-style drift in pitch, phase, wavetable position, amplitude, saturation, and distortion, so digital patches breathe
@@ -132,7 +132,7 @@ generator.
 
 **Inside the synth**
 - 7 synthesis engines per oscillator slot, across 3 slots: wavetable, sample/SFX, granular, virtual analog, 2-operator FM, noise, and Karplus-Strong pluck
-- In-pack quick-swap: audition every variant in a pack right from the oscillator, click the sample name for a dropdown of the whole pack or step through with the arrows, no file dialogs
+- In-pack quick-swap: audition every variant in a pack right from the oscillator, click the sample name for a dropdown of the whole pack, no file dialogs
 - The SFX-as-modulator system: every loaded sound is analyzed for loudness and pitch, and those contours become live modulation sources
 - Dual multimode filters, 8 types each, with series or parallel routing, drive, keytracking, envelope depth, and mix
 - Organic Chaos: per-voice analog-style drift in pitch, phase, wavetable position, amplitude, saturation, and distortion

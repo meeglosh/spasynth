@@ -28,6 +28,9 @@ public:
                                const juce::Colour& backgroundColour,
                                bool highlighted, bool down) override;
 
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool highlighted, bool down) override;
+
     void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
                            bool highlighted, bool down) override;
 

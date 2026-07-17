@@ -260,6 +260,7 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     {
         auto& button = lockButtons[(size_t) g];
         button.setButtonText (params::lockGroupName ((params::LockGroup) g));
+        button.setComponentID ("lock");   // draws a padlock in the locked state
         button.setClickingTogglesState (true);
         button.setToggleState (processor.isLockGroupLocked (g), juce::dontSendNotification);
         button.setTooltip ("Lock this section: RANDOMIZE ALL keeps its current settings");

@@ -216,79 +216,39 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     const auto centre = bounds.getCentre();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    const auto lineW = juce::jlimit (1.7f, 2.6f, radius * 0.12f);
-    const auto arcRadius = radius - lineW * 0.5f;
-    const auto faceRadius = arcRadius - lineW * 1.7f;
+    // Flat, modern knob (per the Audio Damage reference): a thin track ring,
+    // an accent value arc, and a small position dot. No disc, bevel, drop
+    // shadow or needle. Sizes/placement are unchanged — only the paint.
+    const auto lineW = juce::jlimit (1.6f, 2.6f, radius * 0.12f);
+    const auto arcRadius = radius - lineW * 1.2f;   // inset so the dot stays in bounds
 
-    // Drop shadow under the disc (mock: knobs float above the panel).
-    {
-        const auto shadowR = faceRadius * 1.18f;
-        juce::ColourGradient shadow (
-            juce::Colours::black.withAlpha (0.55f),
-            centre.x, centre.y + faceRadius * 0.28f,
-            juce::Colours::transparentBlack,
-            centre.x, centre.y + faceRadius * 0.28f + shadowR, true);
-        g.setGradientFill (shadow);
-        g.fillEllipse (centre.x - shadowR, centre.y + faceRadius * 0.28f - shadowR,
-                       shadowR * 2.0f, shadowR * 2.0f);
-    }
+    const auto accent  = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
+    const auto enabled = slider.isEnabled();
+    const auto hot     = slider.isMouseOverOrDragging() && enabled;
 
-    // Face: vertical gradient disc, light catches the top.
-    const auto hover = slider.isMouseOverOrDragging() ? 0.05f : 0.0f;
-    g.setGradientFill (juce::ColourGradient (
-        t.knobFace.brighter (0.55f + hover), centre.x, centre.y - faceRadius,
-        t.knobFace.darker (0.45f), centre.x, centre.y + faceRadius, false));
-    g.fillEllipse (centre.x - faceRadius, centre.y - faceRadius,
-                   faceRadius * 2.0f, faceRadius * 2.0f);
-
-    // Bevel: bright top rim, dark bottom rim.
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
-    g.drawEllipse (centre.x - faceRadius, centre.y - faceRadius,
-                   faceRadius * 2.0f, faceRadius * 2.0f, 1.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.35f));
-    g.drawEllipse (centre.x - faceRadius + 0.5f, centre.y - faceRadius + 1.0f,
-                   faceRadius * 2.0f - 1.0f, faceRadius * 2.0f - 1.0f, 0.8f);
-
-    // Hover: a soft accent halo hugging the ring (stays inside the
-    // component bounds — the outermost faint pass may kiss the edge).
-    const auto accentPreview = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
-    if (slider.isMouseOverOrDragging() && slider.isEnabled())
-    {
-        constexpr float grows[] = { 0.5f, 1.8f, 3.2f };
-        constexpr float alphas[] = { 0.20f, 0.12f, 0.06f };
-        for (int pass = 0; pass < 3; ++pass)
-        {
-            g.setColour (accentPreview.withAlpha (alphas[pass]));
-            g.drawEllipse (centre.x - arcRadius - grows[pass],
-                           centre.y - arcRadius - grows[pass],
-                           (arcRadius + grows[pass]) * 2.0f,
-                           (arcRadius + grows[pass]) * 2.0f,
-                           2.0f);
-        }
-    }
-
-    // Ring track (groove outside the face).
+    // Track ring (full sweep).
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour (t.knobTrack.withAlpha (0.9f));
+    g.setColour (hot ? t.knobTrack.brighter (0.15f)
+                     : t.knobTrack.withAlpha (enabled ? 0.9f : 0.5f));
     g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
-    // Value arc with glow.
-    const auto accent = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
+    // Value arc: grows from the centre for bipolar params, else from the start.
     const auto isBipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
     const auto fillStart = isBipolar
                          ? rotaryStartAngle + 0.5f * (rotaryEndAngle - rotaryStartAngle)
                          : rotaryStartAngle;
+    const auto arcColour = enabled ? accent : t.textSecondary.withAlpha (0.35f);
+
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                          fillStart, angle, true);
-    const auto arcColour = slider.isEnabled() ? accent : t.textSecondary.withAlpha (0.35f);
-    if (slider.isEnabled())
+    if (enabled)   // faint bloom keeps a hint of the accent glow, subtly
     {
-        g.setColour (arcColour.withAlpha (0.30f));
-        g.strokePath (value, juce::PathStrokeType (lineW * 2.4f,
+        g.setColour (accent.withAlpha (hot ? 0.28f : 0.16f));
+        g.strokePath (value, juce::PathStrokeType (lineW * 2.6f,
                                                    juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
     }
@@ -296,13 +256,11 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
-    // Pointer: bright needle on the face.
-    const auto tip = centre.getPointOnCircumference (faceRadius * 0.88f, angle);
-    const auto inner = centre.getPointOnCircumference (faceRadius * 0.30f, angle);
-    g.setColour (juce::Colours::black.withAlpha (0.4f));
-    g.drawLine (inner.x + 0.7f, inner.y + 1.0f, tip.x + 0.7f, tip.y + 1.0f, lineW);
-    g.setColour (juce::Colours::white);
-    g.drawLine (inner.x, inner.y, tip.x, tip.y, lineW * 0.9f);
+    // Position dot riding the ring at the current angle.
+    const auto dotR = lineW * (hot ? 1.35f : 1.15f);
+    const auto dot  = centre.getPointOnCircumference (arcRadius, angle);
+    g.setColour (enabled ? accent.brighter (0.15f) : t.textSecondary.withAlpha (0.4f));
+    g.fillEllipse (dot.x - dotR, dot.y - dotR, dotR * 2.0f, dotR * 2.0f);
 
     // Press state for label-less knobs that opt in: a value chip across the
     // knob (used by the header master volume).
@@ -414,6 +372,69 @@ void SPASynthLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button&
     g.fillRoundedRectangle (bounds, metrics::cornerRadius);
     g.setColour (t.outline);
     g.drawRoundedRectangle (bounds, metrics::cornerRadius, 1.0f);
+}
+
+// Minimal padlock glyph inside rect r: a stroked shackle (inverted U) over a
+// filled rounded-rect body. Used to mark a locked section button.
+static void drawLockGlyph (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
+{
+    const float stroke = juce::jmax (1.0f, r.getHeight() * 0.13f);
+    const float bodyH  = r.getHeight() * 0.56f;
+    const auto  body   = juce::Rectangle<float> (r.getX(), r.getBottom() - bodyH,
+                                                 r.getWidth(), bodyH);
+    const float sr     = r.getWidth() * 0.30f;          // shackle radius
+    const float scy    = body.getY() - sr * 0.30f;      // shackle arc centre
+    const float legB   = body.getY() + stroke * 0.4f;   // legs sink into the body
+
+    juce::Path shackle;
+    shackle.startNewSubPath (r.getCentreX() - sr, legB);
+    shackle.lineTo          (r.getCentreX() - sr, scy);
+    shackle.addCentredArc    (r.getCentreX(), scy, sr, sr, 0.0f,
+                              -juce::MathConstants<float>::halfPi,
+                               juce::MathConstants<float>::halfPi, false);
+    shackle.lineTo          (r.getCentreX() + sr, legB);
+
+    g.setColour (c);
+    g.strokePath (shackle, juce::PathStrokeType (stroke, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+    g.fillRoundedRectangle (body, r.getWidth() * 0.16f);
+}
+
+void SPASynthLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                                          bool highlighted, bool down)
+{
+    // Locked section buttons show a small padlock beside the label so the
+    // locked state reads as "locked", not just a colour change. Everything
+    // else uses the default text rendering.
+    if (button.getComponentID() != "lock" || ! button.getToggleState())
+    {
+        LookAndFeel_V4::drawButtonText (g, button, highlighted, down);
+        return;
+    }
+
+    const auto font = getTextButtonFont (button, button.getHeight());
+    const auto text = button.getButtonText();
+
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (font, text, 0.0f, 0.0f);
+    const auto textW = ga.getBoundingBox (0, -1, true).getWidth();
+
+    const auto h      = (float) button.getHeight();
+    const auto iconH  = juce::jmin (h * 0.5f, font.getHeight() * 0.95f);
+    const auto iconW  = iconH * 0.74f;
+    const auto gap    = 4.0f;
+    const auto groupW = iconW + gap + textW;
+    const auto startX = juce::jmax (2.0f, ((float) button.getWidth() - groupW) * 0.5f);
+
+    const auto colour = button.findColour (juce::TextButton::textColourOnId);
+    drawLockGlyph (g, { startX, (h - iconH) * 0.5f, iconW, iconH }, colour);
+
+    g.setColour (colour);
+    g.setFont (font);
+    g.drawText (text, juce::Rectangle<float> (startX + iconW + gap, 0.0f,
+                                              (float) button.getWidth() - (startX + iconW + gap),
+                                              h).toNearestInt(),
+                juce::Justification::centredLeft, true);
 }
 
 void SPASynthLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,

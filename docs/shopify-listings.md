@@ -30,6 +30,17 @@ the sale would have cost.
 macOS pkg is signed + notarized. Windows exe is unsigned by decision (SmartScreen
 "More info → Run anyway"). Every file is under Shopify's 5 GB per-file cap.
 
+## About block (append to each product description)
+
+Paste this near the bottom of all three product descriptions so the team is
+credited consistently:
+
+> **Who makes it**
+> SPASynth is built by Paul, Phil, and Mike at Silverplatter Audio. We are a
+> small team making instruments we want to play, and we sell them without copy
+> protection because we would rather build for people who pay for the tools
+> they love.
+
 ---
 
 # 1 · SPASynth Standard

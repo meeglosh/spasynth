@@ -36,6 +36,10 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   is mid-century-modern minimalism; the plugin UI is a deep blue-teal dark
   theme accented in Silverplatter teal (`#51D0BF`) — which the user can
   re-tint to any colors they like (audio and modulation accents can differ).
+- **Who makes it:** SPASynth is the work of a three-person team, Paul, Phil,
+  and Mike at Silverplatter Audio. Attribute the product to the team ("we",
+  or "Paul, Phil, and Mike"), never to one person. Use this in about copy,
+  email sign-offs, and social bios.
 
 ## Complete feature set (v1.0.0)
 
@@ -206,5 +210,5 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   on my system drive? (no — point SPASynth anywhere) · What happens when I
   upgrade to Pro? (download, extract, done) · Is there copy protection? (no,
   and here's why) · AAX/Pro Tools? (not in v1).
-- Do not fabricate: user counts, awards, testimonials, demo videos, or prices
-  (pricing TBD by Mike).
+- Do not fabricate: user counts, awards, testimonials, or demo videos. Prices
+  are set (see `docs/shopify-listings.md`).

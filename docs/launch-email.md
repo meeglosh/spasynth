@@ -29,7 +29,8 @@ keyboard instrument, granulate it into an evolving texture, or let its own
 loudness and pitch drive the filter. The sound is not a sample sitting in a
 slot. It is the synthesis engine.
 
-We have been building this for a long time, and today you can play it.
+The three of us, Paul, Phil, and Mike, have been building this at
+Silverplatter Audio for a long time, and today you can play it.
 
 **What is inside**
 
@@ -75,6 +76,7 @@ before.
 
 [ GET SPASYNTH ]  ->  [STORE LINK]
 
+Paul, Phil, and Mike
 Silverplatter Audio
 [unsubscribe] . [spasynth.com]
 
@@ -87,3 +89,63 @@ Silverplatter Audio
 | Standard | $99 | $149 |
 | Pro | $702 | $1,264 |
 | Upgrade (difference) | $603 | $1,115 |
+
+---
+
+## Plain-text variant (deliverability)
+
+Send as the plain-text half of a multipart email, or on its own for a
+founder-style send. One primary link plus the unsubscribe, no HTML, no
+images, lines wrapped near 68 characters. Team voice; signed by all three.
+
+**Subject:** SPASynth is out
+
+```
+Hi there,
+
+Quick note, because the three of us have been working toward this for
+a long time: SPASynth is out today.
+
+It is a synth built on a simple idea. Your sound library is the
+instrument. Load a typewriter, a rainstorm, or a slammed door, and
+play it on the keyboard, granulate it into a texture, or let its own
+loudness and pitch drive the filter. The sound is not a sample in a
+slot. It is the engine.
+
+A few things it does:
+
+- Seven synthesis engines across three oscillator slots
+- Every loaded sound becomes a live modulation source
+- Dual filters, three LFOs, three envelopes, a sixteen-slot matrix
+- A twelve-mode arpeggiator with real probability controls
+- One button that generates a whole new patch, and actually works
+- 264 factory presets to start from
+
+Two editions. Standard is the full synth with a 440-sound starter
+library. Pro is the same synth with the complete collection: 88 packs,
+11,474 sounds, cleared for film and television. If you start with
+Standard, you can upgrade to Pro later for the difference.
+
+You can see both here:
+[STORE LINK]
+
+One more thing that matters to us. There is no copy protection. No
+serial numbers, no activation, nothing phoning home. You buy it, you
+own it, and you can use the sounds in anything you make, forever. We
+would rather build for people who pay for the tools they love.
+
+It runs on macOS and Windows, and the Mac installer is signed and
+notarized by Apple so it installs cleanly.
+
+Introductory pricing is live now.
+
+Thank you for being here at the start.
+
+Paul, Phil, and Mike
+Silverplatter Audio
+spasynth.com
+
+--
+You are receiving this because you signed up at spasynth.com.
+Unsubscribe: [UNSUBSCRIBE LINK]
+```

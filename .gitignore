@@ -21,3 +21,8 @@ cmake-build-*/
 *.xcworkspace/xcuserdata/
 compile_commands.json
 .cache/
+
+# Code-signing artifacts (kept locally; private keys live in the keychain)
+*.cer
+*.certSigningRequest
+*.p12

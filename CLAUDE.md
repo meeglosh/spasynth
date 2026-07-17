@@ -109,9 +109,18 @@ decision) is now in `dist/installers/` and both `dist/shopify/` folders.
 Both SKU folders are complete: signed pkg + exe + library zips + 3 docs
 (Standard 3.0 GB, Pro 32 GB; every Pro part < 5 GB Shopify cap).
 
-**Product descriptions written** (drafted in-session from
-`docs/marketing-brief.md`, no em dashes per Mike's preference) for
-Standard/Pro/Upgrade — not yet committed to a file; live in chat.
+**Post-prep UI polish (all committed, verified in Logic, in the shipping
+build 7524a4c):** flat modern knobs (thin ring + accent arc + position dot,
+replacing the skeuomorphic disc; `664e2be`), a padlock glyph on locked
+section buttons, and animated granular playback — the waveform display now
+shows the live grain cloud (per-slot `Telemetry::GrainViz`, published each
+mod chunk; `7524a4c`). The signed/notarized pkg and the fresh Windows exe
+in both `dist/shopify/` folders include all three.
+
+**Product listings written** to `docs/shopify-listings.md` (descriptions,
+SEO fields, card blurbs, FAQ, pricing, per-SKU attachment lists; no em
+dashes). Sound count corrected to 11,474 everywhere (verified WAV count;
+spasynth.com still says 11,401 and needs updating outside the repo).
 
 **Official pricing (from spasynth.com):** Standard $99 intro / $149 reg;
 Pro $702 sale / $1264 reg; Upgrade = the difference, $603 intro / $1115

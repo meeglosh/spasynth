@@ -222,7 +222,25 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     const auto lineW = juce::jlimit (1.6f, 2.6f, radius * 0.12f);
     const auto arcRadius = radius - lineW * 1.2f;   // inset so the dot stays in bounds
 
-    const auto accent  = slider.getComponentID() == "mod" ? t.accentMod : t.accent;
+    // The WILD knob's ring heats from the accent (0%) up to bright red (100%)
+    // so the chaos amount reads at a glance. Interpolate in HSV so the sweep
+    // stays vivid (teal -> green -> amber -> red) rather than passing through
+    // muddy greys, and land exactly on the accent at 0 and red at 1.
+    const auto wildHeat = [&t] (float pos)
+    {
+        const juce::Colour red (0xffff2a24);
+        const auto a = t.accent;
+        pos = juce::jlimit (0.0f, 1.0f, pos);
+        return juce::Colour::fromHSV (
+            a.getHue()        + (red.getHue()        - a.getHue())        * pos,
+            a.getSaturation() + (red.getSaturation() - a.getSaturation()) * pos,
+            a.getBrightness() + (red.getBrightness() - a.getBrightness()) * pos,
+            1.0f);
+    };
+
+    const auto accent  = slider.getComponentID() == "wild" ? wildHeat (sliderPos)
+                       : slider.getComponentID() == "mod"  ? t.accentMod
+                                                           : t.accent;
     const auto enabled = slider.isEnabled();
     const auto hot     = slider.isMouseOverOrDragging() && enabled;
 

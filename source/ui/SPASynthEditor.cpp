@@ -202,6 +202,7 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     randomizeButton.onClick = [this] { processor.randomizeAll(); };
     addAndMakeVisible (randomizeButton);
 
+    wildnessSlider.setComponentID ("wild");   // value ring heats teal -> red with amount
     wildnessSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     wildnessSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     wildnessSlider.setRange (0.0, 1.0, 0.0);

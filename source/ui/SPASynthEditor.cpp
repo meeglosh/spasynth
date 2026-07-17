@@ -184,8 +184,12 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     logoLight = juce::Drawable::createFromImageData (SPAAssets::SPAudio_logo_white_svg,
                                                      SPAAssets::SPAudio_logo_white_svgSize);
 
+    prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
+    prevPresetButton.setTooltip ("Previous preset");
     prevPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); };
     addAndMakeVisible (prevPresetButton);
+    nextPresetButton.setComponentID ("navNext");   // drawn as a right chevron
+    nextPresetButton.setTooltip ("Next preset");
     nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); };
     addAndMakeVisible (nextPresetButton);
     presetNameButton.onClick = [this] { togglePresetBrowser(); };

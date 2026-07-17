@@ -403,6 +403,34 @@ static void drawLockGlyph (juce::Graphics& g, juce::Rectangle<float> r, juce::Co
 void SPASynthLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
                                           bool highlighted, bool down)
 {
+    // Preset prev/next: draw a clean left/right chevron instead of a "<"/">"
+    // glyph.
+    const auto navId = button.getComponentID();
+    if (navId == "navPrev" || navId == "navNext")
+    {
+        const auto b = button.getLocalBounds().toFloat();
+        const auto c = b.getCentre();
+        constexpr float w = 3.2f, h = 8.0f;   // chevron half-width / height
+        juce::Path chevron;
+        if (navId == "navPrev")
+        {
+            chevron.startNewSubPath (c.x + w, c.y - h * 0.5f);
+            chevron.lineTo           (c.x - w, c.y);
+            chevron.lineTo           (c.x + w, c.y + h * 0.5f);
+        }
+        else
+        {
+            chevron.startNewSubPath (c.x - w, c.y - h * 0.5f);
+            chevron.lineTo           (c.x + w, c.y);
+            chevron.lineTo           (c.x - w, c.y + h * 0.5f);
+        }
+        g.setColour (button.findColour (juce::TextButton::textColourOffId)
+                         .withAlpha (down ? 0.55f : (highlighted ? 1.0f : 0.85f)));
+        g.strokePath (chevron, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+        return;
+    }
+
     // Locked section buttons show a small padlock beside the label so the
     // locked state reads as "locked", not just a colour change. Everything
     // else uses the default text rendering.

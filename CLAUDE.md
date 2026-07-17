@@ -113,12 +113,16 @@ Both SKU folders are complete: signed pkg + exe + library zips + 3 docs
 (Standard 3.0 GB, Pro 32 GB; every Pro part < 5 GB Shopify cap).
 
 **Post-prep UI polish (all committed, verified in Logic, in the shipping
-build 7524a4c):** flat modern knobs (thin ring + accent arc + position dot,
-replacing the skeuomorphic disc; `664e2be`), a padlock glyph on locked
-section buttons, and animated granular playback — the waveform display now
-shows the live grain cloud (per-slot `Telemetry::GrainViz`, published each
-mod chunk; `7524a4c`). The signed/notarized pkg and the fresh Windows exe
-in both `dist/shopify/` folders include all three.
+build `9dcae8e`):** flat modern knobs (thin ring + accent arc + position
+dot, replacing the skeuomorphic disc; `664e2be`); padlock glyph on locked
+section buttons; animated granular playback — the waveform shows the live
+grain cloud (per-slot `Telemetry::GrainViz`, published each mod chunk;
+`7524a4c`); in-pack sample quick-swap — click the osc sample name for a
+dropdown of the whole pack (`getPackSiblings` + latest-wins load serial;
+`bd149b0`); solid triangle preset-nav carets (`5b7f223`); and the WILD knob
+ring heats accent → red with amount (HSV lerp; `9dcae8e`). The signed +
+notarized macOS pkg and the fresh Windows exe in both `dist/shopify/`
+folders include all of it (rebuilt 2026-07-17).
 
 **Product listings written** to `docs/shopify-listings.md` (descriptions,
 SEO fields, card blurbs, FAQ, pricing, per-SKU attachment lists; no em

@@ -1,9 +1,10 @@
 # SPASynth — project state & working guide
 
-Commercial hybrid soft synth by **Silverplatter Audio**, primarily a
-boutique sound-effects library company (SPASynth is their synth product).
-Customer-facing materials use "we"/"Silverplatter Audio" and never name
-individuals. Sold via Shopify. JUCE 8.0.14 (submodule `libs/JUCE`), C++20, CMake + Ninja.
+Commercial hybrid soft synth from **Silverplatter Audio**, primarily a
+boutique sound-effects library company (SPASynth is our synth product).
+Customer-facing materials speak in the company's own first-person voice
+("we"/"our"/"Silverplatter Audio") and never name individuals. Sold via
+Shopify. JUCE 8.0.14 (submodule `libs/JUCE`), C++20, CMake + Ninja.
 Formats: AU/VST3/Standalone (macOS universal), VST3/Standalone (Windows x64).
 AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still

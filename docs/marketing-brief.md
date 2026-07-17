@@ -36,10 +36,11 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   is mid-century-modern minimalism; the plugin UI is a deep blue-teal dark
   theme accented in Silverplatter teal (`#51D0BF`) — which the user can
   re-tint to any colors they like (audio and modulation accents can differ).
-- **Who makes it:** SPASynth is made by Silverplatter Audio. Always attribute
-  the product to the company as "we" or "Silverplatter Audio"; never name
-  individuals. Silverplatter is primarily a boutique sound-effects library
-  company, and SPASynth is the instrument built to play those libraries.
+- **Who makes it:** SPASynth is made by Silverplatter Audio. Always speak in
+  the company's own first-person voice ("we"/"our"/"Silverplatter Audio"),
+  never in the third person ("they"/"their") and never naming individuals.
+  We are primarily a boutique sound-effects library company, and SPASynth is
+  the instrument we built to play our libraries.
 - **About Silverplatter Audio (reusable copy):** Silverplatter Audio is a
   boutique sound-effects library company. Drawing on years of recording and
   mastering game audio, sound design for film, and sound effects for video

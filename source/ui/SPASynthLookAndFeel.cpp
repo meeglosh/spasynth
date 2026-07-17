@@ -403,31 +403,22 @@ static void drawLockGlyph (juce::Graphics& g, juce::Rectangle<float> r, juce::Co
 void SPASynthLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
                                           bool highlighted, bool down)
 {
-    // Preset prev/next: draw a clean left/right chevron instead of a "<"/">"
-    // glyph.
+    // Preset prev/next: draw a solid left/right triangle caret instead of a
+    // "<"/">" glyph.
     const auto navId = button.getComponentID();
     if (navId == "navPrev" || navId == "navNext")
     {
-        const auto b = button.getLocalBounds().toFloat();
-        const auto c = b.getCentre();
-        constexpr float w = 3.2f, h = 8.0f;   // chevron half-width / height
-        juce::Path chevron;
-        if (navId == "navPrev")
-        {
-            chevron.startNewSubPath (c.x + w, c.y - h * 0.5f);
-            chevron.lineTo           (c.x - w, c.y);
-            chevron.lineTo           (c.x + w, c.y + h * 0.5f);
-        }
-        else
-        {
-            chevron.startNewSubPath (c.x - w, c.y - h * 0.5f);
-            chevron.lineTo           (c.x + w, c.y);
-            chevron.lineTo           (c.x - w, c.y + h * 0.5f);
-        }
+        const auto c = button.getLocalBounds().toFloat().getCentre();
+        constexpr float w = 3.6f, h = 9.0f;   // triangle half-width / height
+        juce::Path tri;
+        if (navId == "navPrev")   // points left
+            tri.addTriangle (c.x - w, c.y, c.x + w, c.y - h * 0.5f, c.x + w, c.y + h * 0.5f);
+        else                      // points right
+            tri.addTriangle (c.x + w, c.y, c.x - w, c.y - h * 0.5f, c.x - w, c.y + h * 0.5f);
+
         g.setColour (button.findColour (juce::TextButton::textColourOffId)
                          .withAlpha (down ? 0.55f : (highlighted ? 1.0f : 0.85f)));
-        g.strokePath (chevron, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved,
-                                                     juce::PathStrokeType::rounded));
+        g.fillPath (tri);
         return;
     }
 

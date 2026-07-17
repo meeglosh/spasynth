@@ -86,18 +86,26 @@ Dev-machine notes from the bug-4 session:
   Mike is smoke-testing the installed release.
 - GitHub repo renamed to `meeglosh/spasynth` (remote updated).
 
+**macOS signing/notarization: DONE (2026-07-17).** Kenzora Games Developer
+ID (team `7K9WY5T49S`); certs imported to login keychain (had to use
+`security import` via CLI — double-click threw -25294 on this macOS), keys
+authorized for the signing tools with `security set-key-partition-list`
+(else codesign stalls on a GUI prompt), notary creds stored as keychain
+profile `SPASYNTH_NOTARY` (app-specific password). The shipping pkg
+`dist/installers/SPASynth-1.0.0-macOS.pkg` is signed + notarized + stapled
+(spctl: "Notarized Developer ID / accepted") and copied into both
+`dist/shopify/` folders. To re-sign a future build:
+`export SPASYNTH_CODESIGN_IDENTITY="Developer ID Application: Kenzora Games (7K9WY5T49S)"`,
+`SPASYNTH_INSTALLER_IDENTITY="Developer ID Installer: Kenzora Games (7K9WY5T49S)"`,
+`SPASYNTH_NOTARIZE_PROFILE="SPASYNTH_NOTARY"`, then `./scripts/build_release.sh`.
+
 **Remaining for launch (Mike's manual steps, nothing to code):**
-1. Set signing env vars (`SPASYNTH_CODESIGN_IDENTITY`,
-   `SPASYNTH_INSTALLER_IDENTITY`, optional `SPASYNTH_NOTARIZE_PROFILE`) and
-   re-run `./scripts/build_release.sh` for a signed/notarized pkg. (The
-   Bluetooth/mic usage strings are also a notarization requirement — now in
-   place.)
-2. Download the `spasynth-installer-Windows` CI artifact into both
-   `dist/shopify/` folders. (Windows standalone gets the icon automatically
-   from the same `ICON_BIG`.)
-3. Real-DAW smoke test on both platforms (ideally a clean user account).
-   macOS pass is DONE (the four fixes above came out of it); Windows not
-   yet exercised.
+1. Download the `spasynth-installer-Windows` CI artifact into both
+   `dist/shopify/` folders (unsigned by decision — customers click "More
+   info → Run anyway" past SmartScreen). Windows standalone gets the icon
+   from the same `ICON_BIG`.
+2. Real-DAW smoke test on both platforms (ideally a clean user account).
+   macOS pass is DONE; Windows not yet exercised.
 4. Upload per the attachment list `build_release.sh` prints: Standard (pkg,
    exe, `SPASynth Starter Library.zip`, 3 docs), Pro (pkg, exe, 11 × 
    `SPASynth Pro Library (Part N).zip`, docs), Upgrade (the 11 parts only).

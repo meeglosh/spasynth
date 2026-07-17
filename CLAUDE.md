@@ -99,13 +99,31 @@ profile `SPASYNTH_NOTARY` (app-specific password). The shipping pkg
 `SPASYNTH_INSTALLER_IDENTITY="Developer ID Installer: Kenzora Games (7K9WY5T49S)"`,
 `SPASYNTH_NOTARIZE_PROFILE="SPASYNTH_NOTARY"`, then `./scripts/build_release.sh`.
 
+**Windows installer: BUILT + STAGED (2026-07-17).** CI had a latent bug —
+the Inno `/O` output path used `..\..\dist\installers` (correct base for
+Source paths, which are .iss-relative, but `/O` is CWD-relative), so the
+`.exe` landed two levels above the workspace and the artifact upload found
+nothing on every prior run. Fixed in `e719088` (absolute
+`%GITHUB_WORKSPACE%` path). `SPASynth-1.0.0-Windows.exe` (unsigned by
+decision) is now in `dist/installers/` and both `dist/shopify/` folders.
+Both SKU folders are complete: signed pkg + exe + library zips + 3 docs
+(Standard 3.0 GB, Pro 32 GB; every Pro part < 5 GB Shopify cap).
+
+**Product descriptions written** (drafted in-session from
+`docs/marketing-brief.md`, no em dashes per Mike's preference) for
+Standard/Pro/Upgrade — not yet committed to a file; live in chat.
+
+**Official pricing (from spasynth.com):** Standard $99 intro / $149 reg;
+Pro $702 sale / $1264 reg; Upgrade = the difference, $603 intro / $1115
+reg (set Shopify Price = intro, Compare-at = reg). Intro-period length TBD.
+
 **Remaining for launch (Mike's manual steps, nothing to code):**
-1. Download the `spasynth-installer-Windows` CI artifact into both
-   `dist/shopify/` folders (unsigned by decision — customers click "More
-   info → Run anyway" past SmartScreen). Windows standalone gets the icon
-   from the same `ICON_BIG`.
-2. Real-DAW smoke test on both platforms (ideally a clean user account).
-   macOS pass is DONE; Windows not yet exercised.
+1. Real-DAW smoke test on Windows (macOS is DONE). Load the VST3 in
+   Reaper/Live/Cubase, confirm library auto-discovers. Windows unsigned →
+   "More info → Run anyway" past SmartScreen.
+2. Shopify: create the 3 products, paste descriptions, set prices +
+   compare-at, attach files per SKU (Upgrade = the 11 Pro parts only),
+   test-purchase, go live.
 4. Upload per the attachment list `build_release.sh` prints: Standard (pkg,
    exe, `SPASynth Starter Library.zip`, 3 docs), Pro (pkg, exe, 11 × 
    `SPASynth Pro Library (Part N).zip`, docs), Upgrade (the 11 parts only).

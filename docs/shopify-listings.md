@@ -32,13 +32,17 @@ macOS pkg is signed + notarized. Windows exe is unsigned by decision (SmartScree
 
 ## About block (append to each product description)
 
-Paste this near the bottom of all three product descriptions so the team is
-credited consistently:
+Paste this near the bottom of all three product descriptions:
 
-> **Who makes it**
-> SPASynth is built by Paul, Phil, and Mike at Silverplatter Audio. We are a
-> small team making instruments we want to play, and we sell them without copy
-> protection because we would rather build for people who pay for the tools
+> **About Silverplatter Audio**
+> Silverplatter Audio is a boutique sound-effects library company. Drawing on
+> years of recording and mastering game audio, sound design for film, and
+> sound effects for video and music production, we create professional,
+> high-quality sound-effects packs for sound designers around the world, with
+> a focus on usability, convenience, and affordability so audio drops cleanly
+> into games, film, TV, web, and more. SPASynth is the instrument we built to
+> play those libraries, and we sell it the same way we sell our packs: no copy
+> protection, because we would rather build for people who pay for the tools
 > they love.
 
 ---

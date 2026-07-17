@@ -26,7 +26,7 @@ Intro pricing live now.
 
 3/ 7 synthesis engines across 3 slots. Dual filters. Organic Chaos for analog drift. A 16-slot mod matrix. A 12-mode arp with real probability. And RANDOMIZE ALL, a genuine patch generator with locks.
 
-4/ No serials, no activation, no phone-home. Buy it, own it, use the sounds royalty-free forever. Mac (AU/VST3/Standalone, signed and notarized) and Windows. Intro pricing is live. Made by Paul, Phil, and Mike at Silverplatter Audio. [LINK]
+4/ No serials, no activation, no phone-home. Buy it, own it, use the sounds royalty-free forever. Mac (AU/VST3/Standalone, signed and notarized) and Windows. Intro pricing is live. From Silverplatter Audio, a boutique sound-effects library company. [LINK]
 
 ## Instagram
 
@@ -40,7 +40,7 @@ Most synths hand you a few waveforms. SPASynth hands you the whole Foley stage. 
 
 No copy protection, ever. Buy it, own it, use the sounds in anything you make.
 
-Made by Paul, Phil, and Mike at Silverplatter Audio.
+From Silverplatter Audio, a boutique sound-effects library company. SPASynth is the instrument we built to play our libraries.
 
 Mac and Windows. Introductory pricing is live now.
 Link in bio.

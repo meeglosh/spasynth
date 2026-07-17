@@ -29,8 +29,9 @@ keyboard instrument, granulate it into an evolving texture, or let its own
 loudness and pitch drive the filter. The sound is not a sample sitting in a
 slot. It is the synthesis engine.
 
-The three of us, Paul, Phil, and Mike, have been building this at
-Silverplatter Audio for a long time, and today you can play it.
+We are Silverplatter Audio, a boutique sound-effects library company, and
+SPASynth is the instrument we built to play our libraries. We have been at
+this one for a long time, and today you can play it too.
 
 **What is inside**
 
@@ -76,8 +77,7 @@ before.
 
 [ GET SPASYNTH ]  ->  [STORE LINK]
 
-Paul, Phil, and Mike
-Silverplatter Audio
+The Silverplatter Audio team
 [unsubscribe] . [spasynth.com]
 
 ---
@@ -94,17 +94,18 @@ Silverplatter Audio
 
 ## Plain-text variant (deliverability)
 
-Send as the plain-text half of a multipart email, or on its own for a
-founder-style send. One primary link plus the unsubscribe, no HTML, no
-images, lines wrapped near 68 characters. Team voice; signed by all three.
+Send as the plain-text half of a multipart email, or on its own. One
+primary link plus the unsubscribe, no HTML, no images, lines wrapped near
+68 characters. Company voice ("we"), signed by the Silverplatter Audio team.
 
 **Subject:** SPASynth is out
 
 ```
 Hi there,
 
-Quick note, because the three of us have been working toward this for
-a long time: SPASynth is out today.
+Quick note from Silverplatter Audio. We are a boutique sound-effects
+library company, and we have been working toward this for a long time:
+SPASynth is out today.
 
 It is a synth built on a simple idea. Your sound library is the
 instrument. Load a typewriter, a rainstorm, or a slammed door, and
@@ -141,8 +142,7 @@ Introductory pricing is live now.
 
 Thank you for being here at the start.
 
-Paul, Phil, and Mike
-Silverplatter Audio
+The Silverplatter Audio team
 spasynth.com
 
 --

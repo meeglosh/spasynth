@@ -55,6 +55,7 @@ SUPPORT
 -------
   https://www.silverplatteraudio.com
 
-Made with care by Paul, Phil, and Mike at Silverplatter Audio. No copy
-protection, no license servers, no phone-home. We trust you. Please don't
-share it around; that trust is what keeps products like this possible.
+Made with care by Silverplatter Audio, a boutique sound-effects library
+company. No copy protection, no license servers, no phone-home. We trust
+you. Please don't share it around; that trust is what keeps products like
+this possible.

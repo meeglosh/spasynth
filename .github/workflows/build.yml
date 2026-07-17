@@ -49,7 +49,11 @@ jobs:
       - name: Build installer (Windows)
         if: runner.os == 'Windows'
         shell: cmd
-        run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.version.outputs.version }} /DArtefacts=..\..\build\SPASynth_artefacts\Release /O..\..\dist\installers installers\windows\SPASynth.iss'
+        # /O (output dir) is resolved relative to the working directory (repo
+        # root), NOT the .iss location like the Source paths — so the old
+        # ..\..\dist\installers wrote the .exe two levels ABOVE the workspace
+        # and the upload found nothing. Use an absolute workspace path.
+        run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.version.outputs.version }} /DArtefacts=..\..\build\SPASynth_artefacts\Release /O"%GITHUB_WORKSPACE%\dist\installers" installers\windows\SPASynth.iss'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

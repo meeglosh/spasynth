@@ -234,6 +234,28 @@ SPASynth at that folder once. SPASynth auto-discovers the library on the next
 launch, with no scanning dialogs. Presets and sessions use portable paths, so they
 keep working no matter where the library lives.
 
+**I already own Silverplatter sound-effects libraries. Can SPASynth use them?**
+Yes, and you do not need to copy anything into a separate SPASynth folder.
+Point SPASynth at the folder that holds your packs using "SET LIBRARY" in the
+preset browser, and it treats each pack subfolder as a category and builds
+factory presets from the sounds it finds. Sample rate does not matter, so your
+24-bit / 96 kHz originals play as-is with no conversion. If you own some of the
+packs, you see exactly those; add more packs or Pro to fill in the rest.
+
+**Do I need to re-download or reorganize my libraries?**
+No re-download and no conversion. Keep your libraries where they are and point
+SPASynth at them. The only thing to know is that SPASynth reads one library
+folder at a time and treats its subfolders as packs, so if your packs are spread
+across different drives or locations, put them under a single parent folder (or
+point SPASynth at whichever one you want) so it can see them together.
+
+**I own the Everything Bundle. Do I get SPASynth?**
+Yes. If you own the Everything Bundle you already own every sound SPASynth plays,
+so SPASynth is yours as part of your lifetime updates. You get the synth itself,
+and you point it at your existing Everything Bundle folder with "SET LIBRARY".
+There is nothing to re-download and nothing to reorganize, and because there is
+no copy protection, installing it is all it takes.
+
 **What is the difference between Standard and Pro?**
 The synth is identical. Standard includes a 440-sound starter library, five
 representative sounds from each of the 88 packs, so every factory preset plays. Pro

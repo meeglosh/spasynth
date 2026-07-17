@@ -133,20 +133,35 @@ spasynth.com still says 11,401 and needs updating outside the repo).
 Pro $702 sale / $1264 reg; Upgrade = the difference, $603 intro / $1115
 reg (set Shopify Price = intro, Compare-at = reg). Intro-period length TBD.
 
+**Everything that can be built/staged is DONE.** Signed+notarized macOS pkg
+and fresh Windows exe (both from `9dcae8e`) are in `dist/installers/` and,
+with the library zips + docs, in both `dist/shopify/SPASynth-{Standard,Pro}
+-1.0.0/` folders — verified byte-identical across locations. The full launch
+copy kit is written and committed: `docs/shopify-listings.md` (descriptions,
+SEO, blurbs, FAQ, pricing, per-SKU attachment lists), `docs/launch-email.md`
+(HTML + plain-text), `docs/social-posts.md` (X + Instagram),
+`docs/marketing-brief.md` (landing-page source), `docs/spasynth-marketing.png`
+(retina hero). All customer copy: "we"/Silverplatter Audio voice, no
+individual names, no em dashes, 11,474 sound count.
+
 **Remaining for launch (Mike's manual steps, nothing to code):**
-1. Real-DAW smoke test on Windows (macOS is DONE). Load the VST3 in
-   Reaper/Live/Cubase, confirm library auto-discovers. Windows unsigned →
-   "More info → Run anyway" past SmartScreen.
-2. Shopify: create the 3 products, paste descriptions, set prices +
-   compare-at, attach files per SKU (Upgrade = the 11 Pro parts only),
-   test-purchase, go live.
-4. Upload per the attachment list `build_release.sh` prints: Standard (pkg,
-   exe, `SPASynth Starter Library.zip`, 3 docs), Pro (pkg, exe, 11 × 
-   `SPASynth Pro Library (Part N).zip`, docs), Upgrade (the 11 parts only).
-   Add-on pack products later from `dist/library/packs/`. Files stay under
-   Shopify's 5 GB cap; upload as individual attachments, not one giant zip.
-5. Pricing, product copy (see `docs/marketing-brief.md` — self-contained
-   source for the landing page).
+1. **Windows real-DAW smoke test** — the one untested surface. Load the VST3
+   in Reaper/Live/Cubase, confirm the library auto-discovers and a preset
+   plays. Windows unsigned → "More info → Run anyway" past SmartScreen.
+2. **Shopify build-out** — install the free Digital Downloads app; create 3
+   products (Standard, Pro, Standard→Pro Upgrade); paste copy from
+   `docs/shopify-listings.md`; uncheck "physical product"; set Price=intro,
+   Compare-at=regular (table above); attach files per SKU from the
+   `dist/shopify/` folders (**Upgrade = the 11 Pro library parts only**, no
+   pkg/exe); test-purchase; activate. Every file is under Shopify's 5 GB
+   cap — attach individually, not one giant zip.
+3. **Marketing site update** — spasynth.com still says 11,401 and predates
+   the "we"/company voice + the quick-swap feature. Use the prompt drafted
+   in-session (Claude Code in the site repo): fix count to 11,474, first-
+   person company voice (no names), boutique-SFX-company positioning + the
+   mission statement, add in-pack quick-swap to feature lists, verify pricing.
+4. **Announce** — send `docs/launch-email.md`, post `docs/social-posts.md`.
+5. **Add-on pack products (later)** — one per pack from `dist/library/packs/`.
 
 Business decisions of record: two SKUs differentiated by **content only**
 (one binary, no gating). Standard = full synth + 440-sound starter library;

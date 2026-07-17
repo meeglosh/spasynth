@@ -9,7 +9,7 @@ numbers beyond what is listed here.
 ## Product in one sentence
 
 SPASynth is a hybrid synthesizer built around the entire Silverplatter Audio
-sound-effects library — 88 packs and 11,401 production-ready sounds that act
+sound-effects library — 88 packs and 11,474 production-ready sounds that act
 as oscillators, granular fuel, and modulation sources inside a full wavetable
 synth with an organic-chaos engine and a one-button patch randomizer.
 
@@ -106,7 +106,7 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   with ping-pong, reverb, 3-band EQ — each with a live signal-fed scope.
 
 ### The library & presets
-- **88 Silverplatter Audio packs, 11,401 sounds, 24-bit/48 kHz** —
+- **88 Silverplatter Audio packs, 11,474 sounds, 24-bit/48 kHz** —
   production-ready for film and TV work (Pro edition; Standard ships a
   440-sound starter selection spanning every pack).
 - Library auto-discovery: extract to one folder and SPASynth finds it. No
@@ -133,7 +133,7 @@ synth with an organic-chaos engine and a one-button patch randomizer.
 ### Editions & upgrade path
 - **SPASynth Standard** — the full synth, all features, all 264 presets, with
   a 440-sound starter library (5 representative sounds from all 88 packs).
-- **SPASynth Pro** — the same synth with the complete 11,401-sound,
+- **SPASynth Pro** — the same synth with the complete 11,474-sound,
   37 GB library.
 - **Standard → Pro upgrade** — pay the difference, download the full library,
   drop it in the same folder. No reinstall, nothing to activate.

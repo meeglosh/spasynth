@@ -95,22 +95,22 @@ reinstall.
 
 **Title:** SPASynth Pro
 
-**Subtitle:** The complete synth and the entire 11,401-sound Silverplatter library.
+**Subtitle:** The complete synth and the entire 11,474-sound Silverplatter library.
 
 SPASynth Pro is the full instrument with nothing held back. You get the same
 synthesizer as Standard plus the complete Silverplatter Audio library: 88 packs,
-11,401 production-ready sounds, 37 GB at 24-bit / 48 kHz, cleared for film and TV
+11,474 production-ready sounds, 37 GB at 24-bit / 48 kHz, cleared for film and TV
 work.
 
 This is the edition SPASynth was built for. The library is not a bonus pack, it is
-the synthesis engine. Load any of the 11,401 sounds as an oscillator, granulate it
+the synthesis engine. Load any of the 11,474 sounds as an oscillator, granulate it
 into an evolving texture, or let its own amplitude and pitch contours modulate the
 patch. Then reach for RANDOMIZE ALL and let the whole library become a patch
 generator.
 
 **What you get**
 - The full SPASynth synthesizer (AU, VST3, and Standalone)
-- The complete 88-pack, 11,401-sound library, 37 GB at 24-bit / 48 kHz
+- The complete 88-pack, 11,474-sound library, 37 GB at 24-bit / 48 kHz
 - 264 factory presets, auto-generated from the library
 - Free updates across the v1 line
 
@@ -129,7 +129,7 @@ generator.
 - Resizable, telemetry-animated interface with user-tintable accent colors
 
 **The library**
-- 88 Silverplatter Audio packs, 11,401 sounds, 24-bit / 48 kHz, production-ready for film and television
+- 88 Silverplatter Audio packs, 11,474 sounds, 24-bit / 48 kHz, production-ready for film and television
 - Auto-discovery loading: extract to one folder and SPASynth finds it. No scanning dialogs, no locate-your-content prompts.
 - Portable paths, so your presets and sessions survive the library living on any drive
 
@@ -143,13 +143,13 @@ it, download it, own it. Use the sounds in anything you make, royalty-free,
 forever. Just do not redistribute the raw files.
 
 ### SEO
-- **Page title:** SPASynth Pro | Synth + 11,401-Sound Library
+- **Page title:** SPASynth Pro | Synth + 11,474-Sound Library
 - **URL handle:** `spasynth-pro`
-- **Meta description:** The complete SPASynth synth plus the full 11,401-sound, 37 GB Silverplatter library that becomes your oscillator, granular fuel, and modulator. No DRM.
+- **Meta description:** The complete SPASynth synth plus the full 11,474-sound, 37 GB Silverplatter library that becomes your oscillator, granular fuel, and modulator. No DRM.
 
 ### Card blurbs
-- **Primary:** The complete synth and the entire 11,401-sound Silverplatter library. Every sound becomes an oscillator, a granular texture, or a modulator.
-- **Short:** The full synth plus all 11,401 sounds, 37 GB of library.
+- **Primary:** The complete synth and the entire 11,474-sound Silverplatter library. Every sound becomes an oscillator, a granular texture, or a modulator.
+- **Short:** The full synth plus all 11,474 sounds, 37 GB of library.
 
 ---
 
@@ -160,7 +160,7 @@ forever. Just do not redistribute the raw files.
 **Subtitle:** Already own Standard? Add the complete library for the difference.
 
 This upgrade takes you from the 440-sound starter library to the full Silverplatter
-Audio collection: 88 packs, 11,401 sounds, 37 GB at 24-bit / 48 kHz. You keep the
+Audio collection: 88 packs, 11,474 sounds, 37 GB at 24-bit / 48 kHz. You keep the
 synth you already have and simply add the content it was built for.
 
 You pay only the difference between Standard and Pro. There is nothing to reinstall
@@ -168,7 +168,7 @@ and nothing to activate. Download the library, extract it to the same Silverplat
 Audio folder, and SPASynth picks it up automatically the next time it opens.
 
 **What you get**
-- The complete 88-pack, 11,401-sound library, 37 GB at 24-bit / 48 kHz
+- The complete 88-pack, 11,474-sound library, 37 GB at 24-bit / 48 kHz
 - The same production-ready, film-and-television-cleared sounds included in Pro
 
 **How it works**
@@ -187,11 +187,11 @@ redistribute the raw files.
 ### SEO
 - **Page title:** SPASynth Standard to Pro Upgrade
 - **URL handle:** `spasynth-standard-to-pro-upgrade`
-- **Meta description:** Own SPASynth Standard? Add the full 11,401-sound, 37 GB library for the difference. Download, extract, done. Nothing to reinstall and nothing to activate.
+- **Meta description:** Own SPASynth Standard? Add the full 11,474-sound, 37 GB library for the difference. Download, extract, done. Nothing to reinstall and nothing to activate.
 
 ### Card blurbs
-- **Primary:** Already own Standard? Add the complete 11,401-sound library for the difference. Download, extract, done.
-- **Short:** Add the full 11,401-sound library for the difference.
+- **Primary:** Already own Standard? Add the complete 11,474-sound library for the difference. Download, extract, done.
+- **Short:** Add the full 11,474-sound library for the difference.
 
 ---
 
@@ -220,7 +220,7 @@ keep working no matter where the library lives.
 **What is the difference between Standard and Pro?**
 The synth is identical. Standard includes a 440-sound starter library, five
 representative sounds from each of the 88 packs, so every factory preset plays. Pro
-includes the complete library: 88 packs, 11,401 sounds, 37 GB at 24-bit / 48 kHz,
+includes the complete library: 88 packs, 11,474 sounds, 37 GB at 24-bit / 48 kHz,
 cleared for film and television work.
 
 **How does the upgrade to Pro work?**
@@ -244,7 +244,7 @@ Yes. Updates across the version 1 line are free. Because there is no activation,
 updating is just downloading the latest installer and running it.
 
 **How many sounds and presets are included?**
-Pro includes 11,401 sounds across 88 packs. Both editions include 264 factory
+Pro includes 11,474 sounds across 88 packs. Both editions include 264 factory
 presets, automatically generated from the library, with a playable Keys patch, a
 granular Texture, and an SFX-driven Pulse for every pack.
 

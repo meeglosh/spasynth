@@ -134,7 +134,7 @@ reg (set Shopify Price = intro, Compare-at = reg). Intro-period length TBD.
 
 Business decisions of record: two SKUs differentiated by **content only**
 (one binary, no gating). Standard = full synth + 440-sound starter library;
-Pro = all 88 packs / 11,401 WAVs / 37 GB at 24/48 (24/96 originals archived
+Pro = all 88 packs / 11,474 WAVs / 37 GB at 24/48 (24/96 originals archived
 by Mike). **No DRM ever** — no serials, no activation (Mike re-confirmed
 after considering a serial system; the license.txt footer stamp is the
 agreed alternative). Upgrade path is handled entirely in Shopify.

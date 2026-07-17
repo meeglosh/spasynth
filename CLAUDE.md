@@ -148,20 +148,33 @@ individual names, no em dashes, 11,474 sound count.
 1. **Windows real-DAW smoke test** — the one untested surface. Load the VST3
    in Reaper/Live/Cubase, confirm the library auto-discovers and a preset
    plays. Windows unsigned → "More info → Run anyway" past SmartScreen.
-2. **Shopify build-out** — install the free Digital Downloads app; create 3
-   products (Standard, Pro, Standard→Pro Upgrade); paste copy from
-   `docs/shopify-listings.md`; uncheck "physical product"; set Price=intro,
-   Compare-at=regular (table above); attach files per SKU from the
+2. **Shopify build-out** — full plain-English click-by-click walkthrough is
+   saved to `docs/shopify-setup-guide.md` (Mike is non-technical on the ops
+   side; hand-hold). In short: install the free Digital Downloads app; create
+   the products; paste copy from `docs/shopify-listings.md`; uncheck "physical
+   product"; set Price=intro, Compare-at=regular; attach files per SKU from the
    `dist/shopify/` folders (**Upgrade = the 11 Pro library parts only**, no
-   pkg/exe); test-purchase; activate. Every file is under Shopify's 5 GB
-   cap — attach individually, not one giant zip.
-3. **Marketing site update** — spasynth.com still says 11,401 and predates
+   pkg/exe); test-purchase; activate. Files individually, under the 5 GB cap.
+3. **Free "Everything Bundle" product (Part 6 of the guide)** — decision of
+   record: bundle owners get SPASynth free. Make an installer-only product
+   (pkg+exe+docs, no library), price 0, kept off the public storefront, shared
+   via direct link or a 100%-off code. TODO: pick the mechanism + notify list.
+4. **Marketing site update** — spasynth.com still says 11,401 and predates
    the "we"/company voice + the quick-swap feature. Use the prompt drafted
    in-session (Claude Code in the site repo): fix count to 11,474, first-
    person company voice (no names), boutique-SFX-company positioning + the
    mission statement, add in-pack quick-swap to feature lists, verify pricing.
-4. **Announce** — send `docs/launch-email.md`, post `docs/social-posts.md`.
-5. **Add-on pack products (later)** — one per pack from `dist/library/packs/`.
+5. **Announce** — send `docs/launch-email.md`, post `docs/social-posts.md`.
+6. **Add-on pack products (later)** — one per pack from `dist/library/packs/`.
+
+**Open verification (before publishing the existing-library FAQ):** confirm
+the shipping SFX-library downloads are laid out as pack-folder-per-library
+containing WAVs (so "just point SPASynth at your existing folders via SET
+LIBRARY" holds). SPASynth reads ONE library root and treats its immediate
+subfolders as packs; factory presets regenerate from whatever files are found
+(portable `$LIB$/pack/file`), and the loader resamples, so customers' 24/96
+originals work as-is with no re-download or conversion. Covered by the three
+new FAQ entries in `docs/shopify-listings.md`.
 
 Business decisions of record: two SKUs differentiated by **content only**
 (one binary, no gating). Standard = full synth + 440-sound starter library;
@@ -169,6 +182,14 @@ Pro = all 88 packs / 11,474 WAVs / 37 GB at 24/48 (24/96 originals archived
 by Mike). **No DRM ever** — no serials, no activation (Mike re-confirmed
 after considering a serial system; the license.txt footer stamp is the
 agreed alternative). Upgrade path is handled entirely in Shopify.
+**Everything Bundle owners get SPASynth free** (part of their lifetime
+updates; Mike's call) — deliver the installer only, they point at their
+existing bundle via SET LIBRARY. **Existing SFX-library customers reuse
+their own folders** (no separate SPASynth folder, no re-download). Company
+identity: **Silverplatter Audio is primarily a boutique sound-effects
+library company**; SPASynth is our synth product. All customer-facing copy
+is first-person company voice ("we"/"our"), never names individuals, and
+uses no em dashes; sound count is 11,474.
 
 ## The verification ritual (do this for every change)
 

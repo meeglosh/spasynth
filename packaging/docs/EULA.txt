@@ -35,4 +35,5 @@ This is a license, not a lecture. In plain terms:
 If you have questions about what's allowed, just ask:
 https://www.silverplatteraudio.com
 
+SPASynth is created by Paul, Phil, and Mike at Silverplatter Audio.
 (c) Silverplatter Audio. All rights reserved.

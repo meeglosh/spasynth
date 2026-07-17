@@ -23,8 +23,21 @@ struct Telemetry
     std::atomic<int> activeVoices { 0 };
 
     // Effective per-slot playback position, 0..1 (wavetable morph position,
-    // sample playhead, or grain position, by mode).
+    // sample playhead, or grain-cloud centre, by mode).
     std::array<std::atomic<float>, params::maxOscSlots> slotPosition {};
+
+    // Live granular grain cloud per slot, for the animated waveform playheads:
+    // each active grain's normalized read position (0..1) and window amplitude
+    // (0..1); count is how many entries are valid. Cosmetic only, so relaxed
+    // atomics with count published last is fine.
+    static constexpr int maxVizGrains = 12;
+    struct GrainViz
+    {
+        std::atomic<int> count { 0 };
+        std::array<std::atomic<float>, maxVizGrains> pos {};
+        std::array<std::atomic<float>, maxVizGrains> amp {};
+    };
+    std::array<GrainViz, params::maxOscSlots> grainViz {};
 
     std::atomic<float> filterCutoffHz { 20000.0f };
     std::atomic<float> filterResonance { 0.0f };

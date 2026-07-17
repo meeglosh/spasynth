@@ -267,15 +267,44 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     g.setColour (t.accent.withAlpha (0.55f));
     g.fillPath (fill);
 
-    // Playhead: live playback position while sounding; knob otherwise.
-    const auto markerParam = mode == params::OscMode::granular
-                           ? params::id::osc::grainPos : params::id::osc::sampleStart;
-    const auto marker = isLive()
-        ? telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed)
-        : value (params::id::oscSlot (slot, markerParam));
-    const auto mx = area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, marker);
-    g.setColour (t.textPrimary);
-    g.drawLine (mx, area.getY(), mx, area.getBottom(), 1.2f);
+    const auto markerX = [&] (float norm)
+    {
+        return area.getX() + area.getWidth() * juce::jlimit (0.0f, 1.0f, norm);
+    };
+
+    // Granular while sounding: animate the live grain cloud (each grain is a
+    // faint playhead scanning the buffer, brightness following its window) so
+    // playback reads the way it does in other granular synths, plus a soft
+    // centre marker at the grain position.
+    if (mode == params::OscMode::granular && isLive() && telemetry != nullptr)
+    {
+        const auto& gv = telemetry->grainViz[(size_t) slot];
+        const auto n = juce::jlimit (0, dsp::Telemetry::maxVizGrains,
+                                     gv.count.load (std::memory_order_relaxed));
+        for (int i = 0; i < n; ++i)
+        {
+            const auto gx = markerX (gv.pos[(size_t) i].load (std::memory_order_relaxed));
+            const auto gamp = gv.amp[(size_t) i].load (std::memory_order_relaxed);
+            g.setColour (t.accent.withAlpha (0.15f + 0.55f * gamp));
+            g.drawLine (gx, area.getY(), gx, area.getBottom(), 1.0f);
+        }
+
+        const auto cx = markerX (telemetry->slotPosition[(size_t) slot]
+                                     .load (std::memory_order_relaxed));
+        g.setColour (t.textPrimary.withAlpha (0.55f));
+        g.drawLine (cx, area.getY(), cx, area.getBottom(), 1.0f);
+    }
+    else
+    {
+        // Sample playhead (live) or, when idle / granular-idle, the knob.
+        const auto markerParam = mode == params::OscMode::granular
+                               ? params::id::osc::grainPos : params::id::osc::sampleStart;
+        const auto marker = isLive()
+            ? telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed)
+            : value (params::id::oscSlot (slot, markerParam));
+        g.setColour (t.textPrimary);
+        g.drawLine (markerX (marker), area.getY(), markerX (marker), area.getBottom(), 1.2f);
+    }
 
     // A replacement is still loading: dim the stale waveform so it reads as
     // outgoing, and run the sweep on top.

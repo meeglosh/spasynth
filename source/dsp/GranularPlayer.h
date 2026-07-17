@@ -41,6 +41,31 @@ public:
         return sample != nullptr ? (double) position * sample->lengthSeconds() : 0.0;
     }
 
+    // Snapshots the live grains for the UI's animated cloud: up to maxViz
+    // active grains' normalized read positions (0..1) and window amplitudes
+    // (0..1). Returns the count written. Read-only over the grain pool.
+    int snapshotGrains (const SampleData* sample, float* posOut, float* ampOut,
+                        int maxViz) const noexcept
+    {
+        if (sample == nullptr || sample->lengthSamples() < 2)
+            return 0;
+
+        const auto len = (double) sample->lengthSamples();
+        int n = 0;
+        for (const auto& g : grains)
+        {
+            if (n >= maxViz)
+                break;
+            if (! g.active)
+                continue;
+            posOut[n] = (float) juce::jlimit (0.0, 1.0, g.pos / len);
+            ampOut[n] = 0.5f - 0.5f * std::cos ((float) g.phase
+                                                * juce::MathConstants<float>::twoPi);
+            ++n;
+        }
+        return n;
+    }
+
     struct StereoSample { float left = 0.0f, right = 0.0f; };
 
     StereoSample getNextSample (const Params& p, juce::Random& random) noexcept

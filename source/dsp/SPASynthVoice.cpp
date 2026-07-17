@@ -510,7 +510,21 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                               / juce::jmax (0.001, stat.sample->lengthSeconds()))
                         : 0.0f;
                 else
+                {
                     pos = lastGrainPos[(size_t) s];
+
+                    // Publish the live grain cloud for the animated playheads.
+                    float gp[Telemetry::maxVizGrains], ga[Telemetry::maxVizGrains];
+                    const int gn = granularPlayers[(size_t) s].snapshotGrains (
+                        stat.sample, gp, ga, Telemetry::maxVizGrains);
+                    auto& gv = tel->grainViz[(size_t) s];
+                    for (int i = 0; i < gn; ++i)
+                    {
+                        gv.pos[(size_t) i].store (gp[i], std::memory_order_relaxed);
+                        gv.amp[(size_t) i].store (ga[i], std::memory_order_relaxed);
+                    }
+                    gv.count.store (gn, std::memory_order_relaxed);
+                }
                 tel->slotPosition[(size_t) s].store (pos, std::memory_order_relaxed);
             }
 

@@ -521,6 +521,26 @@ namespace
         expect (peak > 0.02f, "granular engine produces output (peak "
                               + juce::String (peak) + ")");
 
+        // The live grain cloud is published for the animated display: at least
+        // one grain is reported, and grains scan forward (a moving playhead),
+        // not pinned at the static grain-position knob.
+        auto& tel = proc.getTelemetry();
+        expect (tel.grainViz[0].count.load() > 0, "grain cloud is published while sounding");
+
+        const auto firstScan = tel.grainViz[0].pos[0].load();
+        bool advanced = false;
+        for (int i = 0; i < 8 && ! advanced; ++i)
+        {
+            proc.processBlock (buffer, midi);
+            // Any grain whose read head has moved off the exact spawn centre
+            // proves the playhead animates rather than sitting on grainPos.
+            const auto n = tel.grainViz[0].count.load();
+            for (int gi = 0; gi < n; ++gi)
+                if (std::abs (tel.grainViz[0].pos[gi].load() - firstScan) > 1.0e-4f)
+                    advanced = true;
+        }
+        expect (advanced, "grain read positions advance (playhead animates)");
+
         file.deleteFile();
     }
 

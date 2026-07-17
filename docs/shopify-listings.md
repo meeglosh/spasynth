@@ -1,4 +1,4 @@
-# SPASynth — Shopify product listings
+# SPASynth Shopify product listings
 
 Paste-ready copy for the three Shopify products (Standard, Pro, Standard to
 Pro Upgrade). Written from `docs/marketing-brief.md`, factually accurate to the

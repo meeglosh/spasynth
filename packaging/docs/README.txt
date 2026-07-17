@@ -1,11 +1,11 @@
-SPASynth — Silverplatter Audio
+SPASynth · Silverplatter Audio
 ==============================
 
 Thank you for buying SPASynth! You now own a hybrid synthesizer built
 around the entire Silverplatter Audio sound effects library: wavetables,
 virtual analog, FM, noise and plucked-string engines side by side with a
-sample and granular engine that turns any SFX into a playable instrument
-— or into a modulation source that drives the rest of the patch.
+sample and granular engine that turns any SFX into a playable instrument,
+or into a modulation source that drives the rest of the patch.
 
 WHAT'S IN THIS PACKAGE
 ----------------------
@@ -42,7 +42,7 @@ Each zip already contains the full folder path
 ("Silverplatter Audio/SPASynth Library/<Pack Name>/"), so extracting it
 in that location is all you need to do. SPASynth finds the library
 automatically the next time it opens and generates factory presets for
-every pack it finds — no pointing, no scanning dialogs.
+every pack it finds, with no pointing and no scanning dialogs.
 
 Prefer the library somewhere else (an external drive, say)? Extract the
 zips anywhere, then use "SET LIBRARY..." in SPASynth's preset browser to

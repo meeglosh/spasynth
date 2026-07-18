@@ -23,16 +23,17 @@ the sale would have cost.
 ## File attachments per product
 
 The 37 GB Pro library is too big for Shopify's per-product cap, so it lives on
-**Cloudflare R2** and is delivered as a small text file of download links
-(`SPASynth Pro Library - Download Links.txt`, in `dist/shopify/`). The 11 parts
+**Cloudflare R2** and is delivered as a small self-contained HTML download page
+(`SPASynth Pro Library - Downloads.html`, in `dist/shopify/`; buyers open it and
+click the 11 download buttons). The 11 parts
 are at `https://downloads.spasynth.com/pro-library/SPASynth-Pro-Library-Part-NN.zip`
 (NN = 01..11). Standard's 3 GB starter library still uploads to Shopify directly.
 
 - **Standard:** `SPASynth-1.0.0-macOS.pkg`, `SPASynth-1.0.0-Windows.exe`,
   `SPASynth Starter Library.zip`, `README.txt`, `QUICKSTART.txt`, `EULA.txt`
-- **Pro:** the pkg + exe + the 3 docs + `SPASynth Pro Library - Download Links.txt`
+- **Pro:** the pkg + exe + the 3 docs + `SPASynth Pro Library - Downloads.html`
   (the library itself is on R2, NOT uploaded to Shopify)
-- **Upgrade:** `SPASynth Pro Library - Download Links.txt` + `QUICKSTART.txt` +
+- **Upgrade:** `SPASynth Pro Library - Downloads.html` + `QUICKSTART.txt` +
   `EULA.txt` (library only; buyer already owns the synth)
 
 macOS pkg is signed + notarized. Windows exe is unsigned by decision (SmartScreen

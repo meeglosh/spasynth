@@ -114,6 +114,9 @@ reinstall.
 - **Primary:** The hybrid synth where your sound library is the instrument. Full synth, 264 presets, and a 440-sound starter library to get you playing.
 - **Short:** The full sound-library synth, with a 440-sound starter library.
 
+### Tags
+SPASynth, SPASynth Standard, Synthesizer, Virtual Instrument, Plugin, Hybrid Synth, Wavetable, Granular, Sample-Based, Sound Design, Cinematic, Film & TV, Game Audio, AU, VST3, Standalone, macOS, Windows, Royalty-Free, DRM-Free, Starter Library, Silverplatter Audio
+
 ---
 
 # 2 · SPASynth Pro
@@ -177,6 +180,9 @@ forever. Just do not redistribute the raw files.
 - **Primary:** The complete synth and the entire 11,474-sound Silverplatter library. Every sound becomes an oscillator, a granular texture, or a modulator.
 - **Short:** The full synth plus all 11,474 sounds, 37 GB of library.
 
+### Tags
+SPASynth, SPASynth Pro, Synthesizer, Virtual Instrument, Plugin, Hybrid Synth, Wavetable, Granular, Sample-Based, Sound Design, Cinematic, Film & TV, Game Audio, AU, VST3, Standalone, macOS, Windows, Royalty-Free, DRM-Free, Full Library, Sound Effects Library, Silverplatter Audio
+
 ---
 
 # 3 · SPASynth Standard to Pro Upgrade
@@ -218,6 +224,9 @@ redistribute the raw files.
 ### Card blurbs
 - **Primary:** Already own Standard? Add the complete 11,474-sound library for the difference. Download, extract, done.
 - **Short:** Add the full 11,474-sound library for the difference.
+
+### Tags
+SPASynth, SPASynth Upgrade, Library Upgrade, Full Library, Sound Effects Library, Sound Design, Cinematic, Film & TV, Game Audio, Foley, Textures, Royalty-Free, DRM-Free, Silverplatter Audio
 
 ---
 

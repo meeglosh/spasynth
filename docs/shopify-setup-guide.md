@@ -15,8 +15,8 @@ the copy to paste lives in `docs/shopify-listings.md`. House style: no em dashes
 | Product | Price | Compare-at price |
 | --- | --- | --- |
 | Standard | 99 | 149 |
-| Pro | 702 | 1264 |
-| Upgrade | 603 | 1115 |
+| Pro | 499 | 899 |
+| Upgrade | 400 | 750 |
 
 Price = paid today; Compare-at = the higher struck-through number.
 
@@ -56,7 +56,7 @@ Price = paid today; Compare-at = the higher struck-through number.
 
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Pro`; description = "2 · SPASynth Pro" section.
-- Price `702`, Compare-at `1264`; URL handle `spasynth-pro`.
+- Price `499`, Compare-at `899`; URL handle `spasynth-pro`.
 - Files from `SPASynth-Pro-1.0.0/`: pkg, exe, 3 docs, and all 11
   `SPASynth Pro Library (Part N).zip` files (in `Library/`).
 - This upload is ~32 GB total, ~3 GB per part. Stable connection, one at a
@@ -66,7 +66,7 @@ Repeat Parts 2 and 3 with:
 
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Standard to Pro Upgrade`; description = "3 · ... Upgrade".
-- Price `603`, Compare-at `1115`; URL handle `spasynth-standard-to-pro-upgrade`.
+- Price `400`, Compare-at `750`; URL handle `spasynth-standard-to-pro-upgrade`.
 - Files: ONLY the 11 `SPASynth Pro Library (Part N).zip` files. No pkg/exe/docs
   (upgraders already own the synth).
 - Honor system: Shopify cannot verify prior Standard ownership; fits the

@@ -8,15 +8,15 @@ Staged deliverables to attach live in `dist/shopify/` (gitignored). Set each
 product's **Price** to the intro number and **Compare-at price** to the regular
 number to get the struck-through sale display.
 
-## Pricing (from spasynth.com; intro-period length TBD)
+## Pricing (USD; intro-period length TBD)
 
 | Product | Price (intro/sale) | Compare-at (regular) |
 | --- | --- | --- |
 | Standard | $99 | $149 |
-| Pro | $702 | $1,264 |
-| Upgrade (Standard → Pro) | $603 | $1,115 |
+| Pro | $499 | $899 |
+| Upgrade (Standard → Pro) | $400 | $750 |
 
-Upgrade is the difference at each tier: `702 − 99 = 603` now, `1264 − 149 = 1115`
+Upgrade is the difference at each tier: `499 − 99 = 400` now, `899 − 149 = 750`
 regular, so an intro Standard buyer pays exactly what buying Pro outright during
 the sale would have cost.
 

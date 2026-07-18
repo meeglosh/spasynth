@@ -129,9 +129,11 @@ SEO fields, card blurbs, FAQ, pricing, per-SKU attachment lists; no em
 dashes). Sound count corrected to 11,474 everywhere (verified WAV count;
 spasynth.com still says 11,401 and needs updating outside the repo).
 
-**Official pricing (from spasynth.com):** Standard $99 intro / $149 reg;
-Pro $702 sale / $1264 reg; Upgrade = the difference, $603 intro / $1115
-reg (set Shopify Price = intro, Compare-at = reg). Intro-period length TBD.
+**Official pricing (USD):** Standard $99 intro / $149 reg; Pro $499 sale /
+$899 reg (the $899 = the Everything Bundle price); Upgrade = the difference,
+$400 intro ($499−$99) / $750 reg ($899−$149). Set Shopify Price = intro,
+Compare-at = reg. Intro-period length TBD. (Earlier $702/$1264 figures were
+CAD by mistake; corrected to USD 2026-07-18 across all docs.)
 
 **Everything that can be built/staged is DONE.** Signed+notarized macOS pkg
 and fresh Windows exe (both from `9dcae8e`) are in `dist/installers/` and,

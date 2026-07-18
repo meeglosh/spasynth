@@ -87,8 +87,8 @@ The Silverplatter Audio team
 | Edition | Intro/launch [PRICE] | Regular [PRICE] |
 | --- | --- | --- |
 | Standard | $99 | $149 |
-| Pro | $702 | $1,264 |
-| Upgrade (difference) | $603 | $1,115 |
+| Pro | $499 | $899 |
+| Upgrade (difference) | $400 | $750 |
 
 ---
 

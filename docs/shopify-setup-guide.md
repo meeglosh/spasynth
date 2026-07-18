@@ -84,13 +84,32 @@ Repeat Parts 2 and 3 with:
 
 ## Part 6 (optional): free version for Everything Bundle owners
 
-Business decision of record: Everything Bundle owners get SPASynth free.
-- Title `SPASynth for Everything Bundle Owners`; Price `0`.
-- Files: pkg + exe + 3 docs only (no library; they own all the sounds).
-- Keep it off the public storefront (Draft, or remove the Online Store
-  channel) and share via a direct link or a 100%-off code.
-- Buyers install it and point it at their existing bundle folder with
-  "SET LIBRARY" (no re-download, no reorganizing).
+Business decision of record: Everything Bundle owners get SPASynth free. They
+already own every sound, so they get the installer only and point it at their
+existing library with "SET LIBRARY". The ready-to-send email is in
+`docs/everything-bundle-email.md`.
+
+Create the product (repeat Parts 2/3):
+- Title `SPASynth for Everything Bundle Owners`.
+- Files: pkg + exe + README + QUICKSTART + EULA only. NO library, NO links page.
+- Price `99` (a notional value so a random link-finder does not get it free),
+  publish to the Online Store, but do NOT add it to any collection or menu, so
+  it is reachable by direct link only.
+
+Create the 100%-off code:
+1. Discounts -> Create discount -> Amount off products.
+2. Method: Discount code. Type a code, e.g. `BUNDLEGIFT` (or Generate).
+3. Value: Percentage, 100.
+4. Applies to: Specific products -> select "SPASynth for Everything Bundle
+   Owners" (so the code only zeroes out that one product).
+5. Minimum requirements: none.
+6. Maximum uses: cap total uses a little above your bundle-owner count; also
+   "Limit to one use per customer".
+7. Set a start date, Save.
+
+Then email bundle owners the product link + the code (email is in
+`docs/everything-bundle-email.md`). Simpler alternative: price the product `0`
+and skip the code (a leaked free synth is useless without a library).
 
 ## Part 7: Tax and checkout
 

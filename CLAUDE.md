@@ -146,17 +146,29 @@ SEO, blurbs, FAQ, pricing, per-SKU attachment lists), `docs/launch-email.md`
 (retina hero). All customer copy: "we"/Silverplatter Audio voice, no
 individual names, no em dashes, 11,474 sound count.
 
+**Pro library delivery = Cloudflare R2 (done 2026-07-18).** The 37 GB Pro
+library exceeds Shopify's per-product cap, so the 11 parts live on R2 (bucket
+`spasynth`, account `25de31a7…`) with clean names
+`SPASynth-Pro-Library-Part-01..11.zip` under `pro-library/`, public via the
+custom domain **downloads.spasynth.com** (spasynth.com DNS moved GoDaddy →
+Cloudflare; site still on GitHub Pages, grey-cloud A records; no email on the
+domain). Verified: `curl` HEAD 200 + correct size + valid ZIP. Delivered to
+buyers via a small links file `dist/shopify/SPASynth Pro Library - Download
+Links.txt`. Uploads done with `rclone` (remote `r2`, `no_check_bucket=true`;
+the R2 API token is bucket-scoped so ListBuckets/CreateBucket 403 is normal —
+use bucket-direct ops). R2 has no egress fees, so downloads are ~free.
+
 **Remaining for launch (Mike's manual steps, nothing to code):**
 1. **Windows real-DAW smoke test** — the one untested surface. Load the VST3
    in Reaper/Live/Cubase, confirm the library auto-discovers and a preset
    plays. Windows unsigned → "More info → Run anyway" past SmartScreen.
 2. **Shopify build-out** — full plain-English click-by-click walkthrough is
    saved to `docs/shopify-setup-guide.md` (Mike is non-technical on the ops
-   side; hand-hold). In short: install the free Digital Downloads app; create
-   the products; paste copy from `docs/shopify-listings.md`; uncheck "physical
-   product"; set Price=intro, Compare-at=regular; attach files per SKU from the
-   `dist/shopify/` folders (**Upgrade = the 11 Pro library parts only**, no
-   pkg/exe); test-purchase; activate. Files individually, under the 5 GB cap.
+   side; hand-hold). Standard uploads its 3 GB starter library directly; Pro
+   and Upgrade deliver the big library via the R2 links file (do NOT upload the
+   32 GB to Shopify). Attach lists per SKU are in `docs/shopify-listings.md`
+   and the guide. Set Price=intro, Compare-at=regular; uncheck "physical
+   product"; test-purchase; activate.
 3. **Free "Everything Bundle" product (Part 6 of the guide)** — decision of
    record: bundle owners get SPASynth free. Make an installer-only product
    (pkg+exe+docs, no library), price 0, kept off the public storefront, shared

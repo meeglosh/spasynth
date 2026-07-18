@@ -54,21 +54,25 @@ Price = paid today; Compare-at = the higher struck-through number.
 
 ## Part 4: Create SPASynth Pro
 
+The 37 GB Pro library is too big for Shopify, so it lives on Cloudflare R2 and
+is delivered as a small links file. You do NOT upload the library to Shopify.
+
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Pro`; description = "2 · SPASynth Pro" section.
 - Price `499`, Compare-at `899`; URL handle `spasynth-pro`.
-- Files from `SPASynth-Pro-1.0.0/`: pkg, exe, 3 docs, and all 11
-  `SPASynth Pro Library (Part N).zip` files (in `Library/`).
-- This upload is ~32 GB total, ~3 GB per part. Stable connection, one at a
-  time, do not close the tab. Each part is under Shopify's 5 GB cap.
+- Files from `SPASynth-Pro-1.0.0/` (all small, upload directly): pkg, exe, the 3
+  docs, and `SPASynth Pro Library - Download Links.txt`.
+- Do NOT upload the 11 zips in the `Library/` subfolder. The library is already
+  on R2 at downloads.spasynth.com; the links file gives buyers the download URLs.
 
 ## Part 5: Create the Standard to Pro Upgrade
 
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Standard to Pro Upgrade`; description = "3 · ... Upgrade".
 - Price `400`, Compare-at `750`; URL handle `spasynth-standard-to-pro-upgrade`.
-- Files: ONLY the 11 `SPASynth Pro Library (Part N).zip` files. No pkg/exe/docs
-  (upgraders already own the synth).
+- Files from `SPASynth-Upgrade-1.0.0/`: `SPASynth Pro Library - Download Links.txt`
+  + `QUICKSTART.txt` + `EULA.txt`. No pkg/exe (upgraders already own the synth);
+  no library upload (it is on R2).
 - Honor system: Shopify cannot verify prior Standard ownership; fits the
   no-DRM stance.
 

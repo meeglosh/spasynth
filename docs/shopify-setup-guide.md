@@ -23,7 +23,8 @@ Price = paid today; Compare-at = the higher struck-through number.
 ## Part 1: Turn on digital downloads (one time)
 
 1. Settings (bottom-left) -> Apps and sales channels -> Shopify App Store.
-2. Search "Digital Downloads", pick the free one by Shopify, Install.
+2. Search "Digital Products" (the free official Shopify app, formerly
+   "Digital Downloads"), pick the one by Shopify, Install.
 3. Confirm a payment provider exists: Settings -> Payments (Shopify Payments
    or PayPal). Set one up before going live if none.
 
@@ -44,7 +45,7 @@ Price = paid today; Compare-at = the higher struck-through number.
 
 ## Part 3: Attach the files (Standard)
 
-1. Apps -> Digital Downloads -> select SPASynth Standard.
+1. Apps -> Digital Products -> select SPASynth Standard.
 2. Upload these six files from `SPASynth-Standard-1.0.0/`, one at a time:
    - `SPASynth-1.0.0-macOS.pkg`
    - `SPASynth-1.0.0-Windows.exe`
@@ -56,6 +57,10 @@ Price = paid today; Compare-at = the higher struck-through number.
 
 The 37 GB Pro library is too big for Shopify, so it lives on Cloudflare R2 and
 is delivered as a small links file. You do NOT upload the library to Shopify.
+(The Digital Products app has an "external URL" asset type, but it only supports
+Notion / Google Drive-Docs / Dropbox / YouTube / Vimeo / Figma etc., NOT a raw
+R2 link — so deliver the R2 links via the uploaded text file. Alternative: put
+the links in a Google Doc, set it "anyone with link", and use the URL asset.)
 
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Pro`; description = "2 · SPASynth Pro" section.

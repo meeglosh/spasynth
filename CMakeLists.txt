@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SPASynth VERSION 1.0.0 LANGUAGES C CXX)
+# Minimum macOS we support (matches the store listing: "macOS 11 or later").
+# MUST be set before project() so it is baked into every binary's
+# LC_BUILD_VERSION. Without it, builds inherit the BUILD MACHINE's OS (e.g.
+# macOS 26), and dyld refuses to launch the standalone on older systems with a
+# "wrong OS" error (plugins still load because the host dlopens them without an
+# LSMinimumSystemVersion check). 11.0 is also the floor for arm64. Ignored on
+# non-Apple platforms.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+
+project(SPASynth VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

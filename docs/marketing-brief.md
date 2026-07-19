@@ -1,7 +1,7 @@
 # SPASynth — Marketing Brief
 
 Source document for building the product landing page. Everything below is
-factually accurate to the shipping v1.0.0 build — do not invent features or
+factually accurate to the shipping v1.0.1 build — do not invent features or
 numbers beyond what is listed here.
 
 ---
@@ -49,7 +49,7 @@ synth with an organic-chaos engine and a one-button patch randomizer.
   convenience, and affordability so audio drops cleanly into games, film, TV,
   web, and more. SPASynth is the instrument we built to play those libraries.
 
-## Complete feature set (v1.0.0)
+## Complete feature set (v1.0.1)
 
 ### Sound engines — 7 per oscillator slot, 3 slots
 - **Wavetable** — mip-mapped, alias-free, with position morphing, up to
@@ -167,7 +167,7 @@ synth with an organic-chaos engine and a one-button patch randomizer.
 
 ## Changelog
 
-### v1.0.0 — Initial release
+### v1.0.1 — Initial release
 - 7 synthesis engines per slot: wavetable, sample/SFX, granular, virtual
   analog, 2-op FM, noise (white/pink/brown), Karplus-Strong pluck
 - SFX-as-modulator: automatic amplitude + pitch follower analysis on every

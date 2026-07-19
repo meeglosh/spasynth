@@ -7,8 +7,8 @@ the copy to paste lives in `docs/shopify-listings.md`. House style: no em dashes
 ## Before you start
 
 1. Shopify admin login (`yourstore.myshopify.com/admin`).
-2. The files: `dist/shopify/SPASynth-Standard-1.0.0/` and
-   `dist/shopify/SPASynth-Pro-1.0.0/` (open in Finder).
+2. The files: `dist/shopify/SPASynth-Standard-1.0.1/` and
+   `dist/shopify/SPASynth-Pro-1.0.1/` (open in Finder).
 3. The copy: `docs/shopify-listings.md` (titles, descriptions, SEO, blurbs).
 4. Prices:
 
@@ -46,9 +46,9 @@ Price = paid today; Compare-at = the higher struck-through number.
 ## Part 3: Attach the files (Standard)
 
 1. Apps -> Digital Products -> select SPASynth Standard.
-2. Upload these six files from `SPASynth-Standard-1.0.0/`, one at a time:
-   - `SPASynth-1.0.0-macOS.pkg`
-   - `SPASynth-1.0.0-Windows.exe`
+2. Upload these six files from `SPASynth-Standard-1.0.1/`, one at a time:
+   - `SPASynth-1.0.1-macOS.pkg`
+   - `SPASynth-1.0.1-Windows.exe`
    - `SPASynth Starter Library.zip` (~3 GB, in the `Library` subfolder)
    - `README.txt`, `QUICKSTART.txt`, `EULA.txt`
    Never wrap them in one giant zip; attach individually.
@@ -66,7 +66,7 @@ HTML page is uploaded as a file asset instead.)
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Pro`; description = "2 · SPASynth Pro" section.
 - Price `499`, Compare-at `899`; URL handle `spasynth-pro`.
-- Files from `SPASynth-Pro-1.0.0/` (all small, upload directly): pkg, exe, the 3
+- Files from `SPASynth-Pro-1.0.1/` (all small, upload directly): pkg, exe, the 3
   docs, and `SPASynth Pro Library - Downloads.html`.
 - Do NOT upload the 11 zips in the `Library/` subfolder. The library is already
   on R2 at downloads.spasynth.com; the links file gives buyers the download URLs.
@@ -76,7 +76,7 @@ Repeat Parts 2 and 3 with:
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Standard to Pro Upgrade`; description = "3 · ... Upgrade".
 - Price `400`, Compare-at `750`; URL handle `spasynth-standard-to-pro-upgrade`.
-- Files from `SPASynth-Upgrade-1.0.0/`: `SPASynth Pro Library - Downloads.html`
+- Files from `SPASynth-Upgrade-1.0.1/`: `SPASynth Pro Library - Downloads.html`
   + `QUICKSTART.txt` + `EULA.txt`. No pkg/exe (upgraders already own the synth);
   no library upload (it is on R2).
 - Honor system: Shopify cannot verify prior Standard ownership; fits the

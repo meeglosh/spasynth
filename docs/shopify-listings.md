@@ -2,7 +2,7 @@
 
 Paste-ready copy for the three Shopify products (Standard, Pro, Standard to
 Pro Upgrade). Written from `docs/marketing-brief.md`, factually accurate to the
-shipping v1.0.0 build. House style: no em dashes.
+shipping v1.0.1 build. House style: no em dashes.
 
 Staged deliverables to attach live in `dist/shopify/` (gitignored). Set each
 product's **Price** to the intro number and **Compare-at price** to the regular
@@ -29,7 +29,7 @@ click the 11 download buttons). The 11 parts
 are at `https://downloads.spasynth.com/pro-library/SPASynth-Pro-Library-Part-NN.zip`
 (NN = 01..11). Standard's 3 GB starter library still uploads to Shopify directly.
 
-- **Standard:** `SPASynth-1.0.0-macOS.pkg`, `SPASynth-1.0.0-Windows.exe`,
+- **Standard:** `SPASynth-1.0.1-macOS.pkg`, `SPASynth-1.0.1-Windows.exe`,
   `SPASynth Starter Library.zip`, `README.txt`, `QUICKSTART.txt`, `EULA.txt`
 - **Pro:** the pkg + exe + the 3 docs + `SPASynth Pro Library - Downloads.html`
   (the library itself is on R2, NOT uploaded to Shopify)

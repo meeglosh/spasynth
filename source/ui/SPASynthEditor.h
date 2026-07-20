@@ -62,14 +62,24 @@ private:
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     };
 
+    // Bottom-right keyboard-strip toggle (Kontakt-style); draws a small piano
+    // icon that lights up in the accent colour while the keyboard is shown.
+    struct KeyboardButton : juce::Button
+    {
+        KeyboardButton() : juce::Button ("keyboard") {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    };
+
     SPASynthProcessor& processor;
     std::function<void()> onThemeChanged;   // LnF palette refresh + repaint
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
     SettingsButton settingsButton;   // over the top-left logo
 
-    // On-screen keyboard strip (shown/hidden from the settings menu).
+    // On-screen keyboard strip (toggled from the settings menu or the
+    // bottom-right keyboard button).
     juce::MidiKeyboardComponent keyboard;
+    KeyboardButton keyboardButton;
     bool keyboardVisible = false;
 
     // Header.

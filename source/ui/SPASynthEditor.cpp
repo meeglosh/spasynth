@@ -184,6 +184,33 @@ void ContentComponent::SettingsButton::paintButton (juce::Graphics& g,
     }
 }
 
+void ContentComponent::KeyboardButton::paintButton (juce::Graphics& g,
+                                                    bool highlighted, bool down)
+{
+    const auto& t = currentTheme();
+    const bool on = getToggleState();
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const auto col = on ? t.accent
+                        : (highlighted || down ? t.textPrimary : t.textSecondary);
+
+    // A little piano: outlined body, white-key dividers, three black keys. Lit
+    // in the accent colour while the keyboard strip is showing.
+    g.setColour (col);
+    g.drawRoundedRectangle (r, 1.5f, 1.0f);
+
+    constexpr int whiteKeys = 5;
+    const float kw = r.getWidth() / (float) whiteKeys;
+    for (int i = 1; i < whiteKeys; ++i)
+    {
+        const float x = r.getX() + (float) i * kw;
+        g.drawLine (x, r.getY(), x, r.getBottom(), 1.0f);
+    }
+    const float bh = r.getHeight() * 0.58f;
+    const float bw = kw * 0.54f;
+    for (int i : { 1, 2, 4 })
+        g.fillRect (r.getX() + (float) i * kw - bw * 0.5f, r.getY(), bw, bh);
+}
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
       keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
@@ -210,6 +237,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addChildComponent (keyboard);                // visibility follows keyboardVisible
     keyboardVisible = (bool) processor.getAPVTS().state.getProperty ("uiKeyboardVisible", false);
     keyboard.setVisible (keyboardVisible);
+
+    keyboardButton.setTooltip ("Show or hide the on-screen keyboard");
+    keyboardButton.onClick = [this] { setKeyboardVisible (! keyboardVisible); };
+    keyboardButton.setToggleState (keyboardVisible, juce::dontSendNotification);
+    addAndMakeVisible (keyboardButton);
 
     prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
     prevPresetButton.setTooltip ("Previous preset");
@@ -513,7 +545,8 @@ void ContentComponent::paint (juce::Graphics& g)
     g.drawText (licenseLine.isNotEmpty()
                     ? licenseLine
                     : juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
-                footer.reduced (10, 0), juce::Justification::centredRight);
+                footer.reduced (10, 0).withTrimmedRight (34),   // clear the keyboard button
+                juce::Justification::centredRight);
     g.drawText ("v" SPASYNTH_VERSION, footer.reduced (10, 0), juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));
     g.setFont (metrics::labelFont());
@@ -539,6 +572,7 @@ void ContentComponent::resized()
     settingsButton.setBounds (header.removeFromLeft (52));  // logo doubles as menu
 
     auto right = header.removeFromRight (476).reduced (0, 9);
+    right.removeFromRight (12);   // padding so the meter clears the window edge
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
@@ -573,6 +607,10 @@ void ContentComponent::resized()
             button.setBounds (lockRow.removeFromLeft (lockWidth).reduced (2, 1));
 
     bounds.removeFromBottom (metrics::footerHeight);
+
+    // Keyboard toggle button: bottom-right of the footer (Kontakt-style).
+    keyboardButton.setBounds (getLocalBounds().removeFromBottom (metrics::footerHeight)
+                                  .removeFromRight (34).reduced (7, 5));
 
     // On-screen keyboard sits just above the footer. The base height grows by
     // exactly this strip when shown, so the module grid below is unchanged.
@@ -665,6 +703,7 @@ void ContentComponent::setKeyboardVisible (bool shouldShow)
 
     keyboardVisible = shouldShow;
     keyboard.setVisible (keyboardVisible);
+    keyboardButton.setToggleState (keyboardVisible, juce::dontSendNotification);
     processor.getAPVTS().state.setProperty ("uiKeyboardVisible", keyboardVisible, nullptr);
 
     // Grow/shrink our base height; this re-lays-out our children (below), then

@@ -32,10 +32,17 @@ public:
     void mouseDown (const juce::MouseEvent&) override;   // right-click = MIDI Learn
     void refreshAll();
 
+    // Base height grows by the keyboard strip when it is shown; the editor
+    // shell reads this to drive the window aspect ratio and scale.
+    int getContentBaseHeight() const;
+    std::function<void()> onKeyboardToggled;   // shell re-sizes when this fires
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePresetBrowser();
     void showAccentPicker();
+    void showSettingsMenu();
+    void setKeyboardVisible (bool shouldShow);
     void chooseLibraryFolder();
     void saveUserPreset();
 
@@ -47,10 +54,23 @@ private:
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     };
 
+    // The top-left logo doubles as the settings menu button; this overlay adds
+    // a hover highlight and opens the menu (the logo itself is painted behind).
+    struct SettingsButton : juce::Button
+    {
+        SettingsButton() : juce::Button ("settings") {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    };
+
     SPASynthProcessor& processor;
     std::function<void()> onThemeChanged;   // LnF palette refresh + repaint
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
+    SettingsButton settingsButton;   // over the top-left logo
+
+    // On-screen keyboard strip (shown/hidden from the settings menu).
+    juce::MidiKeyboardComponent keyboard;
+    bool keyboardVisible = false;
 
     // Header.
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };
@@ -106,6 +126,8 @@ public:
 
 private:
     void applyTheme();
+    void configureConstrainer();   // aspect + size limits from content base size
+    void keyboardToggled();        // resize the shell when the keyboard strip toggles
 
     SPASynthProcessor& arsenalProcessor;
     ui::SPASynthLookAndFeel lookAndFeel;

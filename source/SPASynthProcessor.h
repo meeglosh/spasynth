@@ -95,6 +95,10 @@ public:
     // MIDI Learn (right-click assignments).
     MidiLearnManager& getMidiLearn() { return *midiLearn; }
 
+    // On-screen / computer-keyboard input. The editor's MidiKeyboardComponent
+    // drives this state; processBlock merges its notes into the MIDI stream.
+    juce::MidiKeyboardState& getKeyboardState() { return keyboardState; }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -173,6 +177,9 @@ private:
     // Constructed after the APVTS (they capture parameter/default state).
     std::unique_ptr<MidiLearnManager> midiLearn;
     std::unique_ptr<library::PresetManager> presetManager;
+
+    // On-screen keyboard note source (editor writes, processBlock reads).
+    juce::MidiKeyboardState keyboardState;
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot

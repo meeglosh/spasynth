@@ -598,6 +598,12 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
+    // Merge the on-screen / computer keyboard's notes into the host MIDI stream
+    // before anything consumes it. MidiKeyboardState briefly locks here; that is
+    // the standard JUCE idiom for an on-screen keyboard, the lock is held only
+    // to splice a couple of queued note events and is uncontended in practice.
+    keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
+
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
 

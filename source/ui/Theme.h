@@ -66,6 +66,7 @@ namespace metrics
     inline constexpr int headerHeight = 54;
     inline constexpr int lockRowHeight = 26;
     inline constexpr int footerHeight = 24;
+    inline constexpr int keyboardStripHeight = 96;   // on-screen keyboard when shown
     inline constexpr int unit = 8;
     inline constexpr float cornerRadius = 7.0f;  // softer, elevated panels
 

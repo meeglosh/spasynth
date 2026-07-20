@@ -401,7 +401,14 @@ void Arpeggiator::process (juce::MidiBuffer& midi, int numSamples, const Params&
     }
 
     // --- Step triggers inside this block (with swing on odd steps) ------------
-    const auto firstStep = (int) std::ceil (blockStartBeat / beatsPerStep - 1.0e-9);
+    // Start one step early: a swung (odd) step's delayed trigger can land inside
+    // this block even though its un-swung base beat sits just before
+    // blockStartBeat. The `trigBeat < blockStartBeat` guard below drops it if it
+    // truly precedes the block, and a step already fired last block has
+    // trigBeat < blockStartBeat here too, so this can never double-fire. Without
+    // the -1, swung steps that straddled a block boundary were skipped entirely
+    // and swing sounded broken (dropped notes).
+    const auto firstStep = (int) std::ceil (blockStartBeat / beatsPerStep - 1.0e-9) - 1;
     for (int k = firstStep; ; ++k)
     {
         auto trigBeat = (double) k * beatsPerStep;

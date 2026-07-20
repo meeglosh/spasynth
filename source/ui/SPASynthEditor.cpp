@@ -172,8 +172,21 @@ void ContentComponent::AccentButton::paintButton (juce::Graphics& g,
     }
 }
 
+void ContentComponent::SettingsButton::paintButton (juce::Graphics& g,
+                                                    bool highlighted, bool down)
+{
+    // The logo is painted by the parent behind this transparent overlay; only
+    // add a hover/press highlight to signal it is clickable.
+    if (highlighted || down)
+    {
+        g.setColour (juce::Colours::white.withAlpha (down ? 0.10f : 0.05f));
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 5.0f);
+    }
+}
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
+      keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
       chaosPanel (p),
       arpPanel (p.getAPVTS()),
       matrixPanel (p.getAPVTS()),
@@ -183,6 +196,20 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                                                     SPAAssets::SPAudio_logo_white_svgSize);
     logoLight = juce::Drawable::createFromImageData (SPAAssets::SPAudio_logo_white_svg,
                                                      SPAAssets::SPAudio_logo_white_svgSize);
+
+    // Logo (top-left) opens the SPASynth settings menu. Works in the plugin too,
+    // unlike the standalone wrapper's audio-device "Options" menu.
+    settingsButton.setTooltip ("Settings: library folder, accent colors, keyboard, MIDI Learn");
+    settingsButton.onClick = [this] { showSettingsMenu(); };
+    addAndMakeVisible (settingsButton);
+
+    keyboard.setKeyWidth (28.0f);
+    keyboard.setAvailableRange (21, 108);        // A0..C8
+    keyboard.setLowestVisibleKey (48);           // opens around C3
+    keyboard.setWantsKeyboardFocus (true);       // computer-keyboard (QWERTY) playing
+    addChildComponent (keyboard);                // visibility follows keyboardVisible
+    keyboardVisible = (bool) processor.getAPVTS().state.getProperty ("uiKeyboardVisible", false);
+    keyboard.setVisible (keyboardVisible);
 
     prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
     prevPresetButton.setTooltip ("Previous preset");
@@ -335,7 +362,13 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     // Right-clicks anywhere inside get routed here for MIDI Learn.
     addMouseListener (this, true);
 
-    setSize (metrics::baseWidth, metrics::baseHeight);
+    setSize (metrics::baseWidth, getContentBaseHeight());
+}
+
+int ContentComponent::getContentBaseHeight() const
+{
+    return metrics::baseHeight
+         + (keyboardVisible ? metrics::keyboardStripHeight : 0);
 }
 
 void ContentComponent::mouseDown (const juce::MouseEvent& e)
@@ -503,7 +536,7 @@ void ContentComponent::resized()
 
     // --- Header -------------------------------------------------------------
     auto header = bounds.removeFromTop (metrics::headerHeight);
-    header.removeFromLeft (52);  // logo (wordmark lives in the brand band)
+    settingsButton.setBounds (header.removeFromLeft (52));  // logo doubles as menu
 
     auto right = header.removeFromRight (476).reduced (0, 9);
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
@@ -541,6 +574,12 @@ void ContentComponent::resized()
 
     bounds.removeFromBottom (metrics::footerHeight);
 
+    // On-screen keyboard sits just above the footer. The base height grows by
+    // exactly this strip when shown, so the module grid below is unchanged.
+    if (keyboardVisible)
+        keyboard.setBounds (bounds.removeFromBottom (metrics::keyboardStripHeight)
+                                .reduced (metrics::unit, 6));
+
     // --- Module grid ----------------------------------------------------------
     auto main = bounds.reduced (metrics::unit, 4);
     constexpr int gap = 6;
@@ -576,7 +615,8 @@ void ContentComponent::resized()
     // --- Preset drawer (overlay, left) ----------------------------------------
     const auto drawerArea = getLocalBounds()
                                 .withTrimmedTop (metrics::brandBandHeight + metrics::headerHeight)
-                                .withTrimmedBottom (metrics::footerHeight)
+                                .withTrimmedBottom (metrics::footerHeight
+                                    + (keyboardVisible ? metrics::keyboardStripHeight : 0))
                                 .removeFromLeft (320);
     presetBrowser->setOpenBounds (drawerArea);
     presetBrowser->setBounds (presetBrowserOpen
@@ -598,6 +638,42 @@ void ContentComponent::showAccentPicker()
             std::move (picker),
             top->getLocalArea (&accentButton, accentButton.getLocalBounds()),
             top);
+}
+
+void ContentComponent::showSettingsMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("SPASynth v" SPASYNTH_VERSION);
+    m.addItem ("Set Library Folder...", [this] { chooseLibraryFolder(); });
+    m.addItem ("Rescan Library", [this] { processor.refreshLibrary(); });
+    m.addSeparator();
+    m.addItem ("Accent Colors...", [this] { showAccentPicker(); });
+    m.addItem ("Show Keyboard", true, keyboardVisible,
+               [this] { setKeyboardVisible (! keyboardVisible); });
+    m.addSeparator();
+    m.addItem ("Clear All MIDI Learn", [this] { processor.getMidiLearn().clearAll(); });
+
+    m.showMenuAsync (juce::PopupMenu::Options()
+                         .withTargetComponent (&settingsButton)
+                         .withMinimumWidth (190));
+}
+
+void ContentComponent::setKeyboardVisible (bool shouldShow)
+{
+    if (keyboardVisible == shouldShow)
+        return;
+
+    keyboardVisible = shouldShow;
+    keyboard.setVisible (keyboardVisible);
+    processor.getAPVTS().state.setProperty ("uiKeyboardVisible", keyboardVisible, nullptr);
+
+    // Grow/shrink our base height; this re-lays-out our children (below), then
+    // the shell resizes the window to the new aspect ratio.
+    setSize (metrics::baseWidth, getContentBaseHeight());
+    if (onKeyboardToggled)
+        onKeyboardToggled();
+    if (keyboardVisible)
+        keyboard.grabKeyboardFocus();   // enable QWERTY playing right away
 }
 
 void ContentComponent::togglePresetBrowser()
@@ -668,18 +744,15 @@ SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     content = std::make_unique<ui::ContentComponent> (p, [this] { applyTheme(); });
+    content->onKeyboardToggled = [this] { keyboardToggled(); };
     addAndMakeVisible (*content);
 
     constexpr auto baseW = ui::metrics::baseWidth;
-    constexpr auto baseH = ui::metrics::baseHeight;
+    // Base height includes the keyboard strip if it was left open last session.
+    const auto baseH = content->getContentBaseHeight();
 
     setResizable (true, true);
-    if (auto* constrainer = getConstrainer())
-    {
-        constrainer->setFixedAspectRatio ((double) baseW / baseH);
-        constrainer->setSizeLimits (baseW * 40 / 100, baseH * 40 / 100,
-                                    baseW * 2, baseH * 2);
-    }
+    configureConstrainer();
 
     // Restore the remembered window scale, clamped so the whole editor
     // (including the resize corner) always fits the host's screen — on small
@@ -697,6 +770,30 @@ SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
     const auto saved = (double) arsenalProcessor.getAPVTS().state.getProperty ("uiScale", 1.0);
     const auto scale = juce::jlimit (0.4, juce::jmax (0.4, maxScale), saved);
     setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
+}
+
+// Fixes the window aspect ratio and size limits to the content's current base
+// size (which grows/shrinks with the keyboard strip).
+void SPASynthEditor::configureConstrainer()
+{
+    if (auto* constrainer = getConstrainer())
+    {
+        constexpr auto baseW = ui::metrics::baseWidth;
+        const auto baseH = content->getContentBaseHeight();
+        constrainer->setFixedAspectRatio ((double) baseW / baseH);
+        constrainer->setSizeLimits (baseW * 40 / 100, baseH * 40 / 100,
+                                    baseW * 2, baseH * 2);
+    }
+}
+
+// Keyboard shown/hidden: re-fix the aspect and resize the window to match at
+// the current width, so the modules keep their size and the strip is added.
+void SPASynthEditor::keyboardToggled()
+{
+    configureConstrainer();
+    constexpr auto baseW = ui::metrics::baseWidth;
+    const auto baseH = content->getContentBaseHeight();
+    setSize (getWidth(), juce::roundToInt ((float) getWidth() * (float) baseH / (float) baseW));
 }
 
 SPASynthEditor::~SPASynthEditor()

@@ -1254,6 +1254,25 @@ namespace
 
             niceName.deleteFile();
         }
+
+        // Keyboard strip shown (settings menu -> Show Keyboard): verify the
+        // on-screen keyboard and the taller base height layout.
+        {
+            proc.getAPVTS().state.setProperty ("uiKeyboardVisible", true, nullptr);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth,
+                             spa::ui::metrics::baseHeight + spa::ui::metrics::keyboardStripHeight);
+
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+            const auto file = outDir.getChildFile ("spasynth-keyboard.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+            proc.getAPVTS().state.setProperty ("uiKeyboardVisible", false, nullptr);
+        }
     }
 
     // The preset-name button must be clickable the moment the editor opens —
@@ -1428,6 +1447,30 @@ namespace
         for (size_t i = 0; i < juce::jmin ((size_t) 6, ons.size()); ++i)
             cycleOk = cycleOk && ons[i] == expected[i % 3];
         expect (cycleOk, "up mode cycles C-E-G in pitch order");
+
+        // Swing regression: heavy swing delays every 2nd step but must not DROP
+        // any. A swung step whose un-swung beat sits just before a block boundary
+        // used to be skipped, so swing lost ~half the notes.
+        {
+            Arp sw;
+            sw.prepare (sampleRate);
+            Arp::Params sp = p;            // up, 1/16, gate 0.5, not latched
+            sp.swing = 0.5f;
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            m.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0);
+            m.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 100), 0);
+            int swOns = 0;
+            for (int block = 0; block < (int) (sampleRate / blockSize); ++block)
+            {
+                sw.process (m, blockSize, sp);
+                for (const auto md : m)
+                    if (md.getMessage().isNoteOn()) ++swOns;
+                m.clear();
+            }
+            expect (swOns >= 7 && swOns <= 9,
+                    "swing keeps ~8 steps/sec, none dropped (" + juce::String (swOns) + ")");
+        }
 
         // Latch: release all keys, arp keeps stepping.
         p.latch = true;

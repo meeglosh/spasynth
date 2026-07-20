@@ -10,6 +10,7 @@ __MACOSX/
 # Build output
 build/
 build-release/
+build-release-stale*/
 cmake-build-*/
 
 # Release deliverables (installers, library zips, Shopify folders)

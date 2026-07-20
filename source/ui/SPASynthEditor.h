@@ -91,6 +91,7 @@ private:
     bool keyboardVisible = false;
 
     PanicButton panicButton;   // header top-right: stop all sound
+    std::unique_ptr<juce::Component> tempoBar;   // standalone only (brand band)
 
     // Header.
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };

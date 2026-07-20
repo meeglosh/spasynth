@@ -6,6 +6,7 @@
 #include "dsp/SPASynthVoice.h"
 #include "dsp/FXChain.h"
 #include "dsp/Arpeggiator.h"
+#include "dsp/MidiClockSync.h"
 #include "library/PresetManager.h"
 #include "MidiLearn.h"
 
@@ -104,6 +105,15 @@ public:
     // fired by incoming MIDI All Sound/Notes Off (CC 120/123).
     void panic() { panicRequested.store (true, std::memory_order_relaxed); }
 
+    // Standalone tempo (no host playhead). BPM + sync source (0 = internal,
+    // 1 = external MIDI clock); set from the standalone UI, ignored when a host
+    // provides tempo. getCurrentBpm() is the resolved live tempo for display.
+    void setInternalBpm (double bpm);
+    void setTempoSyncMode (int mode);
+    double getInternalBpm() const { return internalBpm.load (std::memory_order_relaxed); }
+    int getTempoSyncMode() const { return tempoSyncMode.load (std::memory_order_relaxed); }
+    double getCurrentBpm() const { return currentBpm.load (std::memory_order_relaxed); }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -188,6 +198,16 @@ private:
 
     // Raised by panic() / MIDI CC 120/123; serviced at the top of processBlock.
     std::atomic<bool> panicRequested { false };
+
+    // Tempo: internal BPM + external MIDI clock for the standalone. Resolved
+    // once per block into the block* fields (host playhead wins when present).
+    std::atomic<double> internalBpm { 120.0 };
+    std::atomic<int> tempoSyncMode { 0 };       // 0 = internal, 1 = external MIDI clock
+    std::atomic<double> currentBpm { 120.0 };   // resolved live tempo (UI display)
+    dsp::MidiClockSync midiClock;
+    double blockBpm = 120.0;
+    bool blockPlaying = true;
+    double blockPpq = 0.0;
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot

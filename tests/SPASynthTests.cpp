@@ -4,6 +4,7 @@
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
 #include "dsp/FXChain.h"
+#include "dsp/MidiClockSync.h"
 #include "dsp/WavetableLoader.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
@@ -657,6 +658,38 @@ namespace
                 + " vs late " + juce::String (late) + ")");
 
         file.deleteFile();
+    }
+
+    // MIDI Beat Clock derives tempo (24 pulses per quarter). At 120 BPM that is
+    // one clock every 1000 samples at 48k; the tracker should read ~120.
+    static void midiClockTest()
+    {
+        std::cout << "midiClockTest\n";
+        spa::dsp::MidiClockSync clock;
+        clock.prepare (48000.0);
+
+        constexpr int spc = 1000;         // samples per clock at 120 BPM
+        constexpr int blockSize = 512;
+        int absolute = 0, nextClock = 0;
+        bool sawStart = false;
+
+        for (int b = 0; b < 250; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (! sawStart) { midi.addEvent (juce::MidiMessage::midiStart(), 0); sawStart = true; }
+            while (nextClock < absolute + blockSize)
+            {
+                midi.addEvent (juce::MidiMessage::midiClock(), nextClock - absolute);
+                nextClock += spc;
+            }
+            clock.process (midi, blockSize);
+            absolute += blockSize;
+        }
+
+        expect (clock.hasClock(), "midi clock detected");
+        expect (clock.isPlaying(), "midi start sets transport playing");
+        expect (std::abs (clock.bpm() - 120.0) < 2.0,
+                "derives ~120 BPM from the clock (" + juce::String (clock.bpm()) + ")");
     }
 
     // Panic() must silence a latched arp (the stuck-note scenario): with latch
@@ -2154,6 +2187,7 @@ int main (int argc, char* argv[])
     fxDelayReverbTest();
     reverbMixTest();
     panicTest();
+    midiClockTest();
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();

@@ -425,10 +425,24 @@ void SPASynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
     arp.prepare (sampleRate);
+    midiClock.prepare (sampleRate);
     fxChain.prepare (sampleRate, samplesPerBlock);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+}
+
+void SPASynthProcessor::setInternalBpm (double bpm)
+{
+    bpm = juce::jlimit (20.0, 300.0, bpm);
+    internalBpm.store (bpm, std::memory_order_relaxed);
+    apvts.state.setProperty ("standaloneBpm", bpm, nullptr);
+}
+
+void SPASynthProcessor::setTempoSyncMode (int mode)
+{
+    tempoSyncMode.store (mode, std::memory_order_relaxed);
+    apvts.state.setProperty ("tempoSyncMode", mode, nullptr);
 }
 
 void SPASynthProcessor::updateFXParams()
@@ -547,12 +561,8 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         route.depth = depth;
     }
 
-    // Transport.
-    shared.bpm = 120.0;
-    if (auto* playHead = getPlayHead())
-        if (const auto position = playHead->getPosition())
-            if (const auto bpm = position->getBpm())
-                shared.bpm = *bpm;
+    // Transport (resolved once in processBlock: host, internal, or MIDI clock).
+    shared.bpm = blockBpm;
 
     // LFO params + global free-running phases (value at block start; advanced
     // past the block for next time).
@@ -622,6 +632,37 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         keyboardState.allNotesOff (0);
     }
 
+    // Resolve tempo + transport once per block: host playhead if it provides a
+    // tempo (plugin), otherwise the standalone internal BPM or external MIDI
+    // clock. Everything tempo-synced (arp, delay, LFOs) reads blockBpm below.
+    midiClock.process (midi, buffer.getNumSamples());
+    blockBpm = 120.0; blockPlaying = true; blockPpq = 0.0;
+    bool gotHostTempo = false;
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm())
+            {
+                blockBpm = *bpm;
+                blockPlaying = position->getIsPlaying();
+                if (const auto ppq = position->getPpqPosition())
+                    blockPpq = *ppq;
+                gotHostTempo = true;
+            }
+    if (! gotHostTempo)   // standalone / host without tempo
+    {
+        if (tempoSyncMode.load (std::memory_order_relaxed) == 1 && midiClock.hasClock())
+        {
+            blockBpm = midiClock.bpm();
+            blockPlaying = midiClock.isPlaying();
+        }
+        else
+        {
+            blockBpm = internalBpm.load (std::memory_order_relaxed);
+            blockPlaying = true;   // internal clock free-runs
+        }
+    }
+    currentBpm.store (blockBpm, std::memory_order_relaxed);
+
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
 
@@ -641,20 +682,10 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         ap.stutter      = raw.arp.stutter->load();
         ap.jump         = raw.arp.jump->load();
         ap.humanize     = raw.arp.humanize->load();
-        ap.bpm          = 120.0;
-        ap.sampleRate   = currentSampleRate;
-
-        if (auto* playHead = getPlayHead())
-        {
-            if (const auto position = playHead->getPosition())
-            {
-                if (const auto bpm = position->getBpm())
-                    ap.bpm = *bpm;
-                ap.hostPlaying = position->getIsPlaying();
-                if (const auto ppq = position->getPpqPosition())
-                    ap.ppqAtBlockStart = *ppq;
-            }
-        }
+        ap.bpm             = blockBpm;
+        ap.sampleRate      = currentSampleRate;
+        ap.hostPlaying     = blockPlaying;
+        ap.ppqAtBlockStart = blockPpq;
 
         arp.process (midi, buffer.getNumSamples(), ap);
     }
@@ -736,6 +767,12 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
     }
 
     apvts.replaceState (state);
+
+    // Standalone tempo settings ride in the state tree (not parameters).
+    internalBpm.store ((double) apvts.state.getProperty ("standaloneBpm", 120.0),
+                       std::memory_order_relaxed);
+    tempoSyncMode.store ((int) apvts.state.getProperty ("tempoSyncMode", 0),
+                         std::memory_order_relaxed);
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {

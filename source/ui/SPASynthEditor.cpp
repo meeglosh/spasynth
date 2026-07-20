@@ -229,6 +229,91 @@ void ContentComponent::PanicButton::paintButton (juce::Graphics& g,
     g.fillEllipse (cx - dot * 0.5f, circle.getY() + d * 0.64f, dot, dot);             // ! dot
 }
 
+namespace
+{
+// Standalone-only tempo bar: internal BPM (editable), tap tempo, and an
+// INT/EXT sync toggle. In EXT mode the field shows the incoming MIDI clock.
+class TempoBar : public juce::Component,
+                 private juce::Timer
+{
+public:
+    explicit TempoBar (SPASynthProcessor& p) : processor (p)
+    {
+        tempo.setSliderStyle (juce::Slider::IncDecButtons);
+        tempo.setRange (20.0, 300.0, 1.0);
+        tempo.setValue (processor.getInternalBpm(), juce::dontSendNotification);
+        tempo.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 18);
+        tempo.setTooltip ("Tempo (BPM) for the standalone");
+        tempo.onValueChange = [this]
+        {
+            if (processor.getTempoSyncMode() == 0)
+                processor.setInternalBpm (tempo.getValue());
+        };
+        addAndMakeVisible (tempo);
+
+        tap.setButtonText ("TAP");
+        tap.setTooltip ("Tap tempo");
+        tap.onClick = [this] { onTap(); };
+        addAndMakeVisible (tap);
+
+        sync.setTooltip ("Tempo source: INT = internal clock, EXT = external MIDI clock");
+        sync.onClick = [this] { toggleSync(); };
+        addAndMakeVisible (sync);
+
+        applyMode();
+        startTimerHz (8);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        sync.setBounds (r.removeFromLeft (34).reduced (1));
+        tap.setBounds (r.removeFromRight (34).reduced (1));
+        tempo.setBounds (r.reduced (2, 1));
+    }
+
+private:
+    void onTap()
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (lastTap > 0.0 && now - lastTap < 2000.0)
+        {
+            const auto bpm = 60000.0 / (now - lastTap);
+            tapBpm = tapBpm > 0.0 ? tapBpm * 0.5 + bpm * 0.5 : bpm;
+            tempo.setValue (juce::jlimit (20.0, 300.0, tapBpm), juce::sendNotification);
+        }
+        else tapBpm = 0.0;
+        lastTap = now;
+    }
+
+    void toggleSync()
+    {
+        const int mode = processor.getTempoSyncMode() == 1 ? 0 : 1;
+        processor.setTempoSyncMode (mode);
+        applyMode();
+    }
+
+    void applyMode()
+    {
+        const bool ext = processor.getTempoSyncMode() == 1;
+        sync.setButtonText (ext ? "EXT" : "INT");
+        tempo.setEnabled (! ext);   // external MIDI clock drives the value
+    }
+
+    void timerCallback() override
+    {
+        if (processor.getTempoSyncMode() == 1)
+            tempo.setValue (juce::roundToInt (processor.getCurrentBpm()),
+                            juce::dontSendNotification);
+    }
+
+    SPASynthProcessor& processor;
+    juce::Slider tempo;
+    juce::TextButton tap, sync;
+    double lastTap = 0.0, tapBpm = 0.0;
+};
+} // namespace
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
       keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
@@ -264,6 +349,14 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     panicButton.setTooltip ("Panic: stop all sound and clear stuck notes");
     panicButton.onClick = [this] { processor.panic(); };
     addAndMakeVisible (panicButton);
+
+    // The standalone has no host tempo, so it gets a tempo bar (internal BPM /
+    // tap / external MIDI clock). The plugin follows the host, so no bar.
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        tempoBar = std::make_unique<TempoBar> (processor);
+        addAndMakeVisible (*tempoBar);
+    }
 
     prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
     prevPresetButton.setTooltip ("Previous preset");
@@ -587,7 +680,9 @@ void ContentComponent::paint (juce::Graphics& g)
 void ContentComponent::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop (metrics::brandBandHeight);
+    auto brandBand = bounds.removeFromTop (metrics::brandBandHeight);
+    if (tempoBar != nullptr)   // standalone tempo bar, top-left of the brand band
+        tempoBar->setBounds (brandBand.removeFromLeft (188).reduced (8, 5));
 
     // --- Header -------------------------------------------------------------
     auto header = bounds.removeFromTop (metrics::headerHeight);

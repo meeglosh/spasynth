@@ -445,10 +445,34 @@ void SPASynthProcessor::setTempoSyncMode (int mode)
     apvts.state.setProperty ("tempoSyncMode", mode, nullptr);
 }
 
+void SPASynthProcessor::setFxOrder (const juce::Array<int>& moduleIds)
+{
+    if (moduleIds.size() != dsp::FXChain::numModules)
+        return;
+    dsp::FXChain::Module ord[dsp::FXChain::numModules];
+    for (int i = 0; i < dsp::FXChain::numModules; ++i)
+        ord[i] = (dsp::FXChain::Module) moduleIds[i];
+    const auto packed = dsp::FXChain::packOrder (ord);
+    fxOrderPacked.store (packed, std::memory_order_relaxed);
+    apvts.state.setProperty ("fxOrder", (juce::int64) packed, nullptr);
+}
+
+juce::Array<int> SPASynthProcessor::getFxOrder() const
+{
+    dsp::FXChain::Module ord[dsp::FXChain::numModules];
+    dsp::FXChain::unpackOrder (fxOrderPacked.load (std::memory_order_relaxed), ord);
+    juce::Array<int> ids;
+    for (auto m : ord)
+        ids.add ((int) m);
+    return ids;
+}
+
 void SPASynthProcessor::updateFXParams()
 {
     const auto& rf = raw.fx;
     auto& p = fxParams;
+
+    dsp::FXChain::unpackOrder (fxOrderPacked.load (std::memory_order_relaxed), p.order);
 
     p.distEnable     = rf.distEnable->load() >= 0.5f;
     p.distType       = (int) rf.distType->load();
@@ -772,6 +796,9 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
     internalBpm.store ((double) apvts.state.getProperty ("standaloneBpm", 120.0),
                        std::memory_order_relaxed);
     tempoSyncMode.store ((int) apvts.state.getProperty ("tempoSyncMode", 0),
+                         std::memory_order_relaxed);
+    fxOrderPacked.store ((juce::uint64) (juce::int64) apvts.state.getProperty (
+                             "fxOrder", (juce::int64) dsp::FXChain::defaultOrderPacked()),
                          std::memory_order_relaxed);
 
     for (int s = 0; s < params::numOscSlots; ++s)

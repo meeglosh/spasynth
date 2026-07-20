@@ -5,6 +5,7 @@
 #include "../params/ParameterRegistry.h"
 #include "../params/Randomizer.h"
 #include "SPASynthLookAndFeel.h"
+#include "DraggableTabs.h"
 #include "ModulePanels.h"
 #include "SectionPanel.h"
 #include "MatrixPanel.h"
@@ -116,7 +117,7 @@ private:
     juce::TabbedComponent lfoTabs { juce::TabbedButtonBar::TabsAtTop };
     ChaosPanel chaosPanel;
     ArpPanel arpPanel;
-    juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
+    DraggableTabs fxTabs;   // FX tabs are drag-reorderable -> chain order
     MatrixPanel matrixPanel;
     OutputMeter outputMeter;
 

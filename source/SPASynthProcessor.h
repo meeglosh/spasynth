@@ -114,6 +114,11 @@ public:
     int getTempoSyncMode() const { return tempoSyncMode.load (std::memory_order_relaxed); }
     double getCurrentBpm() const { return currentBpm.load (std::memory_order_relaxed); }
 
+    // FX chain order (drag-reorderable, saved per preset): FXChain module ids in
+    // processing order. RT-safe hand-off via a single packed atomic.
+    void setFxOrder (const juce::Array<int>& moduleIds);
+    juce::Array<int> getFxOrder() const;
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -208,6 +213,9 @@ private:
     double blockBpm = 120.0;
     bool blockPlaying = true;
     double blockPpq = 0.0;
+
+    // Packed FX chain order (4 bits/module); set by the UI, read each block.
+    std::atomic<juce::uint64> fxOrderPacked { dsp::FXChain::defaultOrderPacked() };
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot

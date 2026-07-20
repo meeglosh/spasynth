@@ -69,7 +69,7 @@ double FXChain::tailSeconds (const Params& p) const
 
 void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
 {
-    for (const auto module : processOrder)
+    for (const auto module : params.order)
     {
         switch (module)
         {

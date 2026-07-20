@@ -660,6 +660,28 @@ namespace
         file.deleteFile();
     }
 
+    // FX chain order packs to a uint64 and back; garbage falls back to natural.
+    static void fxOrderTest()
+    {
+        std::cout << "fxOrderTest\n";
+        using FX = spa::dsp::FXChain;
+
+        FX::Module order[FX::numModules] { FX::Module::eq, FX::Module::reverb,
+            FX::Module::delay, FX::Module::chorus, FX::Module::distortion };
+        FX::Module back[FX::numModules];
+        FX::unpackOrder (FX::packOrder (order), back);
+        bool roundTrip = true;
+        for (int i = 0; i < FX::numModules; ++i)
+            roundTrip = roundTrip && (order[i] == back[i]);
+        expect (roundTrip, "fx order packs and unpacks round-trip");
+
+        FX::unpackOrder (0xFFFFFFFFFFFFFFFFull, back);   // garbage
+        bool natural = true;
+        for (int i = 0; i < FX::numModules; ++i)
+            natural = natural && ((int) back[i] == i);
+        expect (natural, "invalid packed order falls back to natural order");
+    }
+
     // MIDI Beat Clock derives tempo (24 pulses per quarter). At 120 BPM that is
     // one clock every 1000 samples at 48k; the tracker should read ~120.
     static void midiClockTest()
@@ -2188,6 +2210,7 @@ int main (int argc, char* argv[])
     reverbMixTest();
     panicTest();
     midiClockTest();
+    fxOrderTest();
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();

@@ -15,7 +15,39 @@ class FXChain
 public:
     FXChain() = default;
 
+    // Append-only: module ids are serialized in the per-preset chain order.
     enum class Module { distortion, chorus, delay, reverb, eq };
+    static constexpr int numModules = 5;
+
+    // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
+    // for the lock-free UI->audio hand-off and compact preset storage. Unpack
+    // validates the value is a permutation and falls back to the natural order.
+    static juce::uint64 packOrder (const Module* order)
+    {
+        juce::uint64 v = 0;
+        for (int i = 0; i < numModules; ++i)
+            v |= (juce::uint64) ((int) order[i] & 0xF) << (i * 4);
+        return v;
+    }
+    static juce::uint64 defaultOrderPacked()
+    {
+        Module def[numModules] { Module::distortion, Module::chorus, Module::delay,
+                                 Module::reverb, Module::eq };
+        return packOrder (def);
+    }
+    static void unpackOrder (juce::uint64 packed, Module* order)
+    {
+        bool seen[16] = {}; bool ok = true; int tmp[numModules];
+        for (int i = 0; i < numModules; ++i)
+        {
+            const int id = (int) ((packed >> (i * 4)) & 0xF);
+            tmp[i] = id;
+            if (id < 0 || id >= numModules || seen[id]) { ok = false; break; }
+            seen[id] = true;
+        }
+        for (int i = 0; i < numModules; ++i)
+            order[i] = ok ? (Module) tmp[i] : (Module) i;
+    }
 
     struct Params
     {
@@ -52,6 +84,11 @@ public:
         float eqHighGainDb = 0.0f;
 
         double bpm = 120.0;
+
+        // Runtime FX processing order (drag-reorderable, saved per preset).
+        Module order[numModules] {
+            Module::distortion, Module::chorus, Module::delay, Module::reverb, Module::eq
+        };
     };
 
     void prepare (double sampleRate, int maxBlockSize);
@@ -68,10 +105,6 @@ private:
     void processDelay (juce::AudioBuffer<float>&, const Params&);
     void processReverb (juce::AudioBuffer<float>&, const Params&);
     void processEQ (juce::AudioBuffer<float>&, const Params&);
-
-    static constexpr Module processOrder[] = {
-        Module::distortion, Module::chorus, Module::delay, Module::reverb, Module::eq,
-    };
 
     double sampleRate = 48000.0;
 

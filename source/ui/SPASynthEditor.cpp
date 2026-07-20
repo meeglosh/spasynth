@@ -492,6 +492,12 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::eq, params::Section::fxEQ, "EQ"), true);
     addAndMakeVisible (fxTabs);
 
+    // Tab names by FXChain::Module id (DIST=0..EQ=4). Drag reorders the tabs and
+    // the FX chain together; restore the saved per-preset order.
+    fxTabs.setModuleNames ({ "DIST", "CHORUS", "DELAY", "REVERB", "EQ" });
+    fxTabs.applyOrder (processor.getFxOrder());
+    fxTabs.onOrderChanged = [this] { processor.setFxOrder (fxTabs.currentOrder()); };
+
     addAndMakeVisible (matrixPanel);
     addAndMakeVisible (outputMeter);
 

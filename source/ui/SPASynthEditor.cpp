@@ -545,7 +545,7 @@ void ContentComponent::paint (juce::Graphics& g)
     g.drawText (licenseLine.isNotEmpty()
                     ? licenseLine
                     : juce::String::fromUTF8 ("SPASYNTH  \xc2\xb7  SILVERPLATTER AUDIO"),
-                footer.reduced (10, 0).withTrimmedRight (34),   // clear the keyboard button
+                footer.reduced (10, 0).withTrimmedRight (52),   // clear the keyboard button + grip
                 juce::Justification::centredRight);
     g.drawText ("v" SPASYNTH_VERSION, footer.reduced (10, 0), juce::Justification::centredLeft);
     g.setColour (juce::Colour (0xffe7ecef).withAlpha (0.8f));
@@ -608,9 +608,13 @@ void ContentComponent::resized()
 
     bounds.removeFromBottom (metrics::footerHeight);
 
-    // Keyboard toggle button: bottom-right of the footer (Kontakt-style).
-    keyboardButton.setBounds (getLocalBounds().removeFromBottom (metrics::footerHeight)
-                                  .removeFromRight (34).reduced (7, 5));
+    // Keyboard toggle button: bottom-right of the footer (Kontakt-style), kept
+    // clear of the window resize grip that sits in the very corner.
+    {
+        auto footerRow = getLocalBounds().removeFromBottom (metrics::footerHeight);
+        footerRow.removeFromRight (24);   // clearance for the corner resize grip
+        keyboardButton.setBounds (footerRow.removeFromRight (26).reduced (4, 5));
+    }
 
     // On-screen keyboard sits just above the footer. The base height grows by
     // exactly this strip when shown, so the module grid below is unchanged.

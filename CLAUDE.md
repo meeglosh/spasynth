@@ -10,6 +10,87 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-07-20): v1.0.2 — first build to the testing team
+
+v1.0.2 is the build Mike is sending to the partner testers (Paul, Phil) — the
+first time it leaves his machine. Signed + notarized (macOS), freshly CI-built
+(Windows). One clean set in `dist/installers/` and the
+`dist/shopify/SPASynth-{Standard,Pro,Upgrade}-1.0.2/` folders (byte-identical
+across locations). Team changelog: `docs/CHANGELOG.md`. Version stays **1.0.2**
+(never distributed before); bump to 1.0.3+ for any change after this goes out.
+
+**1.0.2 changes (from the partner testing round):**
+- **CRITICAL — macOS deployment target (load-bearing).** Builds had no
+  `CMAKE_OSX_DEPLOYMENT_TARGET`, so binaries inherited the build machine's OS
+  (macOS 26, `minos 26`); dyld refused to launch the standalone on anything
+  older (plugins still loaded — hosts dlopen them without an
+  LSMinimumSystemVersion check). Pinned to **11.0** before `project()` with
+  FORCE (stale caches held an empty value). Never remove this. Verify:
+  `otool -l <bin> | grep -A2 LC_BUILD_VERSION` → `minos 11.0`.
+- **Arp swing fix.** `firstStep` was computed from the un-swung beat, so a swung
+  (odd) step whose delay crossed an audio-buffer boundary was dropped (every odd
+  step of a 1/16 arp). Start the scan one step early, guarded against
+  double-fire (`Arpeggiator.cpp`) + `reverbMixTest`-style regression in the arp
+  test.
+- **Settings menu.** Top-left logo (`SettingsButton` overlay over the painted
+  logo) opens a PopupMenu: Set Library Folder, Rescan, Accent Colors, Show
+  Keyboard, Clear All MIDI Learn. Works in plugin AND standalone. Answers Phil's
+  "no settings menu in Live" — the standalone's JUCE "Options" button is
+  audio-DEVICE settings, which cannot exist in a plugin (the host owns the audio
+  device + MIDI routing), so this is the host-correct equivalent.
+- **On-screen keyboard.** `juce::MidiKeyboardComponent` bottom strip, toggled
+  from the settings menu or the bottom-right `KeyboardButton` (piano icon, lit
+  in the accent colour when shown, kept clear of the window resize grip). Mouse
+  + computer-QWERTY playing (JUCE maps the keys by default). Processor owns a
+  `juce::MidiKeyboardState`; `processBlock` merges its notes via
+  `keyboardState.processNextMidiBuffer(...)` (brief lock — the standard JUCE
+  on-screen-keyboard idiom, accepted here). Persists in the APVTS property
+  `uiKeyboardVisible`. The strip adds `metrics::keyboardStripHeight` to the
+  content base height so the module grid is unchanged; the shell re-fixes the
+  window aspect ratio on toggle (`getContentBaseHeight`, `keyboardToggled`,
+  `configureConstrainer` in `SPASynthEditor.cpp`).
+- **Reverb MIX fix.** Was `wetLevel=mix, dryLevel=1-0.4*mix` — the dry never
+  dropped below ~60% (never full wet), and juce::Reverb scales dryLevel by 2x
+  internally so mix=0 was ~+6 dB, not transparent. Now an equal-power crossfade:
+  `wetLevel=sin(theta), dryLevel=0.5*cos(theta)`, theta = `mix*halfPi` → unity
+  dry at 0, pure reverb at 1. This changes how reverb-heavy factory presets
+  sound (quieter, more balanced). `FXChain::processReverb` + `reverbMixTest`.
+- UI polish: master meter padded off the right edge; keyboard toggle button.
+
+**CI change (`.github/workflows/build.yml`).** Repo went private mid-session;
+private repos meter Actions minutes and **macOS runners bill at 10x**, so one
+~2h universal run drained the monthly quota and every push then failed instantly
+(4s, no steps). CI's macOS artifact was unsigned/unused (we build+sign+notarize
+macOS locally), so: **Windows builds on every push** (only platform we cannot
+build locally); **macOS is `workflow_dispatch` only**. Until the quota resets or
+a spending limit is set, a private repo cannot build Windows — the session
+workaround was to make the repo **temporarily public**, push (Windows-only on
+push = no 10x macOS), `gh run download ... -n spasynth-installer-Windows`, then
+re-private. PAT has Actions:read (Mike enabled it) but not Actions:write (cannot
+`gh run rerun`; trigger with an empty commit push instead).
+
+**Signing/notary gotcha.** The `SPASYNTH_NOTARY` keychain profile vanished
+mid-session (notarize failed "No Keychain password item found for profile") with
+the keychain unlocked. Mike recreated it: `xcrun notarytool store-credentials
+SPASYNTH_NOTARY --apple-id <id> --team-id 7K9WY5T49S` (prompts for the
+app-specific password, kept local). If notarize fails this way the signed pkg
+does NOT need rebuilding — just `xcrun notarytool submit <pkg>
+--keychain-profile SPASYNTH_NOTARY --wait` then `xcrun stapler staple <pkg>`.
+
+**Open (not launch blockers):**
+- **External-monitor drag (Paul).** Standalone window will not drag from a
+  Retina laptop screen onto an external monitor (mixed-DPI). Root cause:
+  fixed-aspect window + the points-per-pixel change at the display seam; JUCE
+  re-evaluates size against the aspect ratio and snaps it back. Not reproducible
+  on Mike's matched-DPI setup; risky to fix blind (could break resizing for
+  everyone); works fine as a plugin in a DAW. Documented as a known limitation
+  in `docs/CHANGELOG.md`; workarounds: make the external the main display, or use
+  the plugin. Revisit post-launch on a real mixed-DPI rig if customers hit it.
+- **RX 9 "Failed to load" (Phil).** Not a bug: RX 9 is an effects host and
+  cannot host an instrument (SPASynth is a synth; Zebra2 shows the same in RX).
+  The VST3 passes pluginval strictness 8 and loads in Logic/Live. Test in an
+  instrument host.
+
 ## Where the project stands (2026-07-11)
 
 **v1.0.0 — feature-complete, packaged, in macOS smoke testing.** All 10 brief

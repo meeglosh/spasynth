@@ -351,6 +351,21 @@ private:
             std::atomic<float>* modManual = nullptr;
             std::atomic<float>* modWidth = nullptr;
             std::atomic<float>* modMix = nullptr;
+
+            std::atomic<float>* tremEnable = nullptr;
+            std::atomic<float>* tremRate = nullptr;
+            std::atomic<float>* tremSync = nullptr;
+            std::atomic<float>* tremDivision = nullptr;
+            std::atomic<float>* tremDepth = nullptr;
+            std::atomic<float>* tremShape = nullptr;
+            std::atomic<float>* tremStereo = nullptr;
+            std::atomic<float>* tremMix = nullptr;
+            std::atomic<float>* vibEnable = nullptr;
+            std::atomic<float>* vibRate = nullptr;
+            std::atomic<float>* vibSync = nullptr;
+            std::atomic<float>* vibDivision = nullptr;
+            std::atomic<float>* vibDepth = nullptr;
+            std::atomic<float>* vibMix = nullptr;
         } fx {};
     } raw;
 

@@ -160,6 +160,21 @@ SPASynthProcessor::SPASynthProcessor()
         rf.modManual      = apvts.getRawParameterValue (fx::modManual);
         rf.modWidth       = apvts.getRawParameterValue (fx::modWidth);
         rf.modMix         = apvts.getRawParameterValue (fx::modMix);
+
+        rf.tremEnable     = apvts.getRawParameterValue (fx::tremEnable);
+        rf.tremRate       = apvts.getRawParameterValue (fx::tremRate);
+        rf.tremSync       = apvts.getRawParameterValue (fx::tremSync);
+        rf.tremDivision   = apvts.getRawParameterValue (fx::tremDivision);
+        rf.tremDepth      = apvts.getRawParameterValue (fx::tremDepth);
+        rf.tremShape      = apvts.getRawParameterValue (fx::tremShape);
+        rf.tremStereo     = apvts.getRawParameterValue (fx::tremStereo);
+        rf.tremMix        = apvts.getRawParameterValue (fx::tremMix);
+        rf.vibEnable      = apvts.getRawParameterValue (fx::vibEnable);
+        rf.vibRate        = apvts.getRawParameterValue (fx::vibRate);
+        rf.vibSync        = apvts.getRawParameterValue (fx::vibSync);
+        rf.vibDivision    = apvts.getRawParameterValue (fx::vibDivision);
+        rf.vibDepth       = apvts.getRawParameterValue (fx::vibDepth);
+        rf.vibMix         = apvts.getRawParameterValue (fx::vibMix);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -530,6 +545,21 @@ void SPASynthProcessor::updateFXParams()
     p.modManualMs = rf.modManual->load();
     p.modWidth    = rf.modWidth->load();
     p.modMix      = rf.modMix->load();
+
+    p.tremEnable   = rf.tremEnable->load() >= 0.5f;
+    p.tremRate     = rf.tremRate->load();
+    p.tremSync     = rf.tremSync->load() >= 0.5f;
+    p.tremDivision = (int) rf.tremDivision->load();
+    p.tremDepth    = rf.tremDepth->load();
+    p.tremShape    = (int) rf.tremShape->load();
+    p.tremStereo   = rf.tremStereo->load();
+    p.tremMix      = rf.tremMix->load();
+    p.vibEnable    = rf.vibEnable->load() >= 0.5f;
+    p.vibRate      = rf.vibRate->load();
+    p.vibSync      = rf.vibSync->load() >= 0.5f;
+    p.vibDivision  = (int) rf.vibDivision->load();
+    p.vibDepth     = rf.vibDepth->load();
+    p.vibMix       = rf.vibMix->load();
     p.bpm            = shared.bpm;
 }
 

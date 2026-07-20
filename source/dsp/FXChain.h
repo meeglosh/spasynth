@@ -2,6 +2,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include "ModEffect.h"
+#include "TremVib.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -17,8 +18,8 @@ public:
     FXChain() = default;
 
     // Append-only: module ids are serialized in the per-preset chain order.
-    enum class Module { distortion, chorus, delay, reverb, eq, mod };
-    static constexpr int numModules = 6;
+    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib };
+    static constexpr int numModules = 7;
 
     // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
     // for the lock-free UI->audio hand-off and compact preset storage. Unpack
@@ -33,7 +34,7 @@ public:
     static juce::uint64 defaultOrderPacked()
     {
         Module def[numModules] { Module::distortion, Module::chorus, Module::mod,
-                                 Module::delay, Module::reverb, Module::eq };
+                                 Module::tremVib, Module::delay, Module::reverb, Module::eq };
         return packOrder (def);
     }
     static void unpackOrder (juce::uint64 packed, Module* order)
@@ -99,10 +100,26 @@ public:
         float modWidth = 0.5f;
         float modMix = 0.5f;
 
+        bool tremEnable = false;
+        float tremRate = 5.0f;
+        bool tremSync = false;
+        int tremDivision = 6;
+        float tremDepth = 0.5f;
+        int tremShape = 0;
+        float tremStereo = 0.0f;
+        float tremMix = 1.0f;
+
+        bool vibEnable = false;
+        float vibRate = 5.0f;
+        bool vibSync = false;
+        int vibDivision = 6;
+        float vibDepth = 0.5f;
+        float vibMix = 1.0f;
+
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
             Module::distortion, Module::chorus, Module::mod,
-            Module::delay, Module::reverb, Module::eq
+            Module::tremVib, Module::delay, Module::reverb, Module::eq
         };
     };
 
@@ -121,9 +138,11 @@ private:
     void processReverb (juce::AudioBuffer<float>&, const Params&);
     void processEQ (juce::AudioBuffer<float>&, const Params&);
     void processMod (juce::AudioBuffer<float>&, const Params&);
+    void processTremVib (juce::AudioBuffer<float>&, const Params&);
 
     double sampleRate = 48000.0;
     ModEffect modEffect;
+    TremVib tremVibEffect;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;

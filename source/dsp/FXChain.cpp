@@ -17,6 +17,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
 
     chorus.prepare (spec);
     modEffect.prepare (sampleRate, maxBlockSize);
+    tremVibEffect.prepare (sampleRate, maxBlockSize);
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
@@ -40,6 +41,7 @@ void FXChain::reset()
         f.reset();
     chorus.reset();
     modEffect.reset();
+    tremVibEffect.reset();
     delayBuffer.clear();
     reverb.reset();
     for (auto& f : eqLow)  f.reset();
@@ -81,6 +83,8 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::reverb:     if (params.reverbEnable) processReverb (buffer, params); break;
             case Module::eq:         if (params.eqEnable)     processEQ (buffer, params); break;
             case Module::mod:        if (params.modEnable)    processMod (buffer, params); break;
+            case Module::tremVib:    if (params.tremEnable || params.vibEnable)
+                                                              processTremVib (buffer, params); break;
         }
     }
 }
@@ -208,6 +212,28 @@ void FXChain::processMod (juce::AudioBuffer<float>& buffer, const Params& p)
     mp.spread   = p.modWidth;
     mp.mix      = p.modMix;
     modEffect.process (buffer, mp);
+}
+
+void FXChain::processTremVib (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    const auto syncHz = [&] (int div)
+    {
+        return (float) (p.bpm / 60.0
+                        / juce::jmax (0.01, (double) params::lfoDivisionBeats (div)));
+    };
+
+    TremVib::Params tp;
+    tp.tremOn     = p.tremEnable;
+    tp.tremRateHz = p.tremSync ? syncHz (p.tremDivision) : p.tremRate;
+    tp.tremDepth  = p.tremDepth;
+    tp.tremShape  = p.tremShape;
+    tp.tremStereo = p.tremStereo;
+    tp.tremMix    = p.tremMix;
+    tp.vibOn      = p.vibEnable;
+    tp.vibRateHz  = p.vibSync ? syncHz (p.vibDivision) : p.vibRate;
+    tp.vibDepth   = p.vibDepth;
+    tp.vibMix     = p.vibMix;
+    tremVibEffect.process (buffer, tp);
 }
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)

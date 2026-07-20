@@ -28,6 +28,7 @@ juce::String sectionName (Section s)
         case Section::fxReverb: return "FX Reverb";
         case Section::fxEQ:     return "FX EQ";
         case Section::fxMod:    return "FX Mod";
+        case Section::fxTremVib: return "FX Trem/Vib";
         case Section::matrix:   return "Mod Matrix";
     }
     return {};
@@ -650,6 +651,47 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::modMix, "Mod Mix", Section::fxMod,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+
+    // FX Tremolo / Vibrato (independent sections in one tab).
+    p.push_back ({ fx::tremEnable, "Trem On", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::tremRate, "Trem Rate", Section::fxTremVib,
+                   ParamKind::floatParam, frequencyRange (0.05f, 20.0f), 5.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::tremSync, "Trem Sync", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::tremDivision, "Trem Div", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::tremDepth, "Trem Depth", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::tremShape, "Trem Shape", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Sine", "Triangle", "Square", "Saw" } });
+    p.push_back ({ fx::tremStereo, "Trem Stereo", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::tremMix, "Trem Mix", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::vibEnable, "Vib On", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::vibRate, "Vib Rate", Section::fxTremVib,
+                   ParamKind::floatParam, frequencyRange (0.05f, 14.0f), 5.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::vibSync, "Vib Sync", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::vibDivision, "Vib Div", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::vibDepth, "Vib Depth", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.4f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::vibMix, "Vib Mix", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true } });
 
     return p;
 }

@@ -40,6 +40,7 @@ enum class Section
     fxEQ,
     matrix,
     fxMod,
+    fxTremVib,
 };
 
 inline constexpr Section allSections[] = {
@@ -47,7 +48,8 @@ inline constexpr Section allSections[] = {
     Section::filter1, Section::filter2, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
     Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
-    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::fxMod, Section::matrix,
+    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::fxMod,
+    Section::fxTremVib, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -322,6 +324,21 @@ namespace id
         inline constexpr const char* modManual   = "fxMod.manual";
         inline constexpr const char* modWidth    = "fxMod.width";
         inline constexpr const char* modMix      = "fxMod.mix";
+
+        inline constexpr const char* tremEnable   = "fxTrem.enable";
+        inline constexpr const char* tremRate     = "fxTrem.rate";
+        inline constexpr const char* tremSync     = "fxTrem.sync";
+        inline constexpr const char* tremDivision = "fxTrem.division";
+        inline constexpr const char* tremDepth    = "fxTrem.depth";
+        inline constexpr const char* tremShape    = "fxTrem.shape";
+        inline constexpr const char* tremStereo   = "fxTrem.stereo";
+        inline constexpr const char* tremMix      = "fxTrem.mix";
+        inline constexpr const char* vibEnable    = "fxVib.enable";
+        inline constexpr const char* vibRate      = "fxVib.rate";
+        inline constexpr const char* vibSync      = "fxVib.sync";
+        inline constexpr const char* vibDivision  = "fxVib.division";
+        inline constexpr const char* vibDepth     = "fxVib.depth";
+        inline constexpr const char* vibMix       = "fxVib.mix";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

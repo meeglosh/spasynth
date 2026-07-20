@@ -667,7 +667,8 @@ namespace
         using FX = spa::dsp::FXChain;
 
         FX::Module order[FX::numModules] { FX::Module::eq, FX::Module::reverb,
-            FX::Module::mod, FX::Module::delay, FX::Module::chorus, FX::Module::distortion };
+            FX::Module::tremVib, FX::Module::mod, FX::Module::delay,
+            FX::Module::chorus, FX::Module::distortion };
         FX::Module back[FX::numModules];
         FX::unpackOrder (FX::packOrder (order), back);
         bool roundTrip = true;

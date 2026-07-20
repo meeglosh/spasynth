@@ -41,6 +41,7 @@ enum class Section
     matrix,
     fxMod,
     fxTremVib,
+    fxLimiter,
 };
 
 inline constexpr Section allSections[] = {
@@ -49,7 +50,7 @@ inline constexpr Section allSections[] = {
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
     Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
     Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::fxMod,
-    Section::fxTremVib, Section::matrix,
+    Section::fxTremVib, Section::fxLimiter, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -339,6 +340,16 @@ namespace id
         inline constexpr const char* vibDivision  = "fxVib.division";
         inline constexpr const char* vibDepth     = "fxVib.depth";
         inline constexpr const char* vibMix       = "fxVib.mix";
+
+        inline constexpr const char* limEnable      = "fxLim.enable";
+        inline constexpr const char* limDrive       = "fxLim.drive";
+        inline constexpr const char* limCeiling     = "fxLim.ceiling";
+        inline constexpr const char* limRelease     = "fxLim.release";
+        inline constexpr const char* limAutoRelease = "fxLim.autoRelease";
+        inline constexpr const char* limCharacter   = "fxLim.character";
+        inline constexpr const char* limStereoLink  = "fxLim.stereoLink";
+        inline constexpr const char* limTruePeak    = "fxLim.truePeak";
+        inline constexpr const char* limLookahead   = "fxLim.lookahead";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

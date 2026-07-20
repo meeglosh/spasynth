@@ -18,6 +18,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     chorus.prepare (spec);
     modEffect.prepare (sampleRate, maxBlockSize);
     tremVibEffect.prepare (sampleRate, maxBlockSize);
+    limiterEffect.prepare (sampleRate, maxBlockSize);
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
@@ -42,6 +43,7 @@ void FXChain::reset()
     chorus.reset();
     modEffect.reset();
     tremVibEffect.reset();
+    limiterEffect.reset();
     delayBuffer.clear();
     reverb.reset();
     for (auto& f : eqLow)  f.reset();
@@ -85,6 +87,7 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::mod:        if (params.modEnable)    processMod (buffer, params); break;
             case Module::tremVib:    if (params.tremEnable || params.vibEnable)
                                                               processTremVib (buffer, params); break;
+            case Module::limiter:    if (params.limEnable)    processLimiter (buffer, params); break;
         }
     }
 }
@@ -234,6 +237,29 @@ void FXChain::processTremVib (juce::AudioBuffer<float>& buffer, const Params& p)
     tp.vibDepth   = p.vibDepth;
     tp.vibMix     = p.vibMix;
     tremVibEffect.process (buffer, tp);
+}
+
+void FXChain::processLimiter (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    Limiter::Params lp;
+    lp.enable      = p.limEnable;
+    lp.driveDb     = p.limDrive;
+    lp.ceilingDb   = p.limCeiling;
+    lp.releaseMs   = p.limRelease;
+    lp.autoRelease = p.limAutoRelease;
+    lp.character   = p.limCharacter;
+    lp.stereoLink  = p.limStereoLink;
+    lp.truePeak    = p.limTruePeak;
+    lp.lookahead   = p.limLookahead;
+    limiterEffect.process (buffer, lp);
+}
+
+int FXChain::limiterLatencySamples (const Params& p) const
+{
+    Limiter::Params lp;
+    lp.enable    = p.limEnable;
+    lp.lookahead = p.limLookahead;
+    return limiterEffect.latencySamples (lp);
 }
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)

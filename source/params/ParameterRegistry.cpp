@@ -29,6 +29,7 @@ juce::String sectionName (Section s)
         case Section::fxEQ:     return "FX EQ";
         case Section::fxMod:    return "FX Mod";
         case Section::fxTremVib: return "FX Trem/Vib";
+        case Section::fxLimiter: return "FX Limiter";
         case Section::matrix:   return "Mod Matrix";
     }
     return {};
@@ -692,6 +693,32 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::vibMix, "Vib Mix", Section::fxTremVib,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = true } });
+
+    // FX Limiter / Maximizer (defaults last in the chain).
+    p.push_back ({ fx::limEnable, "Lim On", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::limDrive, "Lim Drive", Section::fxLimiter,
+                   ParamKind::floatParam, { 0.0f, 24.0f, 0.1f }, 0.0f, "dB",
+                   false, { .enabled = true, .maxNorm = 0.5f } });
+    p.push_back ({ fx::limCeiling, "Lim Ceiling", Section::fxLimiter,
+                   ParamKind::floatParam, { -12.0f, 0.0f, 0.1f }, -0.3f, "dB",
+                   false, { .enabled = false } });
+    p.push_back ({ fx::limRelease, "Lim Release", Section::fxLimiter,
+                   ParamKind::floatParam, { 1.0f, 1000.0f, 0.0f, 0.4f }, 120.0f, "ms",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::limAutoRelease, "Lim Auto Rel", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::limCharacter, "Lim Character", Section::fxLimiter,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Clean", "Punchy", "Aggressive" } });
+    p.push_back ({ fx::limStereoLink, "Lim Link", Section::fxLimiter,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ fx::limTruePeak, "Lim True Peak", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ fx::limLookahead, "Lim Lookahead", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
 
     return p;
 }

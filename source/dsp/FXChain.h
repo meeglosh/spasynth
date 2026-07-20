@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "ModEffect.h"
 #include "TremVib.h"
+#include "Limiter.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -18,8 +19,8 @@ public:
     FXChain() = default;
 
     // Append-only: module ids are serialized in the per-preset chain order.
-    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib };
-    static constexpr int numModules = 7;
+    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib, limiter };
+    static constexpr int numModules = 8;
 
     // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
     // for the lock-free UI->audio hand-off and compact preset storage. Unpack
@@ -34,7 +35,8 @@ public:
     static juce::uint64 defaultOrderPacked()
     {
         Module def[numModules] { Module::distortion, Module::chorus, Module::mod,
-                                 Module::tremVib, Module::delay, Module::reverb, Module::eq };
+                                 Module::tremVib, Module::delay, Module::reverb, Module::eq,
+                                 Module::limiter };
         return packOrder (def);
     }
     static void unpackOrder (juce::uint64 packed, Module* order)
@@ -116,10 +118,20 @@ public:
         float vibDepth = 0.5f;
         float vibMix = 1.0f;
 
+        bool limEnable = false;
+        float limDrive = 0.0f;
+        float limCeiling = -0.3f;
+        float limRelease = 120.0f;
+        bool limAutoRelease = false;
+        int limCharacter = 0;
+        float limStereoLink = 1.0f;
+        bool limTruePeak = false;
+        bool limLookahead = false;
+
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
-            Module::distortion, Module::chorus, Module::mod,
-            Module::tremVib, Module::delay, Module::reverb, Module::eq
+            Module::distortion, Module::chorus, Module::mod, Module::tremVib,
+            Module::delay, Module::reverb, Module::eq, Module::limiter
         };
     };
 
@@ -131,6 +143,10 @@ public:
     // Worst-case ring-out for AudioProcessor::getTailLengthSeconds().
     double tailSeconds (const Params& params) const;
 
+    // Lookahead-limiter latency (reported to the host) + gain reduction meter.
+    int limiterLatencySamples (const Params& p) const;
+    float limiterGainReductionDb() const { return limiterEffect.gainReductionDb(); }
+
 private:
     void processDistortion (juce::AudioBuffer<float>&, const Params&);
     void processChorus (juce::AudioBuffer<float>&, const Params&);
@@ -139,10 +155,12 @@ private:
     void processEQ (juce::AudioBuffer<float>&, const Params&);
     void processMod (juce::AudioBuffer<float>&, const Params&);
     void processTremVib (juce::AudioBuffer<float>&, const Params&);
+    void processLimiter (juce::AudioBuffer<float>&, const Params&);
 
     double sampleRate = 48000.0;
     ModEffect modEffect;
     TremVib tremVibEffect;
+    Limiter limiterEffect;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;

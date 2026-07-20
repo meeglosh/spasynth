@@ -175,6 +175,16 @@ SPASynthProcessor::SPASynthProcessor()
         rf.vibDivision    = apvts.getRawParameterValue (fx::vibDivision);
         rf.vibDepth       = apvts.getRawParameterValue (fx::vibDepth);
         rf.vibMix         = apvts.getRawParameterValue (fx::vibMix);
+
+        rf.limEnable      = apvts.getRawParameterValue (fx::limEnable);
+        rf.limDrive       = apvts.getRawParameterValue (fx::limDrive);
+        rf.limCeiling     = apvts.getRawParameterValue (fx::limCeiling);
+        rf.limRelease     = apvts.getRawParameterValue (fx::limRelease);
+        rf.limAutoRelease = apvts.getRawParameterValue (fx::limAutoRelease);
+        rf.limCharacter   = apvts.getRawParameterValue (fx::limCharacter);
+        rf.limStereoLink  = apvts.getRawParameterValue (fx::limStereoLink);
+        rf.limTruePeak    = apvts.getRawParameterValue (fx::limTruePeak);
+        rf.limLookahead   = apvts.getRawParameterValue (fx::limLookahead);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -216,6 +226,11 @@ SPASynthProcessor::~SPASynthProcessor()
 
 void SPASynthProcessor::timerCallback()
 {
+    // Apply any lookahead-limiter latency change to the host (message thread).
+    if (const int lat = desiredLatency.load (std::memory_order_relaxed);
+        lat != getLatencySamples())
+        setLatencySamples (lat);
+
     // Anything retired more than one timer period ago can no longer be in
     // use by the audio thread (it re-reads `live` every block).
     retiredTables.clear();
@@ -560,6 +575,18 @@ void SPASynthProcessor::updateFXParams()
     p.vibDivision  = (int) rf.vibDivision->load();
     p.vibDepth     = rf.vibDepth->load();
     p.vibMix       = rf.vibMix->load();
+
+    p.limEnable      = rf.limEnable->load() >= 0.5f;
+    p.limDrive       = rf.limDrive->load();
+    p.limCeiling     = rf.limCeiling->load();
+    p.limRelease     = rf.limRelease->load();
+    p.limAutoRelease = rf.limAutoRelease->load() >= 0.5f;
+    p.limCharacter   = (int) rf.limCharacter->load();
+    p.limStereoLink  = rf.limStereoLink->load();
+    p.limTruePeak    = rf.limTruePeak->load() >= 0.5f;
+    p.limLookahead   = rf.limLookahead->load() >= 0.5f;
+
+    desiredLatency.store (fxChain.limiterLatencySamples (p), std::memory_order_relaxed);
     p.bpm            = shared.bpm;
 }
 

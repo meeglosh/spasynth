@@ -217,6 +217,10 @@ private:
     // Packed FX chain order (4 bits/module); set by the UI, read each block.
     std::atomic<juce::uint64> fxOrderPacked { dsp::FXChain::defaultOrderPacked() };
 
+    // Lookahead-limiter latency: written from the audio thread, applied via
+    // setLatencySamples on the timer (message thread) when it changes.
+    std::atomic<int> desiredLatency { 0 };
+
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot
     {
@@ -366,6 +370,16 @@ private:
             std::atomic<float>* vibDivision = nullptr;
             std::atomic<float>* vibDepth = nullptr;
             std::atomic<float>* vibMix = nullptr;
+
+            std::atomic<float>* limEnable = nullptr;
+            std::atomic<float>* limDrive = nullptr;
+            std::atomic<float>* limCeiling = nullptr;
+            std::atomic<float>* limRelease = nullptr;
+            std::atomic<float>* limAutoRelease = nullptr;
+            std::atomic<float>* limCharacter = nullptr;
+            std::atomic<float>* limStereoLink = nullptr;
+            std::atomic<float>* limTruePeak = nullptr;
+            std::atomic<float>* limLookahead = nullptr;
         } fx {};
     } raw;
 

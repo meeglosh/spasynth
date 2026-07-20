@@ -490,11 +490,13 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb"), true);
     fxTabs.addTab ("EQ", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::eq, params::Section::fxEQ, "EQ"), true);
+    fxTabs.addTab ("MOD", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation"), true);
     addAndMakeVisible (fxTabs);
 
-    // Tab names by FXChain::Module id (DIST=0..EQ=4). Drag reorders the tabs and
-    // the FX chain together; restore the saved per-preset order.
-    fxTabs.setModuleNames ({ "DIST", "CHORUS", "DELAY", "REVERB", "EQ" });
+    // Tab names by FXChain::Module id (DIST=0 .. EQ=4, MOD=5). Drag reorders the
+    // tabs and the FX chain together; restore the saved per-preset order.
+    fxTabs.setModuleNames ({ "DIST", "CHORUS", "DELAY", "REVERB", "EQ", "MOD" });
     fxTabs.applyOrder (processor.getFxOrder());
     fxTabs.onOrderChanged = [this] { processor.setFxOrder (fxTabs.currentOrder()); };
 

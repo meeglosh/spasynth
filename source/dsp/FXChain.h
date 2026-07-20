@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include "ModEffect.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -16,8 +17,8 @@ public:
     FXChain() = default;
 
     // Append-only: module ids are serialized in the per-preset chain order.
-    enum class Module { distortion, chorus, delay, reverb, eq };
-    static constexpr int numModules = 5;
+    enum class Module { distortion, chorus, delay, reverb, eq, mod };
+    static constexpr int numModules = 6;
 
     // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
     // for the lock-free UI->audio hand-off and compact preset storage. Unpack
@@ -31,8 +32,8 @@ public:
     }
     static juce::uint64 defaultOrderPacked()
     {
-        Module def[numModules] { Module::distortion, Module::chorus, Module::delay,
-                                 Module::reverb, Module::eq };
+        Module def[numModules] { Module::distortion, Module::chorus, Module::mod,
+                                 Module::delay, Module::reverb, Module::eq };
         return packOrder (def);
     }
     static void unpackOrder (juce::uint64 packed, Module* order)
@@ -85,9 +86,23 @@ public:
 
         double bpm = 120.0;
 
+        bool modEnable = false;
+        int modType = 0;           // 0 = Phaser, 1 = Flanger
+        float modRate = 0.5f;
+        bool modSync = false;
+        int modDivision = 6;
+        float modDepth = 0.5f;
+        float modFeedback = 0.3f;
+        int modStages = 6;
+        float modCentreHz = 800.0f;
+        float modManualMs = 3.0f;
+        float modWidth = 0.5f;
+        float modMix = 0.5f;
+
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
-            Module::distortion, Module::chorus, Module::delay, Module::reverb, Module::eq
+            Module::distortion, Module::chorus, Module::mod,
+            Module::delay, Module::reverb, Module::eq
         };
     };
 
@@ -105,8 +120,10 @@ private:
     void processDelay (juce::AudioBuffer<float>&, const Params&);
     void processReverb (juce::AudioBuffer<float>&, const Params&);
     void processEQ (juce::AudioBuffer<float>&, const Params&);
+    void processMod (juce::AudioBuffer<float>&, const Params&);
 
     double sampleRate = 48000.0;
+    ModEffect modEffect;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;

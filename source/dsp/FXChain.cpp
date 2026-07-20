@@ -16,6 +16,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     }
 
     chorus.prepare (spec);
+    modEffect.prepare (sampleRate, maxBlockSize);
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
@@ -38,6 +39,7 @@ void FXChain::reset()
     for (auto& f : toneFilters)
         f.reset();
     chorus.reset();
+    modEffect.reset();
     delayBuffer.clear();
     reverb.reset();
     for (auto& f : eqLow)  f.reset();
@@ -78,6 +80,7 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::delay:      if (params.delayEnable)  processDelay (buffer, params); break;
             case Module::reverb:     if (params.reverbEnable) processReverb (buffer, params); break;
             case Module::eq:         if (params.eqEnable)     processEQ (buffer, params); break;
+            case Module::mod:        if (params.modEnable)    processMod (buffer, params); break;
         }
     }
 }
@@ -187,6 +190,24 @@ void FXChain::processReverb (juce::AudioBuffer<float>& buffer, const Params& p)
                               buffer.getNumSamples());
     else
         reverb.processMono (buffer.getWritePointer (0), buffer.getNumSamples());
+}
+
+void FXChain::processMod (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    ModEffect::Params mp;
+    mp.type    = p.modType == 1 ? ModEffect::Type::flanger : ModEffect::Type::phaser;
+    mp.rateHz  = p.modSync
+               ? (float) (p.bpm / 60.0
+                          / juce::jmax (0.01, (double) params::lfoDivisionBeats (p.modDivision)))
+               : p.modRate;
+    mp.depth    = p.modDepth;
+    mp.feedback = p.modFeedback;
+    mp.stages   = p.modStages;
+    mp.centreHz = p.modCentreHz;
+    mp.manualMs = p.modManualMs;
+    mp.spread   = p.modWidth;
+    mp.mix      = p.modMix;
+    modEffect.process (buffer, mp);
 }
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)

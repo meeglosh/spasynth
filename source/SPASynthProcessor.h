@@ -338,6 +338,19 @@ private:
             std::atomic<float>* eqMidFreq = nullptr;
             std::atomic<float>* eqMidGain = nullptr;
             std::atomic<float>* eqHighGain = nullptr;
+
+            std::atomic<float>* modEnable = nullptr;
+            std::atomic<float>* modType = nullptr;
+            std::atomic<float>* modRate = nullptr;
+            std::atomic<float>* modSync = nullptr;
+            std::atomic<float>* modDivision = nullptr;
+            std::atomic<float>* modDepth = nullptr;
+            std::atomic<float>* modFeedback = nullptr;
+            std::atomic<float>* modStages = nullptr;
+            std::atomic<float>* modCentre = nullptr;
+            std::atomic<float>* modManual = nullptr;
+            std::atomic<float>* modWidth = nullptr;
+            std::atomic<float>* modMix = nullptr;
         } fx {};
     } raw;
 

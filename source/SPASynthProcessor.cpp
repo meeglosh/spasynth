@@ -147,6 +147,19 @@ SPASynthProcessor::SPASynthProcessor()
         rf.eqMidFreq      = apvts.getRawParameterValue (fx::eqMidFreq);
         rf.eqMidGain      = apvts.getRawParameterValue (fx::eqMidGain);
         rf.eqHighGain     = apvts.getRawParameterValue (fx::eqHighGain);
+
+        rf.modEnable      = apvts.getRawParameterValue (fx::modEnable);
+        rf.modType        = apvts.getRawParameterValue (fx::modType);
+        rf.modRate        = apvts.getRawParameterValue (fx::modRate);
+        rf.modSync        = apvts.getRawParameterValue (fx::modSync);
+        rf.modDivision    = apvts.getRawParameterValue (fx::modDivision);
+        rf.modDepth       = apvts.getRawParameterValue (fx::modDepth);
+        rf.modFeedback    = apvts.getRawParameterValue (fx::modFeedback);
+        rf.modStages      = apvts.getRawParameterValue (fx::modStages);
+        rf.modCentre      = apvts.getRawParameterValue (fx::modCentre);
+        rf.modManual      = apvts.getRawParameterValue (fx::modManual);
+        rf.modWidth       = apvts.getRawParameterValue (fx::modWidth);
+        rf.modMix         = apvts.getRawParameterValue (fx::modMix);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -501,6 +514,22 @@ void SPASynthProcessor::updateFXParams()
     p.eqMidFreq      = rf.eqMidFreq->load();
     p.eqMidGainDb    = rf.eqMidGain->load();
     p.eqHighGainDb   = rf.eqHighGain->load();
+
+    p.modEnable   = rf.modEnable->load() >= 0.5f;
+    p.modType     = (int) rf.modType->load();
+    p.modRate     = rf.modRate->load();
+    p.modSync     = rf.modSync->load() >= 0.5f;
+    p.modDivision = (int) rf.modDivision->load();
+    p.modDepth    = rf.modDepth->load();
+    p.modFeedback = rf.modFeedback->load();
+    {
+        static constexpr int stageCounts[] = { 2, 4, 6, 8, 12 };
+        p.modStages = stageCounts[juce::jlimit (0, 4, (int) rf.modStages->load())];
+    }
+    p.modCentreHz = rf.modCentre->load();
+    p.modManualMs = rf.modManual->load();
+    p.modWidth    = rf.modWidth->load();
+    p.modMix      = rf.modMix->load();
     p.bpm            = shared.bpm;
 }
 

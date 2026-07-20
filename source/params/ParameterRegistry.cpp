@@ -27,6 +27,7 @@ juce::String sectionName (Section s)
         case Section::fxDelay:  return "FX Delay";
         case Section::fxReverb: return "FX Reverb";
         case Section::fxEQ:     return "FX EQ";
+        case Section::fxMod:    return "FX Mod";
         case Section::matrix:   return "Mod Matrix";
     }
     return {};
@@ -610,6 +611,45 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::eqHighGain, "EQ High", Section::fxEQ,
                    ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+
+    // FX Mod (Phaser / Flanger, switchable).
+    p.push_back ({ fx::modEnable, "Mod On", Section::fxMod,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::modType, "Mod Type", Section::fxMod,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Phaser", "Flanger" } });
+    p.push_back ({ fx::modRate, "Mod Rate", Section::fxMod,
+                   ParamKind::floatParam, frequencyRange (0.02f, 8.0f), 0.5f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::modSync, "Mod Sync", Section::fxMod,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::modDivision, "Mod Div", Section::fxMod,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::modDepth, "Mod Depth", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::modFeedback, "Mod FB", Section::fxMod,
+                   ParamKind::floatParam, { -0.95f, 0.95f }, 0.3f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.5f } });
+    p.push_back ({ fx::modStages, "Mod Stages", Section::fxMod,
+                   ParamKind::choiceParam, {}, 2.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "2", "4", "6", "8", "12" } });
+    p.push_back ({ fx::modCentre, "Mod Centre", Section::fxMod,
+                   ParamKind::floatParam, frequencyRange (100.0f, 6000.0f), 800.0f, "Hz",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::modManual, "Mod Delay", Section::fxMod,
+                   ParamKind::floatParam, { 0.1f, 20.0f, 0.01f }, 3.0f, "ms",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::modWidth, "Mod Width", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::modMix, "Mod Mix", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
 
     return p;
 }

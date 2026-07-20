@@ -39,6 +39,7 @@ enum class Section
     fxReverb,
     fxEQ,
     matrix,
+    fxMod,
 };
 
 inline constexpr Section allSections[] = {
@@ -46,7 +47,7 @@ inline constexpr Section allSections[] = {
     Section::filter1, Section::filter2, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
     Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
-    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::matrix,
+    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::fxMod, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -308,6 +309,19 @@ namespace id
         inline constexpr const char* eqMidFreq  = "fxEQ.midFreq";
         inline constexpr const char* eqMidGain  = "fxEQ.midGain";
         inline constexpr const char* eqHighGain = "fxEQ.highGain";
+
+        inline constexpr const char* modEnable   = "fxMod.enable";
+        inline constexpr const char* modType     = "fxMod.type";
+        inline constexpr const char* modRate     = "fxMod.rate";
+        inline constexpr const char* modSync     = "fxMod.sync";
+        inline constexpr const char* modDivision = "fxMod.division";
+        inline constexpr const char* modDepth    = "fxMod.depth";
+        inline constexpr const char* modFeedback = "fxMod.feedback";
+        inline constexpr const char* modStages   = "fxMod.stages";
+        inline constexpr const char* modCentre   = "fxMod.centre";
+        inline constexpr const char* modManual   = "fxMod.manual";
+        inline constexpr const char* modWidth    = "fxMod.width";
+        inline constexpr const char* modMix      = "fxMod.mix";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

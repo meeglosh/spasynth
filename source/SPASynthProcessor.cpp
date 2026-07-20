@@ -604,6 +604,24 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // to splice a couple of queued note events and is uncontended in practice.
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
 
+    // Panic: from the UI button or an incoming All Sound/Notes Off (CC 120/123).
+    // Kill every voice with no tail-off and clear the arp's latched/held chord so
+    // a stuck (e.g. latched) note cannot keep sounding.
+    bool doPanic = panicRequested.exchange (false, std::memory_order_relaxed);
+    for (const auto md : midi)
+    {
+        const auto m = md.getMessage();
+        if (m.isController()
+            && (m.getControllerNumber() == 120 || m.getControllerNumber() == 123))
+            doPanic = true;
+    }
+    if (doPanic)
+    {
+        synth.allNotesOff (0, false);   // channel <= 0 = all voices, no tail-off
+        arp.reset();
+        keyboardState.allNotesOff (0);
+    }
+
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
 

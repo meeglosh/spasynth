@@ -211,6 +211,24 @@ void ContentComponent::KeyboardButton::paintButton (juce::Graphics& g,
         g.fillRect (r.getX() + (float) i * kw - bw * 0.5f, r.getY(), bw, bh);
 }
 
+void ContentComponent::PanicButton::paintButton (juce::Graphics& g,
+                                                 bool highlighted, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (2.0f);
+    const auto d = juce::jmin (r.getWidth(), r.getHeight());
+    const auto circle = r.withSizeKeepingCentre (d, d);
+
+    // Muted red at rest so it reads as the emergency stop; bright on hover/press.
+    const auto red = juce::Colour (0xffff4d40);
+    g.setColour ((highlighted || down) ? red : red.withAlpha (0.55f));
+
+    g.drawEllipse (circle, 1.4f);
+    const auto cx = circle.getCentreX();
+    g.drawLine (cx, circle.getY() + d * 0.26f, cx, circle.getY() + d * 0.56f, 1.8f);  // ! stem
+    const auto dot = d * 0.13f;
+    g.fillEllipse (cx - dot * 0.5f, circle.getY() + d * 0.64f, dot, dot);             // ! dot
+}
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
       keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
@@ -242,6 +260,10 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     keyboardButton.onClick = [this] { setKeyboardVisible (! keyboardVisible); };
     keyboardButton.setToggleState (keyboardVisible, juce::dontSendNotification);
     addAndMakeVisible (keyboardButton);
+
+    panicButton.setTooltip ("Panic: stop all sound and clear stuck notes");
+    panicButton.onClick = [this] { processor.panic(); };
+    addAndMakeVisible (panicButton);
 
     prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
     prevPresetButton.setTooltip ("Previous preset");
@@ -576,6 +598,8 @@ void ContentComponent::resized()
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
+    right.removeFromRight (4);
+    panicButton.setBounds (right.removeFromRight (22).reduced (0, 5));   // by the meter
     accentButton.setBounds (right.removeFromRight (32).reduced (2, 6));
     auto glideArea = right.removeFromRight (44);
     glideLabel.setBounds (glideArea.removeFromBottom (11));

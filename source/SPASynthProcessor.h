@@ -99,6 +99,11 @@ public:
     // drives this state; processBlock merges its notes into the MIDI stream.
     juce::MidiKeyboardState& getKeyboardState() { return keyboardState; }
 
+    // Panic: kill all sound and clear stuck state (e.g. a latched arp chord).
+    // Message-thread safe — just raises a flag the audio thread services. Also
+    // fired by incoming MIDI All Sound/Notes Off (CC 120/123).
+    void panic() { panicRequested.store (true, std::memory_order_relaxed); }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -180,6 +185,9 @@ private:
 
     // On-screen keyboard note source (editor writes, processBlock reads).
     juce::MidiKeyboardState keyboardState;
+
+    // Raised by panic() / MIDI CC 120/123; serviced at the top of processBlock.
+    std::atomic<bool> panicRequested { false };
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot

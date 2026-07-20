@@ -659,6 +659,49 @@ namespace
         file.deleteFile();
     }
 
+    // Panic() must silence a latched arp (the stuck-note scenario): with latch
+    // on, releasing the key keeps notes going; panic clears the held chord and
+    // kills the voices.
+    static void panicTest()
+    {
+        std::cout << "panicTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int n = 512;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, n);
+        setParam (proc, id::chaos::enable, 0.0f);
+        setParam (proc, id::arp::enable, 1.0f);
+        setParam (proc, id::arp::latch, 1.0f);
+
+        juce::AudioBuffer<float> buf (2, n);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 10);   // latch holds it
+
+        auto energyOver = [&] (int blocks)
+        {
+            float e = 0.0f;
+            for (int b = 0; b < blocks; ++b)
+            {
+                proc.processBlock (buf, midi);
+                midi.clear();
+                e += buf.getRMSLevel (0, 0, n);
+            }
+            return e;
+        };
+
+        const float stuck = energyOver ((int) (0.5 * sr / n));
+        expect (stuck > 0.0f,
+                "latched arp keeps sounding after key release (" + juce::String (stuck) + ")");
+
+        proc.panic();
+        const float after = energyOver ((int) (0.3 * sr / n));
+        expect (after < stuck * 0.05f,
+                "panic silences the latched arp (" + juce::String (after) + ")");
+    }
+
     // Reverb MIX must be a true dry/wet dial: fully dry at 0, fully wet at 1.
     // (Was capped so the dry never dropped below 60%, so you could never reach
     // full reverb.) Settle the gain smoothing on silence, then probe the first
@@ -2110,6 +2153,7 @@ int main (int argc, char* argv[])
     sfxFollowerTest();
     fxDelayReverbTest();
     reverbMixTest();
+    panicTest();
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();

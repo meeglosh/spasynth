@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # A newer push supersedes any still-running build of the same branch.
 concurrency:
@@ -11,54 +12,81 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS (universal)
-            os: macos-14
-            cmake_extra: -DSPASYNTH_UNIVERSAL_BINARY=ON
-          - name: Windows (x64)
-            os: windows-2022
-            cmake_extra: ""
+  # Windows is the only platform we cannot build locally, so it runs on every
+  # push. It bills at 2x and finishes in ~17 min.
+  windows:
+    name: Windows (x64)
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSPASYNTH_COPY_PLUGIN=OFF ${{ matrix.cmake_extra }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSPASYNTH_COPY_PLUGIN=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # Installers ship unsigned from CI; Mike signs/notarizes locally for
-      # store releases (see installers/macos/build_installer.sh).
       - name: Read version
         id: version
         shell: bash
         run: echo "version=$(sed -n 's/^project(SPASynth VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Build installer (macOS)
-        if: runner.os == 'macOS'
-        run: ./installers/macos/build_installer.sh build dist/installers
-
       - name: Build installer (Windows)
-        if: runner.os == 'Windows'
         shell: cmd
         # /O (output dir) is resolved relative to the working directory (repo
-        # root), NOT the .iss location like the Source paths — so the old
-        # ..\..\dist\installers wrote the .exe two levels ABOVE the workspace
-        # and the upload found nothing. Use an absolute workspace path.
+        # root), NOT the .iss location like the Source paths — so use an
+        # absolute workspace path or the upload finds nothing.
         run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.version.outputs.version }} /DArtefacts=..\..\build\SPASynth_artefacts\Release /O"%GITHUB_WORKSPACE%\dist\installers" installers\windows\SPASynth.iss'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: spasynth-${{ runner.os }}
+          name: spasynth-Windows
+          path: |
+            build/SPASynth_artefacts/**/VST3/**
+            build/SPASynth_artefacts/**/Standalone/**
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: spasynth-installer-Windows
+          path: dist/installers/*
+          if-no-files-found: error
+
+  # macOS ships from a local signed + notarized build, so this job is only a
+  # clean-machine compile check. It runs ON DEMAND (Actions tab -> Run workflow)
+  # because macOS runners bill at 10x and would otherwise drain the private
+  # repo's monthly Actions minutes on every push.
+  macos:
+    name: macOS (universal)
+    runs-on: macos-14
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSPASYNTH_COPY_PLUGIN=OFF -DSPASYNTH_UNIVERSAL_BINARY=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(sed -n 's/^project(SPASynth VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Build installer (macOS, unsigned)
+        run: ./installers/macos/build_installer.sh build dist/installers
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spasynth-macOS
           path: |
             build/SPASynth_artefacts/**/VST3/**
             build/SPASynth_artefacts/**/AU/**
@@ -68,6 +96,6 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: spasynth-installer-${{ runner.os }}
+          name: spasynth-installer-macOS
           path: dist/installers/*
           if-no-files-found: error

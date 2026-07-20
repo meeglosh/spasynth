@@ -172,8 +172,14 @@ void FXChain::processReverb (juce::AudioBuffer<float>& buffer, const Params& p)
     rp.roomSize = p.reverbSize;
     rp.damping = p.reverbDamping;
     rp.width = p.reverbWidth;
-    rp.wetLevel = p.reverbMix;
-    rp.dryLevel = 1.0f - 0.4f * p.reverbMix;  // gentle dry dip keeps level sane
+    // MIX is a true dry/wet dial: unity dry at 0, full wet (pure reverb) at 1,
+    // equal-power (sin/cos) so the perceived level stays roughly constant since
+    // the reverb tail and the dry signal are decorrelated. juce::Reverb scales
+    // dryLevel by 2x internally, so 0.5*cos yields exactly unity dry at mix 0
+    // (the old mapping left the dry pinned near +6 dB and never fully wet).
+    const auto theta = p.reverbMix * juce::MathConstants<float>::halfPi;
+    rp.wetLevel = std::sin (theta);
+    rp.dryLevel = 0.5f * std::cos (theta);
     reverb.setParameters (rp);
 
     if (buffer.getNumChannels() > 1)

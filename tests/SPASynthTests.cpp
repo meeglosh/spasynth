@@ -3,6 +3,7 @@
 
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
+#include "dsp/FXChain.h"
 #include "dsp/WavetableLoader.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
@@ -656,6 +657,42 @@ namespace
                 + " vs late " + juce::String (late) + ")");
 
         file.deleteFile();
+    }
+
+    // Reverb MIX must be a true dry/wet dial: fully dry at 0, fully wet at 1.
+    // (Was capped so the dry never dropped below 60%, so you could never reach
+    // full reverb.) Settle the gain smoothing on silence, then probe the first
+    // sample of an impulse — the reverb tail is still silent there, so that
+    // sample is essentially the dry signal scaled by the dry level.
+    static void reverbMixTest()
+    {
+        std::cout << "reverbMixTest\n";
+        using FX = spa::dsp::FXChain;
+        constexpr double sr = 48000.0;
+        constexpr int n = 512;
+
+        auto dryAtImpulse = [&] (float mix)
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMix = mix;
+            juce::AudioBuffer<float> buf (2, n);
+            for (int b = 0; b < 12; ++b) { buf.clear(); fx.process (buf, p); }
+            buf.clear();
+            buf.setSample (0, 0, 1.0f);
+            buf.setSample (1, 0, 1.0f);
+            fx.process (buf, p);
+            return buf.getSample (0, 0);
+        };
+
+        const float dry0 = dryAtImpulse (0.0f);
+        const float dry1 = dryAtImpulse (1.0f);
+        expect (dry0 > 0.9f && dry0 < 1.1f,
+                "reverb mix 0 is unity dry, not boosted (" + juce::String (dry0) + ")");
+        expect (dry1 < 0.1f,
+                "reverb mix 1 removes the dry, full wet (" + juce::String (dry1) + ")");
     }
 
     static void fxDelayReverbTest()
@@ -2072,6 +2109,7 @@ int main (int argc, char* argv[])
     quickSwapTest();
     sfxFollowerTest();
     fxDelayReverbTest();
+    reverbMixTest();
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();

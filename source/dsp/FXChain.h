@@ -19,8 +19,8 @@ public:
     FXChain() = default;
 
     // Append-only: module ids are serialized in the per-preset chain order.
-    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib, limiter };
-    static constexpr int numModules = 8;
+    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib, limiter, convolve };
+    static constexpr int numModules = 9;
 
     // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
     // for the lock-free UI->audio hand-off and compact preset storage. Unpack
@@ -35,8 +35,8 @@ public:
     static juce::uint64 defaultOrderPacked()
     {
         Module def[numModules] { Module::distortion, Module::chorus, Module::mod,
-                                 Module::tremVib, Module::delay, Module::reverb, Module::eq,
-                                 Module::limiter };
+                                 Module::tremVib, Module::delay, Module::reverb,
+                                 Module::convolve, Module::eq, Module::limiter };
         return packOrder (def);
     }
     static void unpackOrder (juce::uint64 packed, Module* order)
@@ -128,10 +128,14 @@ public:
         bool limTruePeak = false;
         bool limLookahead = false;
 
+        bool convEnable = false;
+        float convMix = 0.3f;
+        float convWidth = 1.0f;
+
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
             Module::distortion, Module::chorus, Module::mod, Module::tremVib,
-            Module::delay, Module::reverb, Module::eq, Module::limiter
+            Module::delay, Module::reverb, Module::convolve, Module::eq, Module::limiter
         };
     };
 
@@ -147,6 +151,11 @@ public:
     int limiterLatencySamples (const Params& p) const;
     float limiterGainReductionDb() const { return limiterEffect.gainReductionDb(); }
 
+    // Convolve (SFX / user WAV as impulse). juce::dsp::Convolution loads the IR
+    // on a background thread and swaps it in atomically.
+    void loadConvolutionIR (const juce::File& irFile);
+    bool hasConvolutionIR() const { return convIrLoaded; }
+
 private:
     void processDistortion (juce::AudioBuffer<float>&, const Params&);
     void processChorus (juce::AudioBuffer<float>&, const Params&);
@@ -156,11 +165,15 @@ private:
     void processMod (juce::AudioBuffer<float>&, const Params&);
     void processTremVib (juce::AudioBuffer<float>&, const Params&);
     void processLimiter (juce::AudioBuffer<float>&, const Params&);
+    void processConvolve (juce::AudioBuffer<float>&, const Params&);
 
     double sampleRate = 48000.0;
     ModEffect modEffect;
     TremVib tremVibEffect;
     Limiter limiterEffect;
+    juce::dsp::Convolution convolution;
+    juce::AudioBuffer<float> convScratch;
+    bool convIrLoaded = false;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;

@@ -185,6 +185,10 @@ SPASynthProcessor::SPASynthProcessor()
         rf.limStereoLink  = apvts.getRawParameterValue (fx::limStereoLink);
         rf.limTruePeak    = apvts.getRawParameterValue (fx::limTruePeak);
         rf.limLookahead   = apvts.getRawParameterValue (fx::limLookahead);
+
+        rf.convEnable     = apvts.getRawParameterValue (fx::convEnable);
+        rf.convMix        = apvts.getRawParameterValue (fx::convMix);
+        rf.convWidth      = apvts.getRawParameterValue (fx::convWidth);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -510,6 +514,17 @@ juce::Array<int> SPASynthProcessor::getFxOrder() const
     return ids;
 }
 
+void SPASynthProcessor::loadConvolutionIR (const juce::File& file)
+{
+    convIrPath = file.existsAsFile() ? file.getFullPathName() : juce::String();
+    fxChain.loadConvolutionIR (file);
+    const auto libraryRoot = library::findLibraryRoot();
+    apvts.state.setProperty ("convIR",
+        convIrPath.isEmpty() ? juce::String() : library::toPortable (file, libraryRoot),
+        nullptr);
+    sendChangeMessage();   // refresh the IR name in the UI
+}
+
 void SPASynthProcessor::updateFXParams()
 {
     const auto& rf = raw.fx;
@@ -585,6 +600,10 @@ void SPASynthProcessor::updateFXParams()
     p.limStereoLink  = rf.limStereoLink->load();
     p.limTruePeak    = rf.limTruePeak->load() >= 0.5f;
     p.limLookahead   = rf.limLookahead->load() >= 0.5f;
+
+    p.convEnable = rf.convEnable->load() >= 0.5f;
+    p.convMix    = rf.convMix->load();
+    p.convWidth  = rf.convWidth->load();
 
     desiredLatency.store (fxChain.limiterLatencySamples (p), std::memory_order_relaxed);
     p.bpm            = shared.bpm;
@@ -886,6 +905,12 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
     fxOrderPacked.store ((juce::uint64) (juce::int64) apvts.state.getProperty (
                              "fxOrder", (juce::int64) dsp::FXChain::defaultOrderPacked()),
                          std::memory_order_relaxed);
+
+    const auto convIR = apvts.state.getProperty ("convIR").toString();
+    convIrPath = convIR.isEmpty() ? juce::String()
+                                  : library::fromPortable (convIR, libraryRoot).getFullPathName();
+    juce::MessageManager::callAsync ([this, f = juce::File (convIrPath)]
+                                     { fxChain.loadConvolutionIR (f); });
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {

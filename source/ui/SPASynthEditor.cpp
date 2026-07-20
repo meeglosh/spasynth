@@ -312,6 +312,60 @@ private:
     juce::TextButton tap, sync;
     double lastTap = 0.0, tapBpm = 0.0;
 };
+
+// Convolve tab: an IR picker (library SFX or any WAV) above the FX controls.
+class ConvolvePanel : public juce::Component,
+                      private juce::ChangeListener
+{
+public:
+    explicit ConvolvePanel (SPASynthProcessor& p)
+        : processor (p),
+          inner (p.getAPVTS(), FXDisplay::Kind::reverb, params::Section::fxConvolve, "Convolve")
+    {
+        irButton.setTooltip ("Choose an impulse from your library or any WAV");
+        irButton.onClick = [this] { chooseIR(); };
+        updateLabel();
+        addAndMakeVisible (irButton);
+        addAndMakeVisible (inner);
+        processor.addChangeListener (this);
+    }
+
+    ~ConvolvePanel() override { processor.removeChangeListener (this); }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        irButton.setBounds (r.removeFromTop (26).reduced (6, 3));
+        inner.setBounds (r);
+    }
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { updateLabel(); }
+
+    void updateLabel()
+    {
+        const auto n = processor.getConvolutionIRName();
+        irButton.setButtonText (n.isEmpty() ? "Load impulse (SFX / WAV)..." : "IR: " + n);
+    }
+
+    void chooseIR()
+    {
+        fileChooser = std::make_unique<juce::FileChooser> (
+            "Choose an impulse (SFX or WAV)", library::getLibraryRoot(), "*.wav");
+        fileChooser->launchAsync (
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this] (const juce::FileChooser& fc)
+            {
+                const auto f = fc.getResult();
+                if (f.existsAsFile()) { processor.loadConvolutionIR (f); updateLabel(); }
+            });
+    }
+
+    SPASynthProcessor& processor;
+    juce::TextButton irButton { "browser" };
+    FXPanel inner;
+    std::unique_ptr<juce::FileChooser> fileChooser;
+};
 } // namespace
 
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
@@ -496,12 +550,13 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::chorus, params::Section::fxTremVib, "Trem / Vib"), true);
     fxTabs.addTab ("LIMIT", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::distortion, params::Section::fxLimiter, "Limiter"), true);
+    fxTabs.addTab ("CONV", tabBg, new ConvolvePanel (processor), true);
     addAndMakeVisible (fxTabs);
 
-    // Tab names by FXChain::Module id (DIST=0 .. TREM/VIB=6, LIMIT=7). Drag
-    // reorders the tabs and the FX chain together; restore the saved order.
+    // Tab names by FXChain::Module id (DIST=0 .. LIMIT=7, CONV=8). Drag reorders
+    // the tabs and the FX chain together; restore the saved order.
     fxTabs.setModuleNames ({ "DIST", "CHORUS", "DELAY", "REVERB", "EQ",
-                             "MOD", "TREM/VIB", "LIMIT" });
+                             "MOD", "TREM/VIB", "LIMIT", "CONV" });
     fxTabs.applyOrder (processor.getFxOrder());
     fxTabs.onOrderChanged = [this] { processor.setFxOrder (fxTabs.currentOrder()); };
 

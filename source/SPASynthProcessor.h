@@ -119,6 +119,11 @@ public:
     void setFxOrder (const juce::Array<int>& moduleIds);
     juce::Array<int> getFxOrder() const;
 
+    // Convolve IR (SFX / user WAV as impulse). Loads it into the FX chain and
+    // remembers the path (portable, saved per preset). Empty name = none.
+    void loadConvolutionIR (const juce::File& file);
+    juce::String getConvolutionIRName() const { return juce::File (convIrPath).getFileNameWithoutExtension(); }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -220,6 +225,8 @@ private:
     // Lookahead-limiter latency: written from the audio thread, applied via
     // setLatencySamples on the timer (message thread) when it changes.
     std::atomic<int> desiredLatency { 0 };
+
+    juce::String convIrPath;   // Convolve impulse path (portable, per preset)
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot
@@ -380,6 +387,10 @@ private:
             std::atomic<float>* limStereoLink = nullptr;
             std::atomic<float>* limTruePeak = nullptr;
             std::atomic<float>* limLookahead = nullptr;
+
+            std::atomic<float>* convEnable = nullptr;
+            std::atomic<float>* convMix = nullptr;
+            std::atomic<float>* convWidth = nullptr;
         } fx {};
     } raw;
 

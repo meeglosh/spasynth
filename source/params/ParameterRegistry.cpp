@@ -30,6 +30,7 @@ juce::String sectionName (Section s)
         case Section::fxMod:    return "FX Mod";
         case Section::fxTremVib: return "FX Trem/Vib";
         case Section::fxLimiter: return "FX Limiter";
+        case Section::fxConvolve: return "FX Convolve";
         case Section::matrix:   return "Mod Matrix";
     }
     return {};
@@ -719,6 +720,16 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
     p.push_back ({ fx::limLookahead, "Lim Lookahead", Section::fxLimiter,
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+
+    // FX Convolve (SFX / user WAV as impulse; IR path stored in the state tree).
+    p.push_back ({ fx::convEnable, "Conv On", Section::fxConvolve,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ fx::convMix, "Conv Mix", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::convWidth, "Conv Width", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = false } });
 
     return p;
 }

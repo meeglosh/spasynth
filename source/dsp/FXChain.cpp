@@ -19,6 +19,8 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     modEffect.prepare (sampleRate, maxBlockSize);
     tremVibEffect.prepare (sampleRate, maxBlockSize);
     limiterEffect.prepare (sampleRate, maxBlockSize);
+    convolution.prepare (spec);
+    convScratch.setSize (2, maxBlockSize, false, false, true);
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
@@ -44,6 +46,7 @@ void FXChain::reset()
     modEffect.reset();
     tremVibEffect.reset();
     limiterEffect.reset();
+    convolution.reset();
     delayBuffer.clear();
     reverb.reset();
     for (auto& f : eqLow)  f.reset();
@@ -88,6 +91,8 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::tremVib:    if (params.tremEnable || params.vibEnable)
                                                               processTremVib (buffer, params); break;
             case Module::limiter:    if (params.limEnable)    processLimiter (buffer, params); break;
+            case Module::convolve:   if (params.convEnable && convIrLoaded)
+                                                              processConvolve (buffer, params); break;
         }
     }
 }
@@ -260,6 +265,46 @@ int FXChain::limiterLatencySamples (const Params& p) const
     lp.enable    = p.limEnable;
     lp.lookahead = p.limLookahead;
     return limiterEffect.latencySamples (lp);
+}
+
+void FXChain::processConvolve (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    const int n = buffer.getNumSamples();
+    const int numCh = juce::jmin (2, buffer.getNumChannels());
+
+    // Wet copy through the convolution, then blend with the dry (mix + width).
+    for (int ch = 0; ch < 2; ++ch)
+        convScratch.copyFrom (ch, 0, buffer, juce::jmin (ch, numCh - 1), 0, n);
+    auto block = juce::dsp::AudioBlock<float> (convScratch).getSubBlock (0, (size_t) n);
+    convolution.process (juce::dsp::ProcessContextReplacing<float> (block));
+
+    const float mix = juce::jlimit (0.0f, 1.0f, p.convMix);
+    const float width = juce::jlimit (0.0f, 1.0f, p.convWidth);
+    for (int i = 0; i < n; ++i)
+    {
+        float wL = convScratch.getSample (0, i);
+        float wR = convScratch.getSample (1, i);
+        if (numCh > 1)   // stereo width via mid/side on the wet
+        {
+            const float mid = 0.5f * (wL + wR);
+            const float side = 0.5f * (wL - wR) * width;
+            wL = mid + side; wR = mid - side;
+        }
+        buffer.setSample (0, i, buffer.getSample (0, i) * (1.0f - mix) + wL * mix);
+        if (numCh > 1)
+            buffer.setSample (1, i, buffer.getSample (1, i) * (1.0f - mix) + wR * mix);
+    }
+}
+
+void FXChain::loadConvolutionIR (const juce::File& irFile)
+{
+    if (! irFile.existsAsFile()) { convIrLoaded = false; return; }
+    convolution.loadImpulseResponse (irFile,
+                                     juce::dsp::Convolution::Stereo::yes,
+                                     juce::dsp::Convolution::Trim::yes,
+                                     0,
+                                     juce::dsp::Convolution::Normalise::yes);
+    convIrLoaded = true;
 }
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)

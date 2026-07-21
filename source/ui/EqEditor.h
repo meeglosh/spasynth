@@ -19,6 +19,7 @@ namespace spa::ui
 // character selector. Nodes write straight to the APVTS band params; the curve
 // is drawn by the same magnitude function the DSP uses, so it never lies.
 class EqEditor : public juce::Component,
+                 public juce::SettableTooltipClient,
                  private juce::Timer
 {
 public:
@@ -32,6 +33,10 @@ public:
         addAndMakeVisible (onToggle);
         addAndMakeVisible (character);
         setWantsKeyboardFocus (false);
+        modName = (juce::SystemStats::getOperatingSystemType() & juce::SystemStats::MacOSX)
+                      ? "Cmd" : "Ctrl";
+        setTooltip ("Double-click to add or remove a band. Drag a node to move it; "
+                    + modName + "-drag vertically or use the mouse wheel to set its Q.");
         startTimerHz (30);
     }
 
@@ -123,41 +128,74 @@ public:
                         juce::Justification::topLeft);
         }
 
+        // Subtle usage hint, top-right (full detail is in the tooltip).
+        g.setColour (t.textSecondary.withAlpha (0.45f));
+        g.setFont (juce::Font (juce::FontOptions (10.0f)));
+        g.drawText ("double-click: add / remove    " + modName + "-drag or wheel: Q",
+                    graph.reduced (8.0f, 5.0f).removeFromTop (13.0f),
+                    juce::Justification::topRight);
+
         g.setColour (t.outline);
         g.drawRoundedRectangle (graph, 4.0f, 1.0f);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        // Single click on a node selects and grabs it; single click on empty
-        // graph space creates a new node there (up to the 8-band max) and grabs
-        // it so you can drag it straight into place.
-        int b = bandAt (e.position);
-        if (b < 0)
-            b = createBandAt (e.position);
+        // Click selects and grabs the node under the pointer (no accidental
+        // creation); clicking empty space deselects. Nodes are added/removed by
+        // double-click.
+        const int b = bandAt (e.position);
         selectedBand = b;
         dragBand = b;
-        if (dragBand >= 0) applyDrag (e.position);
+        qDragActive = false;
         repaint();
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
-        if (dragBand >= 0) { applyDrag (e.position); repaint(); }
+        if (dragBand < 0) return;
+        if (e.mods.isCommandDown())   // Cmd/Ctrl-drag = Q (Pro-Q style), vertical
+        {
+            if (! qDragActive)        // anchor when the Q gesture begins
+            {
+                qDragActive = true;
+                qRefY = e.position.y;
+                qRefQ = rawBand (dragBand, params::id::fx::eqband::q);
+            }
+            const float dy = qRefY - e.position.y;   // up = narrower (higher Q)
+            setBandRaw (dragBand, params::id::fx::eqband::q,
+                        juce::jlimit (0.1f, 18.0f, qRefQ * std::exp (dy * 0.012f)));
+        }
+        else
+        {
+            qDragActive = false;
+            applyDrag (e.position);   // freq (x) + gain (y)
+        }
+        repaint();
     }
 
-    void mouseUp (const juce::MouseEvent&) override { dragBand = -1; repaint(); }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        dragBand = -1;
+        qDragActive = false;
+        repaint();
+    }
 
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
-        // Double click a node to remove it. (Creation is a single click.)
+        // Double-click a node to remove it, or empty graph space to add one.
         const int b = bandAt (e.position);
         if (b >= 0)
         {
             setBand (b, params::id::fx::eqband::enable, 0.0f);
             if (selectedBand == b) selectedBand = -1;
-            repaint();
         }
+        else
+        {
+            const int n = createBandAt (e.position);
+            if (n >= 0) selectedBand = n;
+        }
+        repaint();
     }
 
     void mouseMove (const juce::MouseEvent& e) override
@@ -382,6 +420,9 @@ private:
 
     juce::Rectangle<float> graph;
     int dragBand = -1, hoverBand = -1, selectedBand = -1;
+    bool qDragActive = false;      // Cmd/Ctrl-drag Q gesture in progress
+    float qRefY = 0.0f, qRefQ = 1.0f;
+    juce::String modName { "Ctrl" };
 
     juce::dsp::FFT fft { 11 };   // 2^11 = 2048 = scopeSize
     std::array<float, dsp::Telemetry::scopeSize * 2> fftData {};

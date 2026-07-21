@@ -2,6 +2,7 @@
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
 #include "EqEditor.h"
+#include "LimiterDisplay.h"
 
 #include "BinaryData.h"
 
@@ -613,8 +614,8 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation"), true);
     fxTabs.addTab ("TREM/VIB", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::chorus, params::Section::fxTremVib, "Trem / Vib"), true);
-    fxTabs.addTab ("LIMIT", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::distortion, params::Section::fxLimiter, "Limiter"), true);
+    fxTabs.addTab ("LIMIT", tabBg,
+                   new LimiterPanel (processor.getAPVTS(), processor.getTelemetry()), true);
     fxTabs.addTab ("CONV", tabBg, new ConvolvePanel (processor), true);
     addAndMakeVisible (fxTabs);
 

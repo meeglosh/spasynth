@@ -156,6 +156,7 @@ public:
     // Lookahead-limiter latency (reported to the host) + gain reduction meter.
     int limiterLatencySamples (const Params& p) const;
     float limiterGainReductionDb() const { return limiterEffect.gainReductionDb(); }
+    float limiterOutputPeak() const { return limiterEffect.outputPeak(); }
 
     // Convolve (SFX / user WAV as impulse). juce::dsp::Convolution loads the IR
     // on a background thread and swaps it in atomically.

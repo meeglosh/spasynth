@@ -59,6 +59,13 @@ struct Telemetry
     static constexpr int scopeSize = 2048;   // power of two for the FFT
     std::array<std::atomic<float>, scopeSize> scope {};
     std::atomic<int> scopeWrite { 0 };
+
+    // Scrolling limiter history: per-block output peak (0..~1) and gain reduction
+    // (dB, <= 0). The UI reads the window ending at limWrite and scrolls it.
+    static constexpr int limiterHistory = 512;
+    std::array<std::atomic<float>, limiterHistory> limOut {};
+    std::array<std::atomic<float>, limiterHistory> limGrDb {};
+    std::atomic<int> limWrite { 0 };
 };
 
 } // namespace spa::dsp

@@ -1031,6 +1031,21 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
         telemetry.scopeWrite.store (w, std::memory_order_release);
     }
+
+    // Scrolling limiter history: one frame per block. When the limiter is off we
+    // still scroll the master level (with zero reduction) so the display lives.
+    {
+        const bool limOn = fxParams.limEnable;
+        const float masterPk = juce::jmax (telemetry.peakL.load (std::memory_order_relaxed),
+                                           telemetry.peakR.load (std::memory_order_relaxed));
+        const float outLvl = limOn ? fxChain.limiterOutputPeak() : masterPk;
+        const float grDb   = limOn ? fxChain.limiterGainReductionDb() : 0.0f;
+        const int lw = telemetry.limWrite.load (std::memory_order_relaxed);
+        telemetry.limOut[(size_t) lw].store (outLvl, std::memory_order_relaxed);
+        telemetry.limGrDb[(size_t) lw].store (grDb, std::memory_order_relaxed);
+        telemetry.limWrite.store ((lw + 1) % dsp::Telemetry::limiterHistory,
+                                  std::memory_order_release);
+    }
 }
 
 juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)

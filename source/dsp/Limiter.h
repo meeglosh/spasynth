@@ -23,7 +23,7 @@ public:
         reset();
     }
 
-    void reset() { gr = 1.0f; grMeter = 1.0f; wr = 0; }
+    void reset() { gr = 1.0f; grMeter = 1.0f; outPk = 0.0f; wr = 0; }
 
     struct Params
     {
@@ -44,6 +44,7 @@ public:
         return (p.enable && p.lookahead) ? lookaheadSamples() : 0;
     }
     float gainReductionDb() const { return juce::Decibels::gainToDecibels (grMeter); }
+    float outputPeak() const { return outPk; }   // block output peak, 0..~1
 
     void process (juce::AudioBuffer<float>& buffer, const Params& p)
     {
@@ -62,7 +63,7 @@ public:
 
         float* L = buffer.getWritePointer (0);
         float* R = numCh > 1 ? buffer.getWritePointer (1) : L;
-        float gmin = 1.0f;
+        float gmin = 1.0f, opk = 0.0f;
 
         for (int i = 0; i < n; ++i)
         {
@@ -95,14 +96,16 @@ public:
             if (numCh > 1) R[i] = juce::jlimit (-ceiling, ceiling, oR);
 
             gmin = juce::jmin (gmin, gr);
+            opk = juce::jmax (opk, std::abs (L[i]), numCh > 1 ? std::abs (R[i]) : 0.0f);
         }
         grMeter = gmin;
+        outPk = opk;
     }
 
 private:
     double sampleRate = 48000.0;
     std::vector<float> delayL, delayR;
-    float gr = 1.0f, grMeter = 1.0f;
+    float gr = 1.0f, grMeter = 1.0f, outPk = 0.0f;
     int wr = 0;
 };
 

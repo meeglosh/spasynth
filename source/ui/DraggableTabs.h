@@ -7,12 +7,15 @@ namespace spa::ui
 {
 
 // A tab button that draws a grip-dots handle and reorders its bar when dragged.
+// The actual move is delegated to the owning DraggableTabs so both the button
+// AND its content component move together (the bar's own moveTab would reorder
+// only the buttons, desyncing them from the content array).
 class DraggableTabButton : public juce::TabBarButton
 {
 public:
     DraggableTabButton (const juce::String& name, juce::TabbedButtonBar& bar,
-                        std::function<void()> reordered)
-        : juce::TabBarButton (name, bar), onReordered (std::move (reordered)) {}
+                        std::function<void (int from, int to)> mover)
+        : juce::TabBarButton (name, bar), onMove (std::move (mover)) {}
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
@@ -25,11 +28,8 @@ public:
             if (auto* b = bar.getTabButton (i))
                 if (px >= (float) b->getX() && px < (float) b->getRight()) { target = i; break; }
 
-        if (target != idx && target >= 0)
-        {
-            bar.moveTab (idx, target, true);
-            if (onReordered) onReordered();
-        }
+        if (target != idx && target >= 0 && onMove)
+            onMove (idx, target);
     }
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
@@ -48,7 +48,7 @@ public:
     }
 
 private:
-    std::function<void()> onReordered;
+    std::function<void (int from, int to)> onMove;
 };
 
 // TabbedComponent whose tabs can be dragged to reorder. Tabs are identified by
@@ -83,14 +83,18 @@ public:
             const auto name = moduleNames[ids[pos]];
             const int cur = getTabNames().indexOf (name);
             if (cur >= 0 && cur != pos)
-                getTabbedButtonBar().moveTab (cur, pos, false);
+                moveTab (cur, pos, false);   // TabbedComponent::moveTab: button + content
         }
     }
 
     juce::TabBarButton* createTabButton (const juce::String& name, int /*index*/) override
     {
         return new DraggableTabButton (name, getTabbedButtonBar(),
-                                       [this] { if (onOrderChanged) onOrderChanged(); });
+                                       [this] (int from, int to)
+                                       {
+                                           moveTab (from, to, true);   // button + content
+                                           if (onOrderChanged) onOrderChanged();
+                                       });
     }
 
 private:

@@ -794,6 +794,68 @@ namespace
                 "reverb mix 1 removes the dry, full wet (" + juce::String (dry1) + ")");
     }
 
+    // The FDN reverb must stay finite and bounded across every mode even at
+    // long decay + heavy modulation, both from an impulse and under sustained
+    // input. A unitary feedback matrix with per-line gains < 1 guarantees this;
+    // the test is the safety net against a future coefficient regression.
+    static void reverbStabilityTest()
+    {
+        std::cout << "reverbStabilityTest\n";
+        using FX = spa::dsp::FXChain;
+        constexpr double sr = 48000.0;
+        constexpr int n = 256;
+
+        uint32_t rng = 22222u;
+        auto noise = [&rng]
+        {
+            rng = rng * 1664525u + 1013904223u;
+            return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+        };
+
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMode = mode;
+            p.reverbMix = 1.0f;
+            p.reverbDecay = 10.0f;   // long tail
+            p.reverbSize = 1.0f;
+            p.reverbModDepth = 1.0f; // heavy tail modulation
+            p.reverbDamping = 0.2f;
+
+            float peak = 0.0f;
+            bool finite = true;
+            // ~2.5 s: 0.2 s of noise excitation, then decay in silence.
+            const int blocks = (int) (2.5 * sr / n);
+            const int exciteBlocks = (int) (0.2 * sr / n);
+            juce::AudioBuffer<float> buf (2, n);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                if (b < exciteBlocks)
+                    for (int s = 0; s < n; ++s)
+                    {
+                        buf.setSample (0, s, noise() * 0.5f);
+                        buf.setSample (1, s, noise() * 0.5f);
+                    }
+                fx.process (buf, p);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int s = 0; s < n; ++s)
+                    {
+                        const float v = buf.getSample (ch, s);
+                        if (! std::isfinite (v)) finite = false;
+                        peak = juce::jmax (peak, std::abs (v));
+                    }
+            }
+            expect (finite, "reverb mode " + juce::String (mode) + " stays finite");
+            expect (peak < 8.0f,
+                    "reverb mode " + juce::String (mode) + " stays bounded (peak "
+                    + juce::String (peak) + ")");
+        }
+    }
+
     static void fxDelayReverbTest()
     {
         std::cout << "fxDelayReverbTest\n";
@@ -1307,8 +1369,10 @@ namespace
                 {
                     if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
                     {
+                        // Front by name: tabs can be reordered, so a fixed index
+                        // would front whatever module now sits in that slot.
                         if (tabs->getTabNames().contains ("DELAY"))
-                            tabs->setCurrentTabIndex (2);
+                            tabs->setCurrentTabIndex (tabs->getTabNames().indexOf ("DELAY"));
                         if (tabs->getTabNames().contains ("FILTER 2"))
                             tabs->setCurrentTabIndex (1);
                     }
@@ -2209,6 +2273,7 @@ int main (int argc, char* argv[])
     sfxFollowerTest();
     fxDelayReverbTest();
     reverbMixTest();
+    reverbStabilityTest();
     panicTest();
     midiClockTest();
     fxOrderTest();

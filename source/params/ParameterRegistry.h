@@ -302,11 +302,17 @@ namespace id
         inline constexpr const char* delayPingPong = "fxDelay.pingpong";
         inline constexpr const char* delayMix      = "fxDelay.mix";
 
-        inline constexpr const char* reverbEnable  = "fxReverb.enable";
-        inline constexpr const char* reverbSize    = "fxReverb.size";
-        inline constexpr const char* reverbDamping = "fxReverb.damping";
-        inline constexpr const char* reverbWidth   = "fxReverb.width";
-        inline constexpr const char* reverbMix     = "fxReverb.mix";
+        inline constexpr const char* reverbEnable   = "fxReverb.enable";
+        inline constexpr const char* reverbMode     = "fxReverb.mode";
+        inline constexpr const char* reverbPreDelay = "fxReverb.predelay";
+        inline constexpr const char* reverbSize     = "fxReverb.size";
+        inline constexpr const char* reverbDecay    = "fxReverb.decay";
+        inline constexpr const char* reverbDamping  = "fxReverb.damping";
+        inline constexpr const char* reverbModDepth = "fxReverb.moddepth";
+        inline constexpr const char* reverbLowCut   = "fxReverb.lowcut";
+        inline constexpr const char* reverbHighCut  = "fxReverb.highcut";
+        inline constexpr const char* reverbWidth    = "fxReverb.width";
+        inline constexpr const char* reverbMix      = "fxReverb.mix";
 
         inline constexpr const char* eqEnable   = "fxEQ.enable";
         inline constexpr const char* eqLowGain  = "fxEQ.lowGain";

@@ -27,7 +27,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     delayWritePos = 0;
     delaySamplesSmoothed.reset (sampleRate, 0.1);
 
-    reverb.setSampleRate (sampleRate);
+    reverb.prepare (sampleRate, maxBlockSize);
 
     for (auto& f : eqLow)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
     for (auto& f : eqMid)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
@@ -71,7 +71,7 @@ double FXChain::tailSeconds (const Params& p) const
     }
 
     if (p.reverbEnable)
-        tail = juce::jmax (tail, 2.0 + 6.0 * (double) p.reverbSize);
+        tail = juce::jmax (tail, 0.5 + (double) p.reverbDecay);
 
     return tail;
 }
@@ -89,10 +89,10 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::eq:         if (params.eqEnable)     processEQ (buffer, params); break;
             case Module::mod:        if (params.modEnable)    processMod (buffer, params); break;
             case Module::tremVib:    if (params.tremEnable || params.vibEnable)
-                                                              processTremVib (buffer, params); break;
+                                                            { processTremVib (buffer, params); } break;
             case Module::limiter:    if (params.limEnable)    processLimiter (buffer, params); break;
             case Module::convolve:   if (params.convEnable && convIrLoaded)
-                                                              processConvolve (buffer, params); break;
+                                                            { processConvolve (buffer, params); } break;
         }
     }
 }
@@ -183,25 +183,22 @@ void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)
 
 void FXChain::processReverb (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    juce::Reverb::Parameters rp;
-    rp.roomSize = p.reverbSize;
-    rp.damping = p.reverbDamping;
+    // 4-line FDN engine (FDNReverb) with mode voicings. MIX is a true dry/wet
+    // dial handled inside the engine as an equal-power (sin/cos) crossfade:
+    // unity dry at 0, full wet (pure reverb) at 1, perceived level roughly
+    // constant since the tail and the dry signal are decorrelated.
+    FDNReverb::Params rp;
+    rp.mode = p.reverbMode;
+    rp.preDelayMs = p.reverbPreDelay;
+    rp.size = p.reverbSize;
+    rp.decaySec = p.reverbDecay;
+    rp.hfDamp = p.reverbDamping;
+    rp.modDepth = p.reverbModDepth;
+    rp.lowCutHz = p.reverbLowCut;
+    rp.highCutHz = p.reverbHighCut;
     rp.width = p.reverbWidth;
-    // MIX is a true dry/wet dial: unity dry at 0, full wet (pure reverb) at 1,
-    // equal-power (sin/cos) so the perceived level stays roughly constant since
-    // the reverb tail and the dry signal are decorrelated. juce::Reverb scales
-    // dryLevel by 2x internally, so 0.5*cos yields exactly unity dry at mix 0
-    // (the old mapping left the dry pinned near +6 dB and never fully wet).
-    const auto theta = p.reverbMix * juce::MathConstants<float>::halfPi;
-    rp.wetLevel = std::sin (theta);
-    rp.dryLevel = 0.5f * std::cos (theta);
-    reverb.setParameters (rp);
-
-    if (buffer.getNumChannels() > 1)
-        reverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1),
-                              buffer.getNumSamples());
-    else
-        reverb.processMono (buffer.getWritePointer (0), buffer.getNumSamples());
+    rp.mix = p.reverbMix;
+    reverb.process (buffer, rp);
 }
 
 void FXChain::processMod (juce::AudioBuffer<float>& buffer, const Params& p)

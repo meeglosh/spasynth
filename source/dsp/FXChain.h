@@ -4,6 +4,7 @@
 #include "ModEffect.h"
 #include "TremVib.h"
 #include "Limiter.h"
+#include "FDNReverb.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -76,8 +77,14 @@ public:
         float delayMix = 0.35f;
 
         bool reverbEnable = false;
+        int reverbMode = 0;         // 0 Hall 1 Plate 2 Chamber 3 Room 4 Spring
+        float reverbPreDelay = 20.0f;
         float reverbSize = 0.5f;
-        float reverbDamping = 0.5f;
+        float reverbDecay = 2.0f;   // RT60 seconds
+        float reverbDamping = 0.5f; // HF damp
+        float reverbModDepth = 0.2f;
+        float reverbLowCut = 20.0f;
+        float reverbHighCut = 12000.0f;
         float reverbWidth = 1.0f;
         float reverbMix = 0.3f;
 
@@ -185,7 +192,7 @@ private:
     int delayWritePos = 0;
     juce::SmoothedValue<float> delaySamplesSmoothed;
 
-    juce::Reverb reverb;
+    FDNReverb reverb;
 
     // EQ: low shelf / mid peak / high shelf per channel.
     using IIR = juce::dsp::IIR::Filter<float>;

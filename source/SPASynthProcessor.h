@@ -340,8 +340,14 @@ private:
             std::atomic<float>* delayPingPong = nullptr;
             std::atomic<float>* delayMix = nullptr;
             std::atomic<float>* reverbEnable = nullptr;
+            std::atomic<float>* reverbMode = nullptr;
+            std::atomic<float>* reverbPreDelay = nullptr;
             std::atomic<float>* reverbSize = nullptr;
+            std::atomic<float>* reverbDecay = nullptr;
             std::atomic<float>* reverbDamping = nullptr;
+            std::atomic<float>* reverbModDepth = nullptr;
+            std::atomic<float>* reverbLowCut = nullptr;
+            std::atomic<float>* reverbHighCut = nullptr;
             std::atomic<float>* reverbWidth = nullptr;
             std::atomic<float>* reverbMix = nullptr;
             std::atomic<float>* eqEnable = nullptr;

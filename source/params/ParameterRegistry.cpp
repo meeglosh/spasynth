@@ -134,6 +134,13 @@ static juce::NormalisableRange<float> frequencyRange (float min, float max)
     return r;
 }
 
+static juce::NormalisableRange<float> skewedRange (float min, float max, float centre)
+{
+    juce::NormalisableRange<float> r (min, max);
+    r.setSkewForCentre (centre); // more resolution around `centre`
+    return r;
+}
+
 static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
 {
     const auto section = oscSection (slot);
@@ -585,12 +592,31 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::reverbEnable, "Reverb On", Section::fxReverb,
                    ParamKind::boolParam, {}, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.6f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::reverbMode, "Reverb Mode", Section::fxReverb,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   juce::StringArray { "Hall", "Plate", "Chamber", "Room", "Spring" } });
+    p.push_back ({ fx::reverbPreDelay, "Reverb Pre", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 200.0f }, 20.0f, "ms",
+                   false, { .enabled = true, .maxNorm = 0.4f } });
     p.push_back ({ fx::reverbSize, "Reverb Size", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true } });
+    p.push_back ({ fx::reverbDecay, "Reverb Decay", Section::fxReverb,
+                   ParamKind::floatParam, skewedRange (0.2f, 12.0f, 2.5f), 2.0f, "s",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
     p.push_back ({ fx::reverbDamping, "Reverb Damp", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true } });
+    p.push_back ({ fx::reverbModDepth, "Reverb Mod", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::reverbLowCut, "Reverb LoCut", Section::fxReverb,
+                   ParamKind::floatParam, frequencyRange (20.0f, 2000.0f), 20.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.5f } });
+    p.push_back ({ fx::reverbHighCut, "Reverb HiCut", Section::fxReverb,
+                   ParamKind::floatParam, frequencyRange (1000.0f, 20000.0f), 12000.0f, "Hz",
+                   false, { .enabled = true, .minNorm = 0.4f } });
     p.push_back ({ fx::reverbWidth, "Reverb Width", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = true, .minNorm = 0.4f } });

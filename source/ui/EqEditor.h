@@ -83,17 +83,44 @@ public:
         {
             if (! bandEnabled (b)) continue;
             const auto c = nodeCentre (b);
-            const bool hot = (b == dragBand || b == hoverBand);
+            const bool hot = (b == dragBand || b == hoverBand || b == selectedBand);
             const float rad = hot ? nodeRadius + 2.0f : nodeRadius;
             g.setColour (t.display.withAlpha (0.9f));
             g.fillEllipse (c.x - rad - 1.0f, c.y - rad - 1.0f, (rad + 1.0f) * 2.0f, (rad + 1.0f) * 2.0f);
             g.setColour (on ? t.accent : t.textSecondary);
             g.fillEllipse (c.x - rad, c.y - rad, rad * 2.0f, rad * 2.0f);
+            if (b == selectedBand)   // selection ring
+            {
+                g.setColour (t.textPrimary);
+                g.drawEllipse (c.x - rad - 2.0f, c.y - rad - 2.0f,
+                               (rad + 2.0f) * 2.0f, (rad + 2.0f) * 2.0f, 1.5f);
+            }
             g.setColour (t.background);
             g.setFont (juce::Font (juce::FontOptions (10.0f)));
             g.drawText (juce::String (b + 1),
                         juce::Rectangle<float> (c.x - rad, c.y - rad, rad * 2.0f, rad * 2.0f),
                         juce::Justification::centred);
+        }
+
+        // Readout for the selected node (or the one under the pointer): frequency,
+        // gain, and Q, so the Q wheel has a visible target.
+        const int info = hoverBand >= 0 ? hoverBand : selectedBand;
+        if (info >= 0 && bandEnabled (info))
+        {
+            const float f = rawBand (info, params::id::fx::eqband::freq);
+            const float gainDb = rawBand (info, params::id::fx::eqband::gain);
+            const float q = rawBand (info, params::id::fx::eqband::q);
+            const int type = (int) rawBand (info, params::id::fx::eqband::type);
+            const bool gainType = type == 0 || type == 1 || type == 2;
+            juce::String txt = "B" + juce::String (info + 1) + "   "
+                             + (f >= 1000.0f ? juce::String (f / 1000.0f, 2) + " kHz"
+                                             : juce::String (juce::roundToInt (f)) + " Hz");
+            if (gainType) txt += "   " + juce::String (gainDb, 1) + " dB";
+            txt += "   Q " + juce::String (q, 2);
+            g.setColour (t.textSecondary);
+            g.setFont (juce::Font (juce::FontOptions (11.0f)));
+            g.drawText (txt, graph.reduced (8.0f, 5.0f).removeFromTop (14.0f),
+                        juce::Justification::topLeft);
         }
 
         g.setColour (t.outline);
@@ -102,7 +129,14 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        dragBand = bandAt (e.position);
+        // Single click on a node selects and grabs it; single click on empty
+        // graph space creates a new node there (up to the 8-band max) and grabs
+        // it so you can drag it straight into place.
+        int b = bandAt (e.position);
+        if (b < 0)
+            b = createBandAt (e.position);
+        selectedBand = b;
+        dragBand = b;
         if (dragBand >= 0) applyDrag (e.position);
         repaint();
     }
@@ -116,22 +150,14 @@ public:
 
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
+        // Double click a node to remove it. (Creation is a single click.)
         const int b = bandAt (e.position);
-        if (b >= 0) { setBand (b, params::id::fx::eqband::enable, 0.0f); }   // remove
-        else                                                                // add
+        if (b >= 0)
         {
-            for (int i = 0; i < numBands; ++i)
-                if (! bandEnabled (i))
-                {
-                    setBand (i, params::id::fx::eqband::type, 0.0f /* Bell */);
-                    setBandRaw (i, params::id::fx::eqband::freq, xToFreq (e.position.x));
-                    setBandRaw (i, params::id::fx::eqband::gain,
-                                juce::jlimit (-dbRange, dbRange, yToDb (e.position.y)));
-                    setBand (i, params::id::fx::eqband::enable, 1.0f);
-                    break;
-                }
+            setBand (b, params::id::fx::eqband::enable, 0.0f);
+            if (selectedBand == b) selectedBand = -1;
+            repaint();
         }
-        repaint();
     }
 
     void mouseMove (const juce::MouseEvent& e) override
@@ -146,8 +172,11 @@ public:
 
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
     {
-        const int b = bandAt (e.position);
-        if (b < 0) return;
+        // Wheel sets Q: the hovered node if the pointer is over one, otherwise
+        // the currently selected node (so you can dial Q after picking a node).
+        int b = bandAt (e.position);
+        if (b < 0) b = selectedBand;
+        if (b < 0 || ! bandEnabled (b)) return;
         const float q = rawBand (b, params::id::fx::eqband::q);
         setBandRaw (b, params::id::fx::eqband::q,
                     juce::jlimit (0.1f, 18.0f, q * (1.0f + w.deltaY * 0.6f)));
@@ -247,6 +276,24 @@ private:
                         juce::jlimit (-dbRange, dbRange, yToDb (p.y)));
     }
 
+    // Enable the first free band at the click point (Bell), or -1 if all 8 are
+    // in use or the click is outside the graph.
+    int createBandAt (juce::Point<float> p)
+    {
+        if (! graph.contains (p)) return -1;
+        for (int i = 0; i < numBands; ++i)
+            if (! bandEnabled (i))
+            {
+                setBand (i, params::id::fx::eqband::type, 0.0f /* Bell */);
+                setBandRaw (i, params::id::fx::eqband::freq, juce::jlimit (minF, maxF, xToFreq (p.x)));
+                setBandRaw (i, params::id::fx::eqband::gain,
+                            juce::jlimit (-dbRange, dbRange, yToDb (p.y)));
+                setBand (i, params::id::fx::eqband::enable, 1.0f);
+                return i;
+            }
+        return -1;
+    }
+
     void drawGrid (juce::Graphics& g, const Theme& t) const
     {
         g.setColour (t.outline.withAlpha (0.6f));
@@ -334,7 +381,7 @@ private:
     Choice character;
 
     juce::Rectangle<float> graph;
-    int dragBand = -1, hoverBand = -1;
+    int dragBand = -1, hoverBand = -1, selectedBand = -1;
 
     juce::dsp::FFT fft { 11 };   // 2^11 = 2048 = scopeSize
     std::array<float, dsp::Telemetry::scopeSize * 2> fftData {};

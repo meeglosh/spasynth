@@ -1,5 +1,6 @@
 #include "SPASynthLookAndFeel.h"
 #include "../library/Library.h"
+#include "DraggableTabs.h"
 
 namespace spa::ui
 {
@@ -523,11 +524,17 @@ void SPASynthLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height
     g.strokePath (chevron, juce::PathStrokeType (1.4f));
 }
 
+// Draggable FX tabs draw a grip-dots handle at the left; reserve room for it so
+// a re-laid-out (tight) bar never slides the centred text onto the grip.
+static constexpr int tabGripReserve = 16;
+
 int SPASynthLookAndFeel::getTabButtonBestWidth (juce::TabBarButton& button, int)
 {
     juce::GlyphArrangement glyphs;
     glyphs.addLineOfText (metrics::smallFont(), button.getButtonText(), 0.0f, 0.0f);
-    return juce::jmax (36, (int) std::ceil (glyphs.getBoundingBox (0, -1, true).getWidth()) + 16);
+    const int grip = dynamic_cast<DraggableTabButton*> (&button) != nullptr ? tabGripReserve : 0;
+    return juce::jmax (36, (int) std::ceil (glyphs.getBoundingBox (0, -1, true).getWidth())
+                              + 16 + grip);
 }
 
 void SPASynthLookAndFeel::drawTabButton (juce::TabBarButton& button, juce::Graphics& g,
@@ -553,8 +560,10 @@ void SPASynthLookAndFeel::drawTabButton (juce::TabBarButton& button, juce::Graph
 
     g.setColour (front ? t.textPrimary : t.textSecondary);
     g.setFont (metrics::smallFont());
-    g.drawText (button.getButtonText().toUpperCase(), button.getLocalBounds(),
-                juce::Justification::centred);
+    auto textArea = button.getLocalBounds();
+    if (dynamic_cast<DraggableTabButton*> (&button) != nullptr)
+        textArea.removeFromLeft (tabGripReserve);   // keep the text clear of the grip
+    g.drawText (button.getButtonText().toUpperCase(), textArea, juce::Justification::centred);
 }
 
 void SPASynthLookAndFeel::drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&)

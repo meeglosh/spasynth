@@ -27,6 +27,15 @@ SPASynthProcessor::SPASynthProcessor()
     raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
     raw.glideMode = apvts.getRawParameterValue (params::id::glideMode);
     raw.glideTime = apvts.getRawParameterValue (params::id::glideTime);
+    raw.voiceMode = apvts.getRawParameterValue (params::id::voiceMode);
+    raw.notePriority = apvts.getRawParameterValue (params::id::notePriority);
+    raw.unisonVoices = apvts.getRawParameterValue (params::id::unisonVoices);
+    raw.unisonDetune = apvts.getRawParameterValue (params::id::unisonDetune);
+    raw.unisonWidth = apvts.getRawParameterValue (params::id::unisonWidth);
+    raw.ampAttack = apvts.getRawParameterValue (params::id::ampAttack);
+    raw.ampDecay = apvts.getRawParameterValue (params::id::ampDecay);
+    raw.ampSustain = apvts.getRawParameterValue (params::id::ampSustain);
+    raw.ampRelease = apvts.getRawParameterValue (params::id::ampRelease);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
     raw.filter2Enable = apvts.getRawParameterValue (params::id::filter2Enable);
@@ -486,6 +495,11 @@ void SPASynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     arp.prepare (sampleRate);
     midiClock.prepare (sampleRate);
     fxChain.prepare (sampleRate, samplesPerBlock);
+
+    paraEnv.setSampleRate (sampleRate);
+    paraEnv.reset();
+    paraGateWasOn = false;
+    paraEnvBuf.setSize (1, juce::jmax (1, samplesPerBlock), false, false, true);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
@@ -684,6 +698,11 @@ void SPASynthProcessor::updateSharedState (int blockLength)
 
     shared.glideMode = (params::GlideMode) (int) raw.glideMode->load();
     shared.glideTimeMs = raw.glideTime->load();
+    shared.voiceMode = (params::VoiceMode) (int) raw.voiceMode->load();
+    shared.notePriority = (params::NotePriority) (int) raw.notePriority->load();
+    shared.unisonVoices = (int) raw.unisonVoices->load();
+    shared.unisonDetuneCents = raw.unisonDetune->load();
+    shared.unisonWidth = raw.unisonWidth->load();
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
     shared.filterKeytrack = raw.filterKeytrack->load();
@@ -845,6 +864,34 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     }
 
     updateSharedState (buffer.getNumSamples());
+
+    // Paraphonic: advance one shared amp envelope from the collective key count
+    // and render it per-sample for the voices to read this block. Gated on the
+    // key count from the previous block, so voices attack one block after the
+    // first key lands (imperceptible, and keeps this a simple pre-pass).
+    if (shared.voiceMode == params::VoiceMode::paraphonic)
+    {
+        const bool anyKey = glideState.keysDown > 0;
+        if (anyKey != paraGateWasOn)
+        {
+            if (anyKey) paraEnv.noteOn(); else paraEnv.noteOff();
+            paraGateWasOn = anyKey;
+        }
+        paraEnv.setParameters ({ raw.ampAttack->load(), raw.ampDecay->load(),
+                                 raw.ampSustain->load(), raw.ampRelease->load() });
+        const int n = buffer.getNumSamples();
+        auto* pe = paraEnvBuf.getWritePointer (0);
+        for (int i = 0; i < n; ++i) pe[i] = paraEnv.getNextSample();
+        shared.paraEnvBlock = pe;
+        shared.paraGateActive = anyKey;
+    }
+    else
+    {
+        shared.paraEnvBlock = nullptr;
+        shared.paraGateActive = false;
+        if (paraGateWasOn) { paraEnv.reset(); paraGateWasOn = false; }
+    }
+
     synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
 
     updateFXParams();

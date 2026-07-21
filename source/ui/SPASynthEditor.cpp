@@ -367,6 +367,60 @@ private:
     FXPanel inner;
     std::unique_ptr<juce::FileChooser> fileChooser;
 };
+
+// Voice-allocation controls, shown in a call-out from the header VOICE button:
+// mode + note priority, plus the unison voice/detune/width knobs.
+class VoicePanel : public juce::Component
+{
+public:
+    explicit VoicePanel (juce::AudioProcessorValueTreeState& apvts)
+        : mode (apvts, params::id::voiceMode),
+          priority (apvts, params::id::notePriority),
+          voices (apvts, params::id::unisonVoices, "Voices"),
+          detune (apvts, params::id::unisonDetune, "Detune"),
+          width (apvts, params::id::unisonWidth, "Width")
+    {
+        modeLabel.setText ("MODE", juce::dontSendNotification);
+        priorityLabel.setText ("PRIORITY", juce::dontSendNotification);
+        for (auto* l : { &modeLabel, &priorityLabel })
+        {
+            l->setFont (metrics::smallFont());
+            l->setJustificationType (juce::Justification::centredLeft);
+            addAndMakeVisible (*l);
+        }
+        for (auto* c : std::initializer_list<juce::Component*> { &mode, &priority, &voices, &detune, &width })
+            addAndMakeVisible (*c);
+        setSize (244, 150);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (currentTheme().panel);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (10, 8);
+        auto row1 = r.removeFromTop (24);
+        modeLabel.setBounds (row1.removeFromLeft (66));
+        mode.setBounds (row1);
+        r.removeFromTop (6);
+        auto row2 = r.removeFromTop (24);
+        priorityLabel.setBounds (row2.removeFromLeft (66));
+        priority.setBounds (row2);
+        r.removeFromTop (8);
+        auto knobs = r;
+        const int w = knobs.getWidth() / 3;
+        voices.setBounds (knobs.removeFromLeft (w));
+        detune.setBounds (knobs.removeFromLeft (w));
+        width.setBounds (knobs);
+    }
+
+private:
+    Choice mode, priority;
+    Knob voices, detune, width;
+    juce::Label modeLabel, priorityLabel;
+};
 } // namespace
 
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
@@ -476,6 +530,16 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     glideLabel.setFont (metrics::smallFont());
     glideLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (glideLabel);
+
+    voiceButton.setButtonText ("VOICE");
+    voiceButton.setTooltip ("Voice mode: Poly / Mono / Duo / Paraphonic / Unison");
+    voiceButton.onClick = [this]
+    {
+        auto panel = std::make_unique<VoicePanel> (processor.getAPVTS());
+        juce::CallOutBox::launchAsynchronously (std::move (panel),
+                                                voiceButton.getScreenBounds(), nullptr);
+    };
+    addAndMakeVisible (voiceButton);
 
     accentButton.setTooltip ("Customize the accent colors");
     accentButton.onClick = [this] { showAccentPicker(); };
@@ -757,7 +821,7 @@ void ContentComponent::resized()
     auto header = bounds.removeFromTop (metrics::headerHeight);
     settingsButton.setBounds (header.removeFromLeft (52));  // logo doubles as menu
 
-    auto right = header.removeFromRight (476).reduced (0, 9);
+    auto right = header.removeFromRight (524).reduced (0, 9);
     right.removeFromRight (12);   // padding so the meter clears the window edge
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
@@ -769,6 +833,8 @@ void ContentComponent::resized()
     glideLabel.setBounds (glideArea.removeFromBottom (11));
     glideSlider.setBounds (glideArea);
     glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
+    right.removeFromRight (6);
+    voiceButton.setBounds (right.removeFromRight (46).reduced (0, 5));
     right.removeFromRight (6);
     // WILD sits right beside RANDOMIZE ALL — it shapes what the button rolls.
     auto wildArea = right.removeFromRight (44);

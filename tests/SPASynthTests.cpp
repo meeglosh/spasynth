@@ -903,6 +903,69 @@ namespace
                 "high-cut attenuates 10 kHz");
     }
 
+    // Voice modes gate how many voices a chord (or a single note, for unison)
+    // brings up. Counts are read from the telemetry active-voice tally after a
+    // block that plays the notes.
+    static void voiceModeTest()
+    {
+        std::cout << "voiceModeTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+
+        auto activeVoices = [&] (int mode, int unison, std::vector<int> notes)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sr, block);
+            setParam (proc, id::voiceMode, (float) mode);
+            if (unison > 0) setParam (proc, id::unisonVoices, (float) unison);
+            juce::MidiBuffer midi;
+            for (size_t k = 0; k < notes.size(); ++k)
+                midi.addEvent (juce::MidiMessage::noteOn (1, notes[k], (juce::uint8) 100),
+                               (int) k);
+            juce::AudioBuffer<float> buf (2, block);
+            buf.clear();
+            proc.processBlock (buf, midi);
+            return proc.getTelemetry().activeVoices.load();
+        };
+
+        expect (activeVoices (0, 0, { 60, 64, 67, 71 }) == 4, "poly chord = 4 voices");
+        expect (activeVoices (1, 0, { 60, 64, 67, 71 }) == 1, "mono chord = 1 voice");
+        expect (activeVoices (2, 0, { 60, 64, 67, 71 }) == 2, "duo chord = 2 voices");
+        expect (activeVoices (3, 0, { 60, 64, 67 }) == 3, "paraphonic chord = 3 voices");
+        expect (activeVoices (4, 5, { 60 }) == 5, "unison note = 5 voices");
+
+        // Paraphonic must actually sound (shared envelope opens on the chord) and
+        // then, after all keys release, fall silent and free every voice.
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sr, block);
+            setParam (proc, id::voiceMode, 3.0f);
+            setParam (proc, id::ampAttack, 0.001f);
+            setParam (proc, id::ampRelease, 0.02f);
+            juce::AudioBuffer<float> buf (2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 110), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 110), 0);
+            float peak = 0.0f;
+            for (int b = 0; b < 8; ++b)   // let the shared env open
+            {
+                buf.clear(); juce::MidiBuffer m = (b == 0 ? midi : juce::MidiBuffer());
+                proc.processBlock (buf, m);
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+            }
+            expect (peak > 0.01f, "paraphonic chord produces sound");
+
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            off.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+            buf.clear(); proc.processBlock (buf, off);
+            for (int b = 0; b < 40; ++b) { buf.clear(); juce::MidiBuffer m; proc.processBlock (buf, m); }
+            expect (proc.getTelemetry().activeVoices.load() == 0,
+                    "paraphonic frees all voices after release");
+        }
+    }
+
     static void fxDelayReverbTest()
     {
         std::cout << "fxDelayReverbTest\n";
@@ -2328,6 +2391,7 @@ int main (int argc, char* argv[])
     reverbMixTest();
     reverbStabilityTest();
     parametricEqTest();
+    voiceModeTest();
     panicTest();
     midiClockTest();
     fxOrderTest();

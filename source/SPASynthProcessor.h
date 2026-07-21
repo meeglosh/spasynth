@@ -160,9 +160,16 @@ private:
     dsp::Telemetry telemetry;
     dsp::Arpeggiator arp;
     dsp::SharedState::GlideState glideState;   // updated by the synth's note hooks
-    dsp::GlideSynthesiser synth { glideState };
+    dsp::GlideSynthesiser synth { shared };
     dsp::FXChain fxChain;
     dsp::FXChain::Params fxParams;
+
+    // Paraphonic shared amp envelope (voice mode = Paraphonic): one ADSR gated
+    // by the collective key count, rendered per-block into paraEnvBuf for the
+    // voices to read. paraGateWasOn tracks the gate edge across blocks.
+    juce::ADSR paraEnv;
+    juce::AudioBuffer<float> paraEnvBuf;
+    bool paraGateWasOn = false;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
 
     double currentSampleRate = 44100.0;
@@ -305,6 +312,15 @@ private:
         std::atomic<float>* masterGain = nullptr;
         std::atomic<float>* glideMode = nullptr;
         std::atomic<float>* glideTime = nullptr;
+        std::atomic<float>* voiceMode = nullptr;
+        std::atomic<float>* notePriority = nullptr;
+        std::atomic<float>* unisonVoices = nullptr;
+        std::atomic<float>* unisonDetune = nullptr;
+        std::atomic<float>* unisonWidth = nullptr;
+        std::atomic<float>* ampAttack = nullptr;
+        std::atomic<float>* ampDecay = nullptr;
+        std::atomic<float>* ampSustain = nullptr;
+        std::atomic<float>* ampRelease = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;
         std::atomic<float>* filter2Enable = nullptr;

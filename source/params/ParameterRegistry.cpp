@@ -343,6 +343,24 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 1.0f, 2000.0f, 1.0f, 0.35f }, 80.0f, "ms",
                    false, { .enabled = false } });
 
+    p.push_back ({ id::voiceMode, "Voice Mode", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Poly", "Mono", "Duo", "Paraphonic", "Unison" } });
+    p.push_back ({ id::notePriority, "Note Priority", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Last", "High", "Low" } });
+    p.push_back ({ id::unisonVoices, "Unison Voices", Section::global,
+                   ParamKind::intParam, { 1.0f, 7.0f, 1.0f }, 3.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ id::unisonDetune, "Unison Detune", Section::global,
+                   ParamKind::floatParam, { 0.0f, 50.0f, 0.1f }, 12.0f, "ct",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ id::unisonWidth, "Unison Width", Section::global,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+
     for (int slot = 0; slot < numOscSlots; ++slot)
         addOscSlotParams (p, slot);
 

@@ -104,6 +104,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> glideModeAttachment;
     juce::Slider glideSlider;
     juce::Label glideLabel;
+    juce::TextButton voiceButton;   // opens the voice-mode call-out
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     AccentButton accentButton;
     juce::Slider masterSlider;

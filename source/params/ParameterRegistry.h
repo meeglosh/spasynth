@@ -153,6 +153,13 @@ namespace id
     inline constexpr const char* glideMode = "global.glideMode";   // Off/Always/Legato
     inline constexpr const char* glideTime = "global.glideTime";
 
+    // Voice allocation.
+    inline constexpr const char* voiceMode     = "global.voiceMode";
+    inline constexpr const char* notePriority  = "global.notePriority";
+    inline constexpr const char* unisonVoices  = "global.unisonVoices";
+    inline constexpr const char* unisonDetune  = "global.unisonDetune";
+    inline constexpr const char* unisonWidth   = "global.unisonWidth";
+
     inline constexpr const char* filter1Type      = "filter1.type";
     inline constexpr const char* filter1Cutoff    = "filter1.cutoff";
     inline constexpr const char* filter1Resonance = "filter1.resonance";
@@ -397,6 +404,12 @@ enum class PhaseMode { reset, random, free_ };
 // Portamento behaviour — choice order is load-bearing, append-only.
 // legato only glides when the previous note is still held.
 enum class GlideMode { off, always, legato };
+
+// Voice allocation mode — choice order is load-bearing, append-only.
+enum class VoiceMode { poly, mono, duo, paraphonic, unison };
+
+// Note priority for mono/duo/paraphonic when more keys are held than voices.
+enum class NotePriority { last, high, low };
 
 // Oscillator slot engine — choice order is load-bearing, append-only.
 enum class OscMode { wavetable, sample, granular, analog, fm, noise, pluck };

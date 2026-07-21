@@ -4,6 +4,7 @@
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
 #include "dsp/FXChain.h"
+#include "dsp/MidiClockSync.h"
 #include "dsp/WavetableLoader.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
@@ -659,6 +660,104 @@ namespace
         file.deleteFile();
     }
 
+    // FX chain order packs to a uint64 and back; garbage falls back to natural.
+    static void fxOrderTest()
+    {
+        std::cout << "fxOrderTest\n";
+        using FX = spa::dsp::FXChain;
+
+        FX::Module order[FX::numModules] { FX::Module::convolve, FX::Module::limiter,
+            FX::Module::eq, FX::Module::reverb, FX::Module::tremVib, FX::Module::mod,
+            FX::Module::delay, FX::Module::chorus, FX::Module::distortion };
+        FX::Module back[FX::numModules];
+        FX::unpackOrder (FX::packOrder (order), back);
+        bool roundTrip = true;
+        for (int i = 0; i < FX::numModules; ++i)
+            roundTrip = roundTrip && (order[i] == back[i]);
+        expect (roundTrip, "fx order packs and unpacks round-trip");
+
+        FX::unpackOrder (0xFFFFFFFFFFFFFFFFull, back);   // garbage
+        bool natural = true;
+        for (int i = 0; i < FX::numModules; ++i)
+            natural = natural && ((int) back[i] == i);
+        expect (natural, "invalid packed order falls back to natural order");
+    }
+
+    // MIDI Beat Clock derives tempo (24 pulses per quarter). At 120 BPM that is
+    // one clock every 1000 samples at 48k; the tracker should read ~120.
+    static void midiClockTest()
+    {
+        std::cout << "midiClockTest\n";
+        spa::dsp::MidiClockSync clock;
+        clock.prepare (48000.0);
+
+        constexpr int spc = 1000;         // samples per clock at 120 BPM
+        constexpr int blockSize = 512;
+        int absolute = 0, nextClock = 0;
+        bool sawStart = false;
+
+        for (int b = 0; b < 250; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (! sawStart) { midi.addEvent (juce::MidiMessage::midiStart(), 0); sawStart = true; }
+            while (nextClock < absolute + blockSize)
+            {
+                midi.addEvent (juce::MidiMessage::midiClock(), nextClock - absolute);
+                nextClock += spc;
+            }
+            clock.process (midi, blockSize);
+            absolute += blockSize;
+        }
+
+        expect (clock.hasClock(), "midi clock detected");
+        expect (clock.isPlaying(), "midi start sets transport playing");
+        expect (std::abs (clock.bpm() - 120.0) < 2.0,
+                "derives ~120 BPM from the clock (" + juce::String (clock.bpm()) + ")");
+    }
+
+    // Panic() must silence a latched arp (the stuck-note scenario): with latch
+    // on, releasing the key keeps notes going; panic clears the held chord and
+    // kills the voices.
+    static void panicTest()
+    {
+        std::cout << "panicTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int n = 512;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, n);
+        setParam (proc, id::chaos::enable, 0.0f);
+        setParam (proc, id::arp::enable, 1.0f);
+        setParam (proc, id::arp::latch, 1.0f);
+
+        juce::AudioBuffer<float> buf (2, n);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 10);   // latch holds it
+
+        auto energyOver = [&] (int blocks)
+        {
+            float e = 0.0f;
+            for (int b = 0; b < blocks; ++b)
+            {
+                proc.processBlock (buf, midi);
+                midi.clear();
+                e += buf.getRMSLevel (0, 0, n);
+            }
+            return e;
+        };
+
+        const float stuck = energyOver ((int) (0.5 * sr / n));
+        expect (stuck > 0.0f,
+                "latched arp keeps sounding after key release (" + juce::String (stuck) + ")");
+
+        proc.panic();
+        const float after = energyOver ((int) (0.3 * sr / n));
+        expect (after < stuck * 0.05f,
+                "panic silences the latched arp (" + juce::String (after) + ")");
+    }
+
     // Reverb MIX must be a true dry/wet dial: fully dry at 0, fully wet at 1.
     // (Was capped so the dry never dropped below 60%, so you could never reach
     // full reverb.) Settle the gain smoothing on silence, then probe the first
@@ -693,6 +792,217 @@ namespace
                 "reverb mix 0 is unity dry, not boosted (" + juce::String (dry0) + ")");
         expect (dry1 < 0.1f,
                 "reverb mix 1 removes the dry, full wet (" + juce::String (dry1) + ")");
+    }
+
+    // The FDN reverb must stay finite and bounded across every mode even at
+    // long decay + heavy modulation, both from an impulse and under sustained
+    // input. A unitary feedback matrix with per-line gains < 1 guarantees this;
+    // the test is the safety net against a future coefficient regression.
+    static void reverbStabilityTest()
+    {
+        std::cout << "reverbStabilityTest\n";
+        using FX = spa::dsp::FXChain;
+        constexpr double sr = 48000.0;
+        constexpr int n = 256;
+
+        uint32_t rng = 22222u;
+        auto noise = [&rng]
+        {
+            rng = rng * 1664525u + 1013904223u;
+            return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+        };
+
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMode = mode;
+            p.reverbMix = 1.0f;
+            p.reverbDecay = 10.0f;   // long tail
+            p.reverbSize = 1.0f;
+            p.reverbModDepth = 1.0f; // heavy tail modulation
+            p.reverbDamping = 0.2f;
+
+            float peak = 0.0f;
+            bool finite = true;
+            // ~2.5 s: 0.2 s of noise excitation, then decay in silence.
+            const int blocks = (int) (2.5 * sr / n);
+            const int exciteBlocks = (int) (0.2 * sr / n);
+            juce::AudioBuffer<float> buf (2, n);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                if (b < exciteBlocks)
+                    for (int s = 0; s < n; ++s)
+                    {
+                        buf.setSample (0, s, noise() * 0.5f);
+                        buf.setSample (1, s, noise() * 0.5f);
+                    }
+                fx.process (buf, p);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int s = 0; s < n; ++s)
+                    {
+                        const float v = buf.getSample (ch, s);
+                        if (! std::isfinite (v)) finite = false;
+                        peak = juce::jmax (peak, std::abs (v));
+                    }
+            }
+            expect (finite, "reverb mode " + juce::String (mode) + " stays finite");
+            expect (peak < 8.0f,
+                    "reverb mode " + juce::String (mode) + " stays bounded (peak "
+                    + juce::String (peak) + ")");
+        }
+    }
+
+    // Validates the parametric-EQ RBJ coefficients: the analytic magnitude
+    // response must match what the biquads actually do, a bell boost must raise
+    // its band's energy, and a high-cut must attenuate highs.
+    static void parametricEqTest()
+    {
+        std::cout << "parametricEqTest\n";
+        using EQ = spa::dsp::ParametricEQ;
+        constexpr double sr = 48000.0;
+        constexpr float twoPi = juce::MathConstants<float>::twoPi;
+
+        std::array<EQ::Band, EQ::numBands> bands {};
+        bands[0] = { true, (int) EQ::Type::bell, 1000.0f, 12.0f, 2.0f };
+        const float atCentre = EQ::magnitudeDb (bands, 1000.0f, sr);
+        const float atFar    = EQ::magnitudeDb (bands, 60.0f, sr);
+        expect (std::abs (atCentre - 12.0f) < 0.5f,
+                "bell centre gain ~ +12 dB (" + juce::String (atCentre) + ")");
+        expect (std::abs (atFar) < 1.0f,
+                "bell far from centre ~ flat (" + juce::String (atFar) + ")");
+
+        auto rmsThrough = [&] (const std::array<EQ::Band, EQ::numBands>& bs, float freq)
+        {
+            EQ eq; eq.prepare (sr, 512);
+            eq.updateBands (bs);
+            juce::AudioBuffer<float> buf (2, 8192);
+            for (int i = 0; i < 8192; ++i)
+            {
+                const float s = std::sin (twoPi * freq * (float) i / (float) sr);
+                buf.setSample (0, i, s); buf.setSample (1, i, s);
+            }
+            eq.process (buf);
+            double sum = 0; int n = 0;
+            for (int i = 2000; i < 8192; ++i) { const float v = buf.getSample (0, i); sum += v * v; ++n; }
+            return (float) std::sqrt (sum / n);
+        };
+
+        std::array<EQ::Band, EQ::numBands> off {};
+        std::array<EQ::Band, EQ::numBands> boost {};
+        boost[0] = { true, (int) EQ::Type::bell, 1000.0f, 12.0f, 2.0f };
+        expect (rmsThrough (boost, 1000.0f) > rmsThrough (off, 1000.0f) * 2.0f,
+                "bell boost raises 1 kHz RMS");
+
+        std::array<EQ::Band, EQ::numBands> hicut {};
+        hicut[0] = { true, (int) EQ::Type::highCut, 2000.0f, 0.0f, 0.707f };
+        expect (rmsThrough (hicut, 10000.0f) < rmsThrough (off, 10000.0f) * 0.3f,
+                "high-cut attenuates 10 kHz");
+    }
+
+    // Voice modes gate how many voices a chord (or a single note, for unison)
+    // brings up. Counts are read from the telemetry active-voice tally after a
+    // block that plays the notes.
+    static void voiceModeTest()
+    {
+        std::cout << "voiceModeTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+
+        auto activeVoices = [&] (int mode, int unison, std::vector<int> notes)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sr, block);
+            setParam (proc, id::voiceMode, (float) mode);
+            if (unison > 0) setParam (proc, id::unisonVoices, (float) unison);
+            juce::MidiBuffer midi;
+            for (size_t k = 0; k < notes.size(); ++k)
+                midi.addEvent (juce::MidiMessage::noteOn (1, notes[k], (juce::uint8) 100),
+                               (int) k);
+            juce::AudioBuffer<float> buf (2, block);
+            buf.clear();
+            proc.processBlock (buf, midi);
+            return proc.getTelemetry().activeVoices.load();
+        };
+
+        expect (activeVoices (0, 0, { 60, 64, 67, 71 }) == 4, "poly chord = 4 voices");
+        expect (activeVoices (1, 0, { 60, 64, 67, 71 }) == 1, "mono chord = 1 voice");
+        expect (activeVoices (2, 0, { 60, 64, 67, 71 }) == 2, "duo chord = 2 voices");
+        expect (activeVoices (3, 0, { 60, 64, 67 }) == 3, "paraphonic chord = 3 voices");
+        expect (activeVoices (4, 5, { 60 }) == 5, "unison note = 5 voices");
+
+        // Paraphonic must actually sound (shared envelope opens on the chord) and
+        // then, after all keys release, fall silent and free every voice.
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sr, block);
+            setParam (proc, id::voiceMode, 3.0f);
+            setParam (proc, id::ampAttack, 0.001f);
+            setParam (proc, id::ampRelease, 0.02f);
+            juce::AudioBuffer<float> buf (2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 110), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 110), 0);
+            float peak = 0.0f;
+            for (int b = 0; b < 8; ++b)   // let the shared env open
+            {
+                buf.clear(); juce::MidiBuffer m = (b == 0 ? midi : juce::MidiBuffer());
+                proc.processBlock (buf, m);
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+            }
+            expect (peak > 0.01f, "paraphonic chord produces sound");
+
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            off.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+            buf.clear(); proc.processBlock (buf, off);
+            for (int b = 0; b < 40; ++b) { buf.clear(); juce::MidiBuffer m; proc.processBlock (buf, m); }
+            expect (proc.getTelemetry().activeVoices.load() == 0,
+                    "paraphonic frees all voices after release");
+        }
+    }
+
+    // Whole-synth oversampling must render correctly-levelled audio at every
+    // factor (the up/render/decimate path is easy to get silent or blown up).
+    // The factor is picked up at prepareToPlay, so we prepare fresh per factor.
+    static void oversamplingTest()
+    {
+        std::cout << "oversamplingTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+
+        auto renderPeak = [&] (int osIndex)
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::oversampling, (float) osIndex);
+            proc.prepareToPlay (sr, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, block);
+            float peak = 0.0f;
+            for (int b = 0; b < 24; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer m = (b == 0 ? midi : juce::MidiBuffer());
+                proc.processBlock (buf, m);
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+            }
+            return peak;
+        };
+
+        const float off = renderPeak (0);
+        const float os2 = renderPeak (1);
+        const float os4 = renderPeak (2);
+        const float os8 = renderPeak (3);
+        expect (off > 0.02f, "renders at 1x (" + juce::String (off) + ")");
+        expect (os2 > 0.02f && os2 < off * 2.0f + 0.1f, "2x level matches 1x");
+        expect (os4 > 0.02f && os4 < off * 2.0f + 0.1f, "4x level matches 1x");
+        expect (os8 > 0.02f && os8 < off * 2.0f + 0.1f, "8x level matches 1x");
     }
 
     static void fxDelayReverbTest()
@@ -781,10 +1091,16 @@ namespace
         const auto flat = brightnessWith ([] (auto&) {});
         const auto darkened = brightnessWith ([] (auto& proc)
         {
-            setParam (proc, id::fx::eqEnable, 1.0f);
-            setParam (proc, id::fx::eqHighGain, -12.0f);
-            setParam (proc, id::fx::eqMidGain, -12.0f);
-            setParam (proc, id::fx::eqMidFreq, 4000.0f);
+            namespace fx = id::fx;
+            setParam (proc, fx::eqEnable, 1.0f);
+            // Band 7: high-shelf cut. Band 5: bell cut at 4 kHz.
+            setParam (proc, id::eqBand (6, fx::eqband::enable), 1.0f);
+            setParam (proc, id::eqBand (6, fx::eqband::type), 2.0f /* High Shelf */);
+            setParam (proc, id::eqBand (6, fx::eqband::gain), -18.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::enable), 1.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::type), 0.0f /* Bell */);
+            setParam (proc, id::eqBand (5, fx::eqband::freq), 4000.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::gain), -18.0f);
         });
         expect (darkened < flat * 0.8f,
                 "EQ high/mid cut darkens output (flat " + juce::String (flat)
@@ -1208,8 +1524,10 @@ namespace
                 {
                     if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
                     {
+                        // Front by name: tabs can be reordered, so a fixed index
+                        // would front whatever module now sits in that slot.
                         if (tabs->getTabNames().contains ("DELAY"))
-                            tabs->setCurrentTabIndex (2);
+                            tabs->setCurrentTabIndex (tabs->getTabNames().indexOf ("DELAY"));
                         if (tabs->getTabNames().contains ("FILTER 2"))
                             tabs->setCurrentTabIndex (1);
                     }
@@ -2110,6 +2428,13 @@ int main (int argc, char* argv[])
     sfxFollowerTest();
     fxDelayReverbTest();
     reverbMixTest();
+    reverbStabilityTest();
+    parametricEqTest();
+    voiceModeTest();
+    oversamplingTest();
+    panicTest();
+    midiClockTest();
+    fxOrderTest();
     fxEQDistortionTest();
     randomizerTest();
     randomizerProducesSoundTest();

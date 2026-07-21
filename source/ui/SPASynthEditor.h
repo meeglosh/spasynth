@@ -5,6 +5,7 @@
 #include "../params/ParameterRegistry.h"
 #include "../params/Randomizer.h"
 #include "SPASynthLookAndFeel.h"
+#include "DraggableTabs.h"
 #include "ModulePanels.h"
 #include "SectionPanel.h"
 #include "MatrixPanel.h"
@@ -70,6 +71,14 @@ private:
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     };
 
+    // Header panic button: an alert badge, muted red by default and bright red
+    // on hover, so it reads as "the emergency stop".
+    struct PanicButton : juce::Button
+    {
+        PanicButton() : juce::Button ("panic") {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    };
+
     SPASynthProcessor& processor;
     std::function<void()> onThemeChanged;   // LnF palette refresh + repaint
 
@@ -82,6 +91,9 @@ private:
     KeyboardButton keyboardButton;
     bool keyboardVisible = false;
 
+    PanicButton panicButton;   // header top-right: stop all sound
+    std::unique_ptr<juce::Component> tempoBar;   // standalone only (brand band)
+
     // Header.
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };
     juce::TextButton presetNameButton, savePresetButton { "SAVE" };
@@ -92,6 +104,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> glideModeAttachment;
     juce::Slider glideSlider;
     juce::Label glideLabel;
+    juce::TextButton voiceButton;   // opens the voice-mode call-out
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     AccentButton accentButton;
     juce::Slider masterSlider;
@@ -105,7 +118,7 @@ private:
     juce::TabbedComponent lfoTabs { juce::TabbedButtonBar::TabsAtTop };
     ChaosPanel chaosPanel;
     ArpPanel arpPanel;
-    juce::TabbedComponent fxTabs { juce::TabbedButtonBar::TabsAtTop };
+    DraggableTabs fxTabs;   // FX tabs are drag-reorderable -> chain order
     MatrixPanel matrixPanel;
     OutputMeter outputMeter;
 

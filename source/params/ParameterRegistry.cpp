@@ -27,6 +27,10 @@ juce::String sectionName (Section s)
         case Section::fxDelay:  return "FX Delay";
         case Section::fxReverb: return "FX Reverb";
         case Section::fxEQ:     return "FX EQ";
+        case Section::fxMod:    return "FX Mod";
+        case Section::fxTremVib: return "FX Trem/Vib";
+        case Section::fxLimiter: return "FX Limiter";
+        case Section::fxConvolve: return "FX Convolve";
         case Section::matrix:   return "Mod Matrix";
     }
     return {};
@@ -107,6 +111,11 @@ namespace id
         return "env" + juce::String (envNumber) + "." + key;
     }
 
+    juce::String eqBand (int band, const char* key)
+    {
+        return "fxEQ.band" + juce::String (band) + "." + key;
+    }
+
     juce::String lfoParam (int lfoIndex, const char* key)
     {
         return "lfo" + juce::String (lfoIndex + 1) + "." + key;
@@ -127,6 +136,13 @@ static juce::NormalisableRange<float> frequencyRange (float min, float max)
 {
     juce::NormalisableRange<float> r (min, max);
     r.setSkewForCentre (std::sqrt (min * max)); // log-ish response, geometric centre
+    return r;
+}
+
+static juce::NormalisableRange<float> skewedRange (float min, float max, float centre)
+{
+    juce::NormalisableRange<float> r (min, max);
+    r.setSkewForCentre (centre); // more resolution around `centre`
     return r;
 }
 
@@ -326,6 +342,28 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ id::glideTime, "Glide Time", Section::global,
                    ParamKind::floatParam, { 1.0f, 2000.0f, 1.0f, 0.35f }, 80.0f, "ms",
                    false, { .enabled = false } });
+
+    p.push_back ({ id::voiceMode, "Voice Mode", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Poly", "Mono", "Duo", "Paraphonic", "Unison" } });
+    p.push_back ({ id::notePriority, "Note Priority", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Last", "High", "Low" } });
+    p.push_back ({ id::unisonVoices, "Unison Voices", Section::global,
+                   ParamKind::intParam, { 1.0f, 7.0f, 1.0f }, 3.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ id::unisonDetune, "Unison Detune", Section::global,
+                   ParamKind::floatParam, { 0.0f, 50.0f, 0.1f }, 12.0f, "ct",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ id::unisonWidth, "Unison Width", Section::global,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ id::oversampling, "Oversampling", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Off", "2x", "4x", "8x" } });
 
     for (int slot = 0; slot < numOscSlots; ++slot)
         addOscSlotParams (p, slot);
@@ -581,12 +619,31 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::reverbEnable, "Reverb On", Section::fxReverb,
                    ParamKind::boolParam, {}, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.6f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::reverbMode, "Reverb Mode", Section::fxReverb,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   juce::StringArray { "Hall", "Plate", "Chamber", "Room", "Spring" } });
+    p.push_back ({ fx::reverbPreDelay, "Reverb Pre", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 200.0f }, 20.0f, "ms",
+                   false, { .enabled = true, .maxNorm = 0.4f } });
     p.push_back ({ fx::reverbSize, "Reverb Size", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true } });
+    p.push_back ({ fx::reverbDecay, "Reverb Decay", Section::fxReverb,
+                   ParamKind::floatParam, skewedRange (0.2f, 12.0f, 2.5f), 2.0f, "s",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
     p.push_back ({ fx::reverbDamping, "Reverb Damp", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true } });
+    p.push_back ({ fx::reverbModDepth, "Reverb Mod", Section::fxReverb,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.2f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::reverbLowCut, "Reverb LoCut", Section::fxReverb,
+                   ParamKind::floatParam, frequencyRange (20.0f, 2000.0f), 20.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.5f } });
+    p.push_back ({ fx::reverbHighCut, "Reverb HiCut", Section::fxReverb,
+                   ParamKind::floatParam, frequencyRange (1000.0f, 20000.0f), 12000.0f, "Hz",
+                   false, { .enabled = true, .minNorm = 0.4f } });
     p.push_back ({ fx::reverbWidth, "Reverb Width", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = true, .minNorm = 0.4f } });
@@ -598,18 +655,158 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::eqEnable, "EQ On", Section::fxEQ,
                    ParamKind::boolParam, {}, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
-    p.push_back ({ fx::eqLowGain, "EQ Low", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
-    p.push_back ({ fx::eqMidFreq, "EQ Mid Freq", Section::fxEQ,
-                   ParamKind::floatParam, frequencyRange (200.0f, 8000.0f), 1000.0f, "Hz",
+    p.push_back ({ fx::eqCharacter, "EQ Character", Section::fxEQ,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   juce::StringArray { "Clean", "Modern", "Vintage", "Tube" } });
+
+    // 8 parametric bands. Disabled by default (flat); default freqs spread log-
+    // wide with shelf types at the ends, so enabling a band drops a sensible node.
+    {
+        struct BandDef { float freq; int type; };
+        const BandDef defs[8] = {
+            {    80.0f, 1 /* Low Shelf */ }, {   200.0f, 0 }, {  500.0f, 0 },
+            {  1200.0f, 0 }, {  3000.0f, 0 }, {  6000.0f, 0 },
+            { 10000.0f, 2 /* High Shelf */ }, { 15000.0f, 0 } };
+
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto bn = "EQ B" + juce::String (b + 1) + " ";
+            p.push_back ({ id::eqBand (b, fx::eqband::enable), bn + "On", Section::fxEQ,
+                           ParamKind::boolParam, {}, 0.0f, "",
+                           false, { .enabled = true, .biasCentre = 0.2f, .biasStrength = 0.5f } });
+            p.push_back ({ id::eqBand (b, fx::eqband::type), bn + "Type", Section::fxEQ,
+                           ParamKind::choiceParam, {}, (float) defs[b].type, "",
+                           false, { .enabled = false },
+                           juce::StringArray { "Bell", "Low Shelf", "High Shelf",
+                                               "Low Cut", "High Cut", "Notch" } });
+            p.push_back ({ id::eqBand (b, fx::eqband::freq), bn + "Freq", Section::fxEQ,
+                           ParamKind::floatParam, frequencyRange (20.0f, 20000.0f),
+                           defs[b].freq, "Hz", false, { .enabled = true } });
+            p.push_back ({ id::eqBand (b, fx::eqband::gain), bn + "Gain", Section::fxEQ,
+                           ParamKind::floatParam, { -24.0f, 24.0f, 0.1f }, 0.0f, "dB",
+                           false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+            p.push_back ({ id::eqBand (b, fx::eqband::q), bn + "Q", Section::fxEQ,
+                           ParamKind::floatParam, skewedRange (0.1f, 18.0f, 1.0f), 0.707f, "",
+                           false, { .enabled = true, .biasCentre = 0.3f } });
+        }
+    }
+
+    // FX Mod (Phaser / Flanger, switchable).
+    p.push_back ({ fx::modEnable, "Mod On", Section::fxMod,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = true, .biasCentre = 0.4f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::modType, "Mod Type", Section::fxMod,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Phaser", "Flanger" } });
+    p.push_back ({ fx::modRate, "Mod Rate", Section::fxMod,
+                   ParamKind::floatParam, frequencyRange (0.02f, 8.0f), 0.5f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::modSync, "Mod Sync", Section::fxMod,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::modDivision, "Mod Div", Section::fxMod,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::modDepth, "Mod Depth", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+    p.push_back ({ fx::modFeedback, "Mod FB", Section::fxMod,
+                   ParamKind::floatParam, { -0.95f, 0.95f }, 0.3f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.5f } });
+    p.push_back ({ fx::modStages, "Mod Stages", Section::fxMod,
+                   ParamKind::choiceParam, {}, 2.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "2", "4", "6", "8", "12" } });
+    p.push_back ({ fx::modCentre, "Mod Centre", Section::fxMod,
+                   ParamKind::floatParam, frequencyRange (100.0f, 6000.0f), 800.0f, "Hz",
                    false, { .enabled = true } });
-    p.push_back ({ fx::eqMidGain, "EQ Mid", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
-    p.push_back ({ fx::eqHighGain, "EQ High", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    p.push_back ({ fx::modManual, "Mod Delay", Section::fxMod,
+                   ParamKind::floatParam, { 0.1f, 20.0f, 0.01f }, 3.0f, "ms",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::modWidth, "Mod Width", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::modMix, "Mod Mix", Section::fxMod,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+
+    // FX Tremolo / Vibrato (independent sections in one tab).
+    p.push_back ({ fx::tremEnable, "Trem On", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::tremRate, "Trem Rate", Section::fxTremVib,
+                   ParamKind::floatParam, frequencyRange (0.05f, 20.0f), 5.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::tremSync, "Trem Sync", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::tremDivision, "Trem Div", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::tremDepth, "Trem Depth", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::tremShape, "Trem Shape", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Sine", "Triangle", "Square", "Saw" } });
+    p.push_back ({ fx::tremStereo, "Trem Stereo", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::tremMix, "Trem Mix", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::vibEnable, "Vib On", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::vibRate, "Vib Rate", Section::fxTremVib,
+                   ParamKind::floatParam, frequencyRange (0.05f, 14.0f), 5.0f, "Hz",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::vibSync, "Vib Sync", Section::fxTremVib,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::vibDivision, "Vib Div", Section::fxTremVib,
+                   ParamKind::choiceParam, {}, 6.0f, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+    p.push_back ({ fx::vibDepth, "Vib Depth", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.4f, "",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::vibMix, "Vib Mix", Section::fxTremVib,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true } });
+
+    // FX Limiter / Maximizer (defaults last in the chain).
+    p.push_back ({ fx::limEnable, "Lim On", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::limDrive, "Lim Drive", Section::fxLimiter,
+                   ParamKind::floatParam, { 0.0f, 24.0f, 0.1f }, 0.0f, "dB",
+                   false, { .enabled = true, .maxNorm = 0.5f } });
+    p.push_back ({ fx::limCeiling, "Lim Ceiling", Section::fxLimiter,
+                   ParamKind::floatParam, { -12.0f, 0.0f, 0.1f }, -0.3f, "dB",
+                   false, { .enabled = false } });
+    p.push_back ({ fx::limRelease, "Lim Release", Section::fxLimiter,
+                   ParamKind::floatParam, { 1.0f, 1000.0f, 0.0f, 0.4f }, 120.0f, "ms",
+                   false, { .enabled = true } });
+    p.push_back ({ fx::limAutoRelease, "Lim Auto Rel", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    p.push_back ({ fx::limCharacter, "Lim Character", Section::fxLimiter,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   juce::StringArray { "Clean", "Punchy", "Aggressive" } });
+    p.push_back ({ fx::limStereoLink, "Lim Link", Section::fxLimiter,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ fx::limTruePeak, "Lim True Peak", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ fx::limLookahead, "Lim Lookahead", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+
+    // FX Convolve (SFX / user WAV as impulse; IR path stored in the state tree).
+    p.push_back ({ fx::convEnable, "Conv On", Section::fxConvolve,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ fx::convMix, "Conv Mix", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
+    p.push_back ({ fx::convWidth, "Conv Width", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
+                   false, { .enabled = false } });
 
     return p;
 }

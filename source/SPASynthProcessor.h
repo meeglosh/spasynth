@@ -1,11 +1,13 @@
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_dsp/juce_dsp.h>
 
 #include "params/ParameterRegistry.h"
 #include "dsp/SPASynthVoice.h"
 #include "dsp/FXChain.h"
 #include "dsp/Arpeggiator.h"
+#include "dsp/MidiClockSync.h"
 #include "library/PresetManager.h"
 #include "MidiLearn.h"
 
@@ -99,6 +101,30 @@ public:
     // drives this state; processBlock merges its notes into the MIDI stream.
     juce::MidiKeyboardState& getKeyboardState() { return keyboardState; }
 
+    // Panic: kill all sound and clear stuck state (e.g. a latched arp chord).
+    // Message-thread safe — just raises a flag the audio thread services. Also
+    // fired by incoming MIDI All Sound/Notes Off (CC 120/123).
+    void panic() { panicRequested.store (true, std::memory_order_relaxed); }
+
+    // Standalone tempo (no host playhead). BPM + sync source (0 = internal,
+    // 1 = external MIDI clock); set from the standalone UI, ignored when a host
+    // provides tempo. getCurrentBpm() is the resolved live tempo for display.
+    void setInternalBpm (double bpm);
+    void setTempoSyncMode (int mode);
+    double getInternalBpm() const { return internalBpm.load (std::memory_order_relaxed); }
+    int getTempoSyncMode() const { return tempoSyncMode.load (std::memory_order_relaxed); }
+    double getCurrentBpm() const { return currentBpm.load (std::memory_order_relaxed); }
+
+    // FX chain order (drag-reorderable, saved per preset): FXChain module ids in
+    // processing order. RT-safe hand-off via a single packed atomic.
+    void setFxOrder (const juce::Array<int>& moduleIds);
+    juce::Array<int> getFxOrder() const;
+
+    // Convolve IR (SFX / user WAV as impulse). Loads it into the FX chain and
+    // remembers the path (portable, saved per preset). Empty name = none.
+    void loadConvolutionIR (const juce::File& file);
+    juce::String getConvolutionIRName() const { return juce::File (convIrPath).getFileNameWithoutExtension(); }
+
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
     void randomizeAll();
@@ -135,9 +161,30 @@ private:
     dsp::Telemetry telemetry;
     dsp::Arpeggiator arp;
     dsp::SharedState::GlideState glideState;   // updated by the synth's note hooks
-    dsp::GlideSynthesiser synth { glideState };
+    dsp::GlideSynthesiser synth { shared };
     dsp::FXChain fxChain;
     dsp::FXChain::Params fxParams;
+
+    // Paraphonic shared amp envelope (voice mode = Paraphonic): one ADSR gated
+    // by the collective key count, rendered per-block into paraEnvBuf for the
+    // voices to read. paraGateWasOn tracks the gate edge across blocks.
+    juce::ADSR paraEnv;
+    juce::AudioBuffer<float> paraEnvBuf;
+    bool paraGateWasOn = false;
+
+    // Whole-synth oversampling: the entire engine (arp, voices, FX, master) runs
+    // at hostRate * factor into an oversampled block, then a near-zero-latency
+    // IIR polyphase filter decimates back to the host rate. Off by default.
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    int currentOsFactor = 1;
+    double hostSampleRate = 48000.0;
+    int hostBlockSize = 512;
+    int osLatencyHost = 0;
+    std::atomic<int> pendingOsFactor { 1 };
+
+    void prepareEngine (double engineRate, int engineBlock);   // rate-dependent setup
+    void rebuildOversampling (int factor);                     // message thread only
+    void renderEngine (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
 
     double currentSampleRate = 44100.0;
@@ -180,6 +227,28 @@ private:
 
     // On-screen keyboard note source (editor writes, processBlock reads).
     juce::MidiKeyboardState keyboardState;
+
+    // Raised by panic() / MIDI CC 120/123; serviced at the top of processBlock.
+    std::atomic<bool> panicRequested { false };
+
+    // Tempo: internal BPM + external MIDI clock for the standalone. Resolved
+    // once per block into the block* fields (host playhead wins when present).
+    std::atomic<double> internalBpm { 120.0 };
+    std::atomic<int> tempoSyncMode { 0 };       // 0 = internal, 1 = external MIDI clock
+    std::atomic<double> currentBpm { 120.0 };   // resolved live tempo (UI display)
+    dsp::MidiClockSync midiClock;
+    double blockBpm = 120.0;
+    bool blockPlaying = true;
+    double blockPpq = 0.0;
+
+    // Packed FX chain order (4 bits/module); set by the UI, read each block.
+    std::atomic<juce::uint64> fxOrderPacked { dsp::FXChain::defaultOrderPacked() };
+
+    // Lookahead-limiter latency: written from the audio thread, applied via
+    // setLatencySamples on the timer (message thread) when it changes.
+    std::atomic<int> desiredLatency { 0 };
+
+    juce::String convIrPath;   // Convolve impulse path (portable, per preset)
 
     // Cached raw parameter pointers (atomic floats owned by the APVTS).
     struct RawSlot
@@ -258,6 +327,16 @@ private:
         std::atomic<float>* masterGain = nullptr;
         std::atomic<float>* glideMode = nullptr;
         std::atomic<float>* glideTime = nullptr;
+        std::atomic<float>* voiceMode = nullptr;
+        std::atomic<float>* notePriority = nullptr;
+        std::atomic<float>* unisonVoices = nullptr;
+        std::atomic<float>* unisonDetune = nullptr;
+        std::atomic<float>* unisonWidth = nullptr;
+        std::atomic<float>* ampAttack = nullptr;
+        std::atomic<float>* ampDecay = nullptr;
+        std::atomic<float>* ampSustain = nullptr;
+        std::atomic<float>* ampRelease = nullptr;
+        std::atomic<float>* oversampling = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;
         std::atomic<float>* filter2Enable = nullptr;
@@ -293,15 +372,69 @@ private:
             std::atomic<float>* delayPingPong = nullptr;
             std::atomic<float>* delayMix = nullptr;
             std::atomic<float>* reverbEnable = nullptr;
+            std::atomic<float>* reverbMode = nullptr;
+            std::atomic<float>* reverbPreDelay = nullptr;
             std::atomic<float>* reverbSize = nullptr;
+            std::atomic<float>* reverbDecay = nullptr;
             std::atomic<float>* reverbDamping = nullptr;
+            std::atomic<float>* reverbModDepth = nullptr;
+            std::atomic<float>* reverbLowCut = nullptr;
+            std::atomic<float>* reverbHighCut = nullptr;
             std::atomic<float>* reverbWidth = nullptr;
             std::atomic<float>* reverbMix = nullptr;
             std::atomic<float>* eqEnable = nullptr;
-            std::atomic<float>* eqLowGain = nullptr;
-            std::atomic<float>* eqMidFreq = nullptr;
-            std::atomic<float>* eqMidGain = nullptr;
-            std::atomic<float>* eqHighGain = nullptr;
+            std::atomic<float>* eqCharacter = nullptr;
+            struct EqBandPtrs
+            {
+                std::atomic<float>* enable = nullptr;
+                std::atomic<float>* type = nullptr;
+                std::atomic<float>* freq = nullptr;
+                std::atomic<float>* gain = nullptr;
+                std::atomic<float>* q = nullptr;
+            };
+            std::array<EqBandPtrs, 8> eqBands {};
+
+            std::atomic<float>* modEnable = nullptr;
+            std::atomic<float>* modType = nullptr;
+            std::atomic<float>* modRate = nullptr;
+            std::atomic<float>* modSync = nullptr;
+            std::atomic<float>* modDivision = nullptr;
+            std::atomic<float>* modDepth = nullptr;
+            std::atomic<float>* modFeedback = nullptr;
+            std::atomic<float>* modStages = nullptr;
+            std::atomic<float>* modCentre = nullptr;
+            std::atomic<float>* modManual = nullptr;
+            std::atomic<float>* modWidth = nullptr;
+            std::atomic<float>* modMix = nullptr;
+
+            std::atomic<float>* tremEnable = nullptr;
+            std::atomic<float>* tremRate = nullptr;
+            std::atomic<float>* tremSync = nullptr;
+            std::atomic<float>* tremDivision = nullptr;
+            std::atomic<float>* tremDepth = nullptr;
+            std::atomic<float>* tremShape = nullptr;
+            std::atomic<float>* tremStereo = nullptr;
+            std::atomic<float>* tremMix = nullptr;
+            std::atomic<float>* vibEnable = nullptr;
+            std::atomic<float>* vibRate = nullptr;
+            std::atomic<float>* vibSync = nullptr;
+            std::atomic<float>* vibDivision = nullptr;
+            std::atomic<float>* vibDepth = nullptr;
+            std::atomic<float>* vibMix = nullptr;
+
+            std::atomic<float>* limEnable = nullptr;
+            std::atomic<float>* limDrive = nullptr;
+            std::atomic<float>* limCeiling = nullptr;
+            std::atomic<float>* limRelease = nullptr;
+            std::atomic<float>* limAutoRelease = nullptr;
+            std::atomic<float>* limCharacter = nullptr;
+            std::atomic<float>* limStereoLink = nullptr;
+            std::atomic<float>* limTruePeak = nullptr;
+            std::atomic<float>* limLookahead = nullptr;
+
+            std::atomic<float>* convEnable = nullptr;
+            std::atomic<float>* convMix = nullptr;
+            std::atomic<float>* convWidth = nullptr;
         } fx {};
     } raw;
 

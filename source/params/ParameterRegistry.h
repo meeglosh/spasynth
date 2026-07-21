@@ -39,6 +39,10 @@ enum class Section
     fxReverb,
     fxEQ,
     matrix,
+    fxMod,
+    fxTremVib,
+    fxLimiter,
+    fxConvolve,
 };
 
 inline constexpr Section allSections[] = {
@@ -46,7 +50,8 @@ inline constexpr Section allSections[] = {
     Section::filter1, Section::filter2, Section::ampEnv, Section::env2, Section::env3,
     Section::lfo1, Section::lfo2, Section::lfo3, Section::macros,
     Section::arp, Section::chaos, Section::fxDist, Section::fxChorus,
-    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::matrix,
+    Section::fxDelay, Section::fxReverb, Section::fxEQ, Section::fxMod,
+    Section::fxTremVib, Section::fxLimiter, Section::fxConvolve, Section::matrix,
 };
 
 juce::String sectionName (Section);
@@ -148,6 +153,14 @@ namespace id
     inline constexpr const char* glideMode = "global.glideMode";   // Off/Always/Legato
     inline constexpr const char* glideTime = "global.glideTime";
 
+    // Voice allocation.
+    inline constexpr const char* voiceMode     = "global.voiceMode";
+    inline constexpr const char* notePriority  = "global.notePriority";
+    inline constexpr const char* unisonVoices  = "global.unisonVoices";
+    inline constexpr const char* unisonDetune  = "global.unisonDetune";
+    inline constexpr const char* unisonWidth   = "global.unisonWidth";
+    inline constexpr const char* oversampling  = "global.oversampling";  // Off/2x/4x/8x
+
     inline constexpr const char* filter1Type      = "filter1.type";
     inline constexpr const char* filter1Cutoff    = "filter1.cutoff";
     inline constexpr const char* filter1Resonance = "filter1.resonance";
@@ -217,6 +230,9 @@ namespace id
 
     // Envelope 2/3 parameter IDs: envParam(2, "attack") -> "env2.attack"
     juce::String envParam (int envNumber, const char* key);
+
+    // Parametric-EQ band IDs: eqBand(0, "freq") -> "fxEQ.band0.freq"
+    juce::String eqBand (int band, const char* key);
 
     // LFO parameter IDs: lfoParam(0, "rate") -> "lfo1.rate"
     namespace lfo
@@ -297,17 +313,73 @@ namespace id
         inline constexpr const char* delayPingPong = "fxDelay.pingpong";
         inline constexpr const char* delayMix      = "fxDelay.mix";
 
-        inline constexpr const char* reverbEnable  = "fxReverb.enable";
-        inline constexpr const char* reverbSize    = "fxReverb.size";
-        inline constexpr const char* reverbDamping = "fxReverb.damping";
-        inline constexpr const char* reverbWidth   = "fxReverb.width";
-        inline constexpr const char* reverbMix     = "fxReverb.mix";
+        inline constexpr const char* reverbEnable   = "fxReverb.enable";
+        inline constexpr const char* reverbMode     = "fxReverb.mode";
+        inline constexpr const char* reverbPreDelay = "fxReverb.predelay";
+        inline constexpr const char* reverbSize     = "fxReverb.size";
+        inline constexpr const char* reverbDecay    = "fxReverb.decay";
+        inline constexpr const char* reverbDamping  = "fxReverb.damping";
+        inline constexpr const char* reverbModDepth = "fxReverb.moddepth";
+        inline constexpr const char* reverbLowCut   = "fxReverb.lowcut";
+        inline constexpr const char* reverbHighCut  = "fxReverb.highcut";
+        inline constexpr const char* reverbWidth    = "fxReverb.width";
+        inline constexpr const char* reverbMix      = "fxReverb.mix";
 
-        inline constexpr const char* eqEnable   = "fxEQ.enable";
-        inline constexpr const char* eqLowGain  = "fxEQ.lowGain";
-        inline constexpr const char* eqMidFreq  = "fxEQ.midFreq";
-        inline constexpr const char* eqMidGain  = "fxEQ.midGain";
-        inline constexpr const char* eqHighGain = "fxEQ.highGain";
+        inline constexpr const char* eqEnable    = "fxEQ.enable";
+        inline constexpr const char* eqCharacter = "fxEQ.character";
+
+        // Per-band parametric-EQ keys, combined via eqBand(band, key) ->
+        // "fxEQ.band0.freq" etc.
+        namespace eqband
+        {
+            inline constexpr const char* enable = "enable";
+            inline constexpr const char* type   = "type";   // Bell/LoShelf/HiShelf/LoCut/HiCut/Notch
+            inline constexpr const char* freq   = "freq";
+            inline constexpr const char* gain   = "gain";
+            inline constexpr const char* q      = "q";
+        }
+
+        inline constexpr const char* modEnable   = "fxMod.enable";
+        inline constexpr const char* modType     = "fxMod.type";
+        inline constexpr const char* modRate     = "fxMod.rate";
+        inline constexpr const char* modSync     = "fxMod.sync";
+        inline constexpr const char* modDivision = "fxMod.division";
+        inline constexpr const char* modDepth    = "fxMod.depth";
+        inline constexpr const char* modFeedback = "fxMod.feedback";
+        inline constexpr const char* modStages   = "fxMod.stages";
+        inline constexpr const char* modCentre   = "fxMod.centre";
+        inline constexpr const char* modManual   = "fxMod.manual";
+        inline constexpr const char* modWidth    = "fxMod.width";
+        inline constexpr const char* modMix      = "fxMod.mix";
+
+        inline constexpr const char* tremEnable   = "fxTrem.enable";
+        inline constexpr const char* tremRate     = "fxTrem.rate";
+        inline constexpr const char* tremSync     = "fxTrem.sync";
+        inline constexpr const char* tremDivision = "fxTrem.division";
+        inline constexpr const char* tremDepth    = "fxTrem.depth";
+        inline constexpr const char* tremShape    = "fxTrem.shape";
+        inline constexpr const char* tremStereo   = "fxTrem.stereo";
+        inline constexpr const char* tremMix      = "fxTrem.mix";
+        inline constexpr const char* vibEnable    = "fxVib.enable";
+        inline constexpr const char* vibRate      = "fxVib.rate";
+        inline constexpr const char* vibSync      = "fxVib.sync";
+        inline constexpr const char* vibDivision  = "fxVib.division";
+        inline constexpr const char* vibDepth     = "fxVib.depth";
+        inline constexpr const char* vibMix       = "fxVib.mix";
+
+        inline constexpr const char* limEnable      = "fxLim.enable";
+        inline constexpr const char* limDrive       = "fxLim.drive";
+        inline constexpr const char* limCeiling     = "fxLim.ceiling";
+        inline constexpr const char* limRelease     = "fxLim.release";
+        inline constexpr const char* limAutoRelease = "fxLim.autoRelease";
+        inline constexpr const char* limCharacter   = "fxLim.character";
+        inline constexpr const char* limStereoLink  = "fxLim.stereoLink";
+        inline constexpr const char* limTruePeak    = "fxLim.truePeak";
+        inline constexpr const char* limLookahead   = "fxLim.lookahead";
+
+        inline constexpr const char* convEnable = "fxConv.enable";
+        inline constexpr const char* convMix    = "fxConv.mix";
+        inline constexpr const char* convWidth  = "fxConv.width";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"
@@ -333,6 +405,12 @@ enum class PhaseMode { reset, random, free_ };
 // Portamento behaviour — choice order is load-bearing, append-only.
 // legato only glides when the previous note is still held.
 enum class GlideMode { off, always, legato };
+
+// Voice allocation mode — choice order is load-bearing, append-only.
+enum class VoiceMode { poly, mono, duo, paraphonic, unison };
+
+// Note priority for mono/duo/paraphonic when more keys are held than voices.
+enum class NotePriority { last, high, low };
 
 // Oscillator slot engine — choice order is load-bearing, append-only.
 enum class OscMode { wavetable, sample, granular, analog, fm, noise, pluck };

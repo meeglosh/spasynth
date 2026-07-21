@@ -70,6 +70,25 @@ struct SharedState
     float glideTimeMs = 80.0f;
     GlideState* glide = nullptr;   // owned by the processor, audio thread only
 
+    // Voice allocation. voiceMode/priority/unison config are written once per
+    // block by the processor. pendingUnison* are set by the synthesiser right
+    // before each unison voice's startNote so the voice knows its detune/pan
+    // slot (audio thread only, synchronous — startNote runs inside noteOn).
+    params::VoiceMode voiceMode = params::VoiceMode::poly;
+    params::NotePriority notePriority = params::NotePriority::last;
+    int unisonVoices = 1;
+    float unisonDetuneCents = 0.0f;
+    float unisonWidth = 0.0f;
+    int pendingUnisonIndex = 0;
+    int pendingUnisonCount = 1;
+
+    // Paraphonic shared amp gate: the processor advances one ADSR from the
+    // collective key state and renders it per-sample into paraEnvBlock for the
+    // current block; paraphonic voices read it for gain instead of their own
+    // amp envelope, and clear once the gate is released and the level hits zero.
+    const float* paraEnvBlock = nullptr;   // length >= block; null unless paraphonic
+    bool paraGateActive = false;
+
     std::array<SlotStatic, params::maxOscSlots> slots {};
     params::FilterType filterType = params::FilterType::lp12;
     float filterKeytrack = 0.0f;
@@ -122,30 +141,190 @@ struct SharedState
 class GlideSynthesiser : public juce::Synthesiser
 {
 public:
-    explicit GlideSynthesiser (SharedState::GlideState& g) : glide (g) {}
+    explicit GlideSynthesiser (SharedState& s) : shared (s) {}
 
     void noteOn (int channel, int note, float velocity) override
     {
-        glide.previousKeyHeld = glide.keysDown > 0;
-        ++glide.keysDown;
-        juce::Synthesiser::noteOn (channel, note, velocity);
-        glide.lastNote = (float) note;
+        switch (shared.voiceMode)
+        {
+            case params::VoiceMode::mono:
+                pushHeld (note, velocity); applyMonoDuo (channel, 1, true); break;
+            case params::VoiceMode::duo:
+                pushHeld (note, velocity); applyMonoDuo (channel, 2, true); break;
+
+            case params::VoiceMode::unison:
+                bumpGlide();
+                stopNoteVoices (channel, note, false);   // fresh stack on re-press
+                triggerUnison (channel, note, velocity);
+                glide().lastNote = (float) note;
+                break;
+
+            case params::VoiceMode::poly:
+            case params::VoiceMode::paraphonic:
+            default:
+                bumpGlide();
+                juce::Synthesiser::noteOn (channel, note, velocity);
+                glide().lastNote = (float) note;
+                break;
+        }
     }
 
     void noteOff (int channel, int note, float velocity, bool allowTailOff) override
     {
-        glide.keysDown = juce::jmax (0, glide.keysDown - 1);
-        juce::Synthesiser::noteOff (channel, note, velocity, allowTailOff);
+        if (shared.voiceMode == params::VoiceMode::mono
+            || shared.voiceMode == params::VoiceMode::duo)
+        {
+            removeHeld (note);
+            applyMonoDuo (channel, shared.voiceMode == params::VoiceMode::duo ? 2 : 1,
+                          allowTailOff);
+        }
+        else if (shared.voiceMode == params::VoiceMode::paraphonic)
+        {
+            // Voices keep sounding under the shared envelope; only the collective
+            // key count matters. They clear when the shared gate finally closes.
+            glide().keysDown = juce::jmax (0, glide().keysDown - 1);
+        }
+        else
+        {
+            glide().keysDown = juce::jmax (0, glide().keysDown - 1);
+            juce::Synthesiser::noteOff (channel, note, velocity, allowTailOff);
+        }
     }
 
     void allNotesOff (int channel, bool allowTailOff) override
     {
-        glide.keysDown = 0;
+        glide().keysDown = 0;
+        heldCount = 0;
+        soundingCount = 0;
         juce::Synthesiser::allNotesOff (channel, allowTailOff);
     }
 
 private:
-    SharedState::GlideState& glide;
+    static constexpr int maxHeld = 32;
+    struct Held { int note = -1; float vel = 0.0f; };
+
+    SharedState::GlideState& glide() { return *shared.glide; }
+
+    void bumpGlide()
+    {
+        glide().previousKeyHeld = glide().keysDown > 0;
+        ++glide().keysDown;
+    }
+
+    void pushHeld (int note, float vel)
+    {
+        removeHeld (note);                       // press order, no duplicates
+        if (heldCount < maxHeld) held[(size_t) heldCount++] = { note, vel };
+        glide().keysDown = heldCount;
+    }
+
+    void removeHeld (int note)
+    {
+        int w = 0;
+        for (int i = 0; i < heldCount; ++i)
+            if (held[(size_t) i].note != note) held[(size_t) w++] = held[(size_t) i];
+        heldCount = w;
+        glide().keysDown = heldCount;
+    }
+
+    // The up-to-maxSound held notes that should sound, chosen by priority.
+    int computeDesired (int maxSound, std::array<Held, 2>& out) const
+    {
+        std::array<Held, maxHeld> pool = held;
+        int poolN = heldCount, count = 0;
+        while (count < maxSound && poolN > 0)
+        {
+            int pick = poolN - 1;   // 'last' = most recently pressed
+            if (shared.notePriority == params::NotePriority::high)
+            {
+                pick = 0;
+                for (int i = 1; i < poolN; ++i)
+                    if (pool[(size_t) i].note > pool[(size_t) pick].note) pick = i;
+            }
+            else if (shared.notePriority == params::NotePriority::low)
+            {
+                pick = 0;
+                for (int i = 1; i < poolN; ++i)
+                    if (pool[(size_t) i].note < pool[(size_t) pick].note) pick = i;
+            }
+            out[(size_t) count++] = pool[(size_t) pick];
+            pool[(size_t) pick] = pool[(size_t) --poolN];   // remove picked
+        }
+        return count;
+    }
+
+    void applyMonoDuo (int channel, int maxSound, bool allowTailOff)
+    {
+        std::array<Held, 2> want {};
+        const int wantN = computeDesired (maxSound, want);
+        const int soundingBefore = soundingCount;
+
+        // Stop sounding notes no longer wanted. A note still physically held
+        // (merely suppressed by priority) is hard-stopped so only the wanted
+        // voices sound; a note whose key was released decays naturally.
+        for (int i = 0; i < soundingCount; ++i)
+        {
+            bool keep = false;
+            for (int j = 0; j < wantN; ++j) if (want[(size_t) j].note == sounding[(size_t) i]) keep = true;
+            if (! keep)
+                stopNoteVoices (channel, sounding[(size_t) i],
+                                isHeld (sounding[(size_t) i]) ? false : allowTailOff);
+        }
+
+        // Start wanted notes not already sounding. Legato (glide from the last
+        // note) only when we are replacing at capacity, not filling a chord.
+        for (int j = 0; j < wantN; ++j)
+        {
+            bool already = false;
+            for (int i = 0; i < soundingCount; ++i) if (sounding[(size_t) i] == want[(size_t) j].note) already = true;
+            if (already) continue;
+            glide().previousKeyHeld = soundingBefore >= maxSound;
+            juce::Synthesiser::noteOn (channel, want[(size_t) j].note, want[(size_t) j].vel);
+            glide().lastNote = (float) want[(size_t) j].note;
+        }
+
+        soundingCount = wantN;
+        for (int j = 0; j < wantN; ++j) sounding[(size_t) j] = want[(size_t) j].note;
+    }
+
+    void triggerUnison (int channel, int note, float velocity)
+    {
+        auto sound = getSound (0);
+        if (sound == nullptr) return;
+        const int n = juce::jlimit (1, 7, shared.unisonVoices);
+        for (int i = 0; i < n; ++i)
+        {
+            shared.pendingUnisonIndex = i;
+            shared.pendingUnisonCount = n;
+            if (auto* v = findFreeVoice (sound.get(), channel, note, isNoteStealingEnabled()))
+                startVoice (v, sound.get(), channel, note, velocity);
+        }
+        shared.pendingUnisonIndex = 0;
+        shared.pendingUnisonCount = 1;
+    }
+
+    bool isHeld (int note) const
+    {
+        for (int i = 0; i < heldCount; ++i) if (held[(size_t) i].note == note) return true;
+        return false;
+    }
+
+    void stopNoteVoices (int channel, int note, bool allowTailOff)
+    {
+        for (int i = 0; i < getNumVoices(); ++i)
+        {
+            auto* v = getVoice (i);
+            if (v->isVoiceActive() && v->getCurrentlyPlayingNote() == note
+                && v->isPlayingChannel (channel))
+                stopVoice (v, 1.0f, allowTailOff);
+        }
+    }
+
+    SharedState& shared;
+    std::array<Held, maxHeld> held {};
+    int heldCount = 0;
+    std::array<int, 2> sounding { -1, -1 };
+    int soundingCount = 0;
 };
 
 class SPASynthVoice : public juce::SynthesiserVoice
@@ -200,6 +379,9 @@ private:
     float glideRate = 0.0f;    // semitones per second
     float velocity = 1.0f;
     float pitchBendSemitones = 0.0f;
+    float unisonDetuneSemis = 0.0f;   // voice-stack unison (Unison mode)
+    float unisonPanL = 1.0f, unisonPanR = 1.0f;
+    bool paraSawGate = false;         // paraphonic: gate opened since this note
     float ampEnvLast = 0.0f;   // amp env value fed back as mod source
     std::array<float, params::maxOscSlots> slotGains {};  // per-chunk linear slot gains
 

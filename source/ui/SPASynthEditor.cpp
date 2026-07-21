@@ -1,6 +1,7 @@
 #include "SPASynthEditor.h"
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
+#include "EqEditor.h"
 
 #include "BinaryData.h"
 
@@ -211,6 +212,217 @@ void ContentComponent::KeyboardButton::paintButton (juce::Graphics& g,
         g.fillRect (r.getX() + (float) i * kw - bw * 0.5f, r.getY(), bw, bh);
 }
 
+void ContentComponent::PanicButton::paintButton (juce::Graphics& g,
+                                                 bool highlighted, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (2.0f);
+    const auto d = juce::jmin (r.getWidth(), r.getHeight());
+    const auto circle = r.withSizeKeepingCentre (d, d);
+
+    // Muted red at rest so it reads as the emergency stop; bright on hover/press.
+    const auto red = juce::Colour (0xffff4d40);
+    g.setColour ((highlighted || down) ? red : red.withAlpha (0.55f));
+
+    g.drawEllipse (circle, 1.4f);
+    const auto cx = circle.getCentreX();
+    g.drawLine (cx, circle.getY() + d * 0.26f, cx, circle.getY() + d * 0.56f, 1.8f);  // ! stem
+    const auto dot = d * 0.13f;
+    g.fillEllipse (cx - dot * 0.5f, circle.getY() + d * 0.64f, dot, dot);             // ! dot
+}
+
+namespace
+{
+// Standalone-only tempo bar: internal BPM (editable), tap tempo, and an
+// INT/EXT sync toggle. In EXT mode the field shows the incoming MIDI clock.
+class TempoBar : public juce::Component,
+                 private juce::Timer
+{
+public:
+    explicit TempoBar (SPASynthProcessor& p) : processor (p)
+    {
+        tempo.setSliderStyle (juce::Slider::IncDecButtons);
+        tempo.setRange (20.0, 300.0, 1.0);
+        tempo.setValue (processor.getInternalBpm(), juce::dontSendNotification);
+        tempo.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 18);
+        tempo.setTooltip ("Tempo (BPM) for the standalone");
+        tempo.onValueChange = [this]
+        {
+            if (processor.getTempoSyncMode() == 0)
+                processor.setInternalBpm (tempo.getValue());
+        };
+        addAndMakeVisible (tempo);
+
+        tap.setButtonText ("TAP");
+        tap.setTooltip ("Tap tempo");
+        tap.onClick = [this] { onTap(); };
+        addAndMakeVisible (tap);
+
+        sync.setTooltip ("Tempo source: INT = internal clock, EXT = external MIDI clock");
+        sync.onClick = [this] { toggleSync(); };
+        addAndMakeVisible (sync);
+
+        applyMode();
+        startTimerHz (8);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        sync.setBounds (r.removeFromLeft (34).reduced (1));
+        tap.setBounds (r.removeFromRight (34).reduced (1));
+        tempo.setBounds (r.reduced (2, 1));
+    }
+
+private:
+    void onTap()
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (lastTap > 0.0 && now - lastTap < 2000.0)
+        {
+            const auto bpm = 60000.0 / (now - lastTap);
+            tapBpm = tapBpm > 0.0 ? tapBpm * 0.5 + bpm * 0.5 : bpm;
+            tempo.setValue (juce::jlimit (20.0, 300.0, tapBpm), juce::sendNotification);
+        }
+        else tapBpm = 0.0;
+        lastTap = now;
+    }
+
+    void toggleSync()
+    {
+        const int mode = processor.getTempoSyncMode() == 1 ? 0 : 1;
+        processor.setTempoSyncMode (mode);
+        applyMode();
+    }
+
+    void applyMode()
+    {
+        const bool ext = processor.getTempoSyncMode() == 1;
+        sync.setButtonText (ext ? "EXT" : "INT");
+        tempo.setEnabled (! ext);   // external MIDI clock drives the value
+    }
+
+    void timerCallback() override
+    {
+        if (processor.getTempoSyncMode() == 1)
+            tempo.setValue (juce::roundToInt (processor.getCurrentBpm()),
+                            juce::dontSendNotification);
+    }
+
+    SPASynthProcessor& processor;
+    juce::Slider tempo;
+    juce::TextButton tap, sync;
+    double lastTap = 0.0, tapBpm = 0.0;
+};
+
+// Convolve tab: an IR picker (library SFX or any WAV) above the FX controls.
+class ConvolvePanel : public juce::Component,
+                      private juce::ChangeListener
+{
+public:
+    explicit ConvolvePanel (SPASynthProcessor& p)
+        : processor (p),
+          inner (p.getAPVTS(), FXDisplay::Kind::reverb, params::Section::fxConvolve, "Convolve")
+    {
+        irButton.setTooltip ("Choose an impulse from your library or any WAV");
+        irButton.onClick = [this] { chooseIR(); };
+        updateLabel();
+        addAndMakeVisible (irButton);
+        addAndMakeVisible (inner);
+        processor.addChangeListener (this);
+    }
+
+    ~ConvolvePanel() override { processor.removeChangeListener (this); }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        irButton.setBounds (r.removeFromTop (26).reduced (6, 3));
+        inner.setBounds (r);
+    }
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { updateLabel(); }
+
+    void updateLabel()
+    {
+        const auto n = processor.getConvolutionIRName();
+        irButton.setButtonText (n.isEmpty() ? "Load impulse (SFX / WAV)..." : "IR: " + n);
+    }
+
+    void chooseIR()
+    {
+        fileChooser = std::make_unique<juce::FileChooser> (
+            "Choose an impulse (SFX or WAV)", library::getLibraryRoot(), "*.wav");
+        fileChooser->launchAsync (
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this] (const juce::FileChooser& fc)
+            {
+                const auto f = fc.getResult();
+                if (f.existsAsFile()) { processor.loadConvolutionIR (f); updateLabel(); }
+            });
+    }
+
+    SPASynthProcessor& processor;
+    juce::TextButton irButton { "browser" };
+    FXPanel inner;
+    std::unique_ptr<juce::FileChooser> fileChooser;
+};
+
+// Voice-allocation controls, shown in a call-out from the header VOICE button:
+// mode + note priority, plus the unison voice/detune/width knobs.
+class VoicePanel : public juce::Component
+{
+public:
+    explicit VoicePanel (juce::AudioProcessorValueTreeState& apvts)
+        : mode (apvts, params::id::voiceMode),
+          priority (apvts, params::id::notePriority),
+          voices (apvts, params::id::unisonVoices, "Voices"),
+          detune (apvts, params::id::unisonDetune, "Detune"),
+          width (apvts, params::id::unisonWidth, "Width")
+    {
+        modeLabel.setText ("MODE", juce::dontSendNotification);
+        priorityLabel.setText ("PRIORITY", juce::dontSendNotification);
+        for (auto* l : { &modeLabel, &priorityLabel })
+        {
+            l->setFont (metrics::smallFont());
+            l->setJustificationType (juce::Justification::centredLeft);
+            addAndMakeVisible (*l);
+        }
+        for (auto* c : std::initializer_list<juce::Component*> { &mode, &priority, &voices, &detune, &width })
+            addAndMakeVisible (*c);
+        setSize (244, 150);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (currentTheme().panel);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (10, 8);
+        auto row1 = r.removeFromTop (24);
+        modeLabel.setBounds (row1.removeFromLeft (66));
+        mode.setBounds (row1);
+        r.removeFromTop (6);
+        auto row2 = r.removeFromTop (24);
+        priorityLabel.setBounds (row2.removeFromLeft (66));
+        priority.setBounds (row2);
+        r.removeFromTop (8);
+        auto knobs = r;
+        const int w = knobs.getWidth() / 3;
+        voices.setBounds (knobs.removeFromLeft (w));
+        detune.setBounds (knobs.removeFromLeft (w));
+        width.setBounds (knobs);
+    }
+
+private:
+    Choice mode, priority;
+    Knob voices, detune, width;
+    juce::Label modeLabel, priorityLabel;
+};
+} // namespace
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
       keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
@@ -242,6 +454,18 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     keyboardButton.onClick = [this] { setKeyboardVisible (! keyboardVisible); };
     keyboardButton.setToggleState (keyboardVisible, juce::dontSendNotification);
     addAndMakeVisible (keyboardButton);
+
+    panicButton.setTooltip ("Panic: stop all sound and clear stuck notes");
+    panicButton.onClick = [this] { processor.panic(); };
+    addAndMakeVisible (panicButton);
+
+    // The standalone has no host tempo, so it gets a tempo bar (internal BPM /
+    // tap / external MIDI clock). The plugin follows the host, so no bar.
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        tempoBar = std::make_unique<TempoBar> (processor);
+        addAndMakeVisible (*tempoBar);
+    }
 
     prevPresetButton.setComponentID ("navPrev");   // drawn as a left chevron
     prevPresetButton.setTooltip ("Previous preset");
@@ -306,6 +530,16 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     glideLabel.setFont (metrics::smallFont());
     glideLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (glideLabel);
+
+    voiceButton.setButtonText ("VOICE");
+    voiceButton.setTooltip ("Voice mode: Poly / Mono / Duo / Paraphonic / Unison");
+    voiceButton.onClick = [this]
+    {
+        auto panel = std::make_unique<VoicePanel> (processor.getAPVTS());
+        juce::CallOutBox::launchAsynchronously (std::move (panel),
+                                                voiceButton.getScreenBounds(), nullptr);
+    };
+    addAndMakeVisible (voiceButton);
 
     accentButton.setTooltip ("Customize the accent colors");
     accentButton.onClick = [this] { showAccentPicker(); };
@@ -373,9 +607,23 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::delay, params::Section::fxDelay, "Delay"), true);
     fxTabs.addTab ("REVERB", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb"), true);
-    fxTabs.addTab ("EQ", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::eq, params::Section::fxEQ, "EQ"), true);
+    fxTabs.addTab ("EQ", tabBg, new EqEditor (processor.getAPVTS(), processor.getTelemetry(),
+                   [&proc = processor] { return proc.getSampleRate(); }), true);
+    fxTabs.addTab ("MOD", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation"), true);
+    fxTabs.addTab ("TREM/VIB", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::chorus, params::Section::fxTremVib, "Trem / Vib"), true);
+    fxTabs.addTab ("LIMIT", tabBg, new FXPanel (processor.getAPVTS(),
+                   FXDisplay::Kind::distortion, params::Section::fxLimiter, "Limiter"), true);
+    fxTabs.addTab ("CONV", tabBg, new ConvolvePanel (processor), true);
     addAndMakeVisible (fxTabs);
+
+    // Tab names by FXChain::Module id (DIST=0 .. LIMIT=7, CONV=8). Drag reorders
+    // the tabs and the FX chain together; restore the saved order.
+    fxTabs.setModuleNames ({ "DIST", "CHORUS", "DELAY", "REVERB", "EQ",
+                             "MOD", "TREM/VIB", "LIMIT", "CONV" });
+    fxTabs.applyOrder (processor.getFxOrder());
+    fxTabs.onOrderChanged = [this] { processor.setFxOrder (fxTabs.currentOrder()); };
 
     addAndMakeVisible (matrixPanel);
     addAndMakeVisible (outputMeter);
@@ -565,22 +813,28 @@ void ContentComponent::paint (juce::Graphics& g)
 void ContentComponent::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop (metrics::brandBandHeight);
+    auto brandBand = bounds.removeFromTop (metrics::brandBandHeight);
+    if (tempoBar != nullptr)   // standalone tempo bar, top-left of the brand band
+        tempoBar->setBounds (brandBand.removeFromLeft (188).reduced (8, 5));
 
     // --- Header -------------------------------------------------------------
     auto header = bounds.removeFromTop (metrics::headerHeight);
     settingsButton.setBounds (header.removeFromLeft (52));  // logo doubles as menu
 
-    auto right = header.removeFromRight (476).reduced (0, 9);
+    auto right = header.removeFromRight (524).reduced (0, 9);
     right.removeFromRight (12);   // padding so the meter clears the window edge
     outputMeter.setBounds (right.removeFromRight (14).reduced (0, 2));
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
+    right.removeFromRight (4);
+    panicButton.setBounds (right.removeFromRight (22).reduced (0, 5));   // by the meter
     accentButton.setBounds (right.removeFromRight (32).reduced (2, 6));
     auto glideArea = right.removeFromRight (44);
     glideLabel.setBounds (glideArea.removeFromBottom (11));
     glideSlider.setBounds (glideArea);
     glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
+    right.removeFromRight (6);
+    voiceButton.setBounds (right.removeFromRight (46).reduced (0, 5));
     right.removeFromRight (6);
     // WILD sits right beside RANDOMIZE ALL — it shapes what the button rolls.
     auto wildArea = right.removeFromRight (44);
@@ -692,6 +946,23 @@ void ContentComponent::showSettingsMenu()
     m.addItem ("Accent Colors...", [this] { showAccentPicker(); });
     m.addItem ("Show Keyboard", true, keyboardVisible,
                [this] { setKeyboardVisible (! keyboardVisible); });
+    m.addSeparator();
+
+    // Whole-synth oversampling (Off / 2x / 4x / 8x). Off by default; higher
+    // settings cost CPU but reduce aliasing on bright/nonlinear patches.
+    if (auto* osParam = processor.getAPVTS().getParameter (params::id::oversampling))
+    {
+        const int current = (int) osParam->convertFrom0to1 (osParam->getValue());
+        juce::PopupMenu os;
+        const char* names[] = { "Off", "2x", "4x", "8x" };
+        for (int i = 0; i < 4; ++i)
+            os.addItem (names[i], true, current == i, [osParam, i]
+            {
+                osParam->setValueNotifyingHost (osParam->convertTo0to1 ((float) i));
+            });
+        m.addSubMenu ("Oversampling", os);
+    }
+
     m.addSeparator();
     m.addItem ("Clear All MIDI Learn", [this] { processor.getMidiLearn().clearAll(); });
 

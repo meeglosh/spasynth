@@ -1,5 +1,46 @@
 # SPASynth changelog
 
+## 1.0.3
+
+A big update to the effects, the voice engine, and sound quality.
+
+**New effects**
+
+- Panic button. If a note ever gets stuck, one click stops all sound and clears
+  any held or latched notes. It also responds to your host's panic control.
+- Reorderable effects. Drag the effect tabs (there is a grip handle on each one)
+  to change the order the effects run in. The chain order is saved with your
+  preset.
+- Mod tab. A new modulation effect that switches between Phaser and Flanger,
+  with rate (free or tempo-synced), depth, feedback, stages, and stereo spread.
+- Tremolo / Vibrato tab. Independent tremolo (amplitude) and vibrato (pitch),
+  usable together, with shape, rate, depth, and stereo controls.
+- Limiter / Maximizer. A loudness stage with drive, ceiling, character modes,
+  and optional lookahead (off by default). It sits last in the chain by default.
+- Convolve. Use any sound from your library, or your own WAV, as a convolution
+  impulse for reverbs, spaces, and creative textures. Sits alongside the reverb.
+- Reverb algorithms. The reverb now offers Hall, Plate, Chamber, Room, and
+  Spring, with pre-delay, size, decay, damping, tail modulation, and tone
+  controls.
+- Parametric EQ. A new Pro-style EQ with up to 8 bands, draggable nodes (drag
+  for frequency and gain, scroll for Q, double-click to add or remove a band),
+  a live spectrum analyzer, and Clean / Modern / Vintage / Tube character modes.
+
+**New voice engine**
+
+- Voice modes. Choose Poly, Mono, Duo, Paraphonic, or Unison from the new VOICE
+  button in the top bar, with note priority (Last / High / Low) and unison
+  voices, detune, and width.
+- Standalone tempo. The standalone app now has its own tempo: set the BPM, tap
+  it in, or follow an external MIDI clock, so tempo-synced effects and the
+  arpeggiator lock to the right speed without a host.
+
+**Sound quality**
+
+- Oversampling. Run the whole synth at 2x, 4x, or 8x for cleaner, lower-alias
+  sound on bright and hard-driven patches. Off by default; choose it from the
+  settings menu.
+
 ## 1.0.2
 
 **New**

@@ -16,19 +16,20 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     }
 
     chorus.prepare (spec);
+    modEffect.prepare (sampleRate, maxBlockSize);
+    tremVibEffect.prepare (sampleRate, maxBlockSize);
+    limiterEffect.prepare (sampleRate, maxBlockSize);
+    convolution.prepare (spec);
+    convScratch.setSize (2, maxBlockSize, false, false, true);
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
     delayWritePos = 0;
     delaySamplesSmoothed.reset (sampleRate, 0.1);
 
-    reverb.setSampleRate (sampleRate);
+    reverb.prepare (sampleRate, maxBlockSize);
 
-    for (auto& f : eqLow)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    for (auto& f : eqMid)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    for (auto& f : eqHigh) f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    lastLowGain = lastMidGain = lastHighGain = 1.0e9f;
-    lastMidFreq = 0.0f;
+    eq.prepare (sampleRate, maxBlockSize);
 
     reset();
 }
@@ -38,11 +39,13 @@ void FXChain::reset()
     for (auto& f : toneFilters)
         f.reset();
     chorus.reset();
+    modEffect.reset();
+    tremVibEffect.reset();
+    limiterEffect.reset();
+    convolution.reset();
     delayBuffer.clear();
     reverb.reset();
-    for (auto& f : eqLow)  f.reset();
-    for (auto& f : eqMid)  f.reset();
-    for (auto& f : eqHigh) f.reset();
+    eq.reset();
 }
 
 double FXChain::tailSeconds (const Params& p) const
@@ -62,14 +65,14 @@ double FXChain::tailSeconds (const Params& p) const
     }
 
     if (p.reverbEnable)
-        tail = juce::jmax (tail, 2.0 + 6.0 * (double) p.reverbSize);
+        tail = juce::jmax (tail, 0.5 + (double) p.reverbDecay);
 
     return tail;
 }
 
 void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
 {
-    for (const auto module : processOrder)
+    for (const auto module : params.order)
     {
         switch (module)
         {
@@ -78,6 +81,12 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
             case Module::delay:      if (params.delayEnable)  processDelay (buffer, params); break;
             case Module::reverb:     if (params.reverbEnable) processReverb (buffer, params); break;
             case Module::eq:         if (params.eqEnable)     processEQ (buffer, params); break;
+            case Module::mod:        if (params.modEnable)    processMod (buffer, params); break;
+            case Module::tremVib:    if (params.tremEnable || params.vibEnable)
+                                                            { processTremVib (buffer, params); } break;
+            case Module::limiter:    if (params.limEnable)    processLimiter (buffer, params); break;
+            case Module::convolve:   if (params.convEnable && convIrLoaded)
+                                                            { processConvolve (buffer, params); } break;
         }
     }
 }
@@ -168,61 +177,132 @@ void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)
 
 void FXChain::processReverb (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    juce::Reverb::Parameters rp;
-    rp.roomSize = p.reverbSize;
-    rp.damping = p.reverbDamping;
+    // 4-line FDN engine (FDNReverb) with mode voicings. MIX is a true dry/wet
+    // dial handled inside the engine as an equal-power (sin/cos) crossfade:
+    // unity dry at 0, full wet (pure reverb) at 1, perceived level roughly
+    // constant since the tail and the dry signal are decorrelated.
+    FDNReverb::Params rp;
+    rp.mode = p.reverbMode;
+    rp.preDelayMs = p.reverbPreDelay;
+    rp.size = p.reverbSize;
+    rp.decaySec = p.reverbDecay;
+    rp.hfDamp = p.reverbDamping;
+    rp.modDepth = p.reverbModDepth;
+    rp.lowCutHz = p.reverbLowCut;
+    rp.highCutHz = p.reverbHighCut;
     rp.width = p.reverbWidth;
-    // MIX is a true dry/wet dial: unity dry at 0, full wet (pure reverb) at 1,
-    // equal-power (sin/cos) so the perceived level stays roughly constant since
-    // the reverb tail and the dry signal are decorrelated. juce::Reverb scales
-    // dryLevel by 2x internally, so 0.5*cos yields exactly unity dry at mix 0
-    // (the old mapping left the dry pinned near +6 dB and never fully wet).
-    const auto theta = p.reverbMix * juce::MathConstants<float>::halfPi;
-    rp.wetLevel = std::sin (theta);
-    rp.dryLevel = 0.5f * std::cos (theta);
-    reverb.setParameters (rp);
+    rp.mix = p.reverbMix;
+    reverb.process (buffer, rp);
+}
 
-    if (buffer.getNumChannels() > 1)
-        reverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1),
-                              buffer.getNumSamples());
-    else
-        reverb.processMono (buffer.getWritePointer (0), buffer.getNumSamples());
+void FXChain::processMod (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    ModEffect::Params mp;
+    mp.type    = p.modType == 1 ? ModEffect::Type::flanger : ModEffect::Type::phaser;
+    mp.rateHz  = p.modSync
+               ? (float) (p.bpm / 60.0
+                          / juce::jmax (0.01, (double) params::lfoDivisionBeats (p.modDivision)))
+               : p.modRate;
+    mp.depth    = p.modDepth;
+    mp.feedback = p.modFeedback;
+    mp.stages   = p.modStages;
+    mp.centreHz = p.modCentreHz;
+    mp.manualMs = p.modManualMs;
+    mp.spread   = p.modWidth;
+    mp.mix      = p.modMix;
+    modEffect.process (buffer, mp);
+}
+
+void FXChain::processTremVib (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    const auto syncHz = [&] (int div)
+    {
+        return (float) (p.bpm / 60.0
+                        / juce::jmax (0.01, (double) params::lfoDivisionBeats (div)));
+    };
+
+    TremVib::Params tp;
+    tp.tremOn     = p.tremEnable;
+    tp.tremRateHz = p.tremSync ? syncHz (p.tremDivision) : p.tremRate;
+    tp.tremDepth  = p.tremDepth;
+    tp.tremShape  = p.tremShape;
+    tp.tremStereo = p.tremStereo;
+    tp.tremMix    = p.tremMix;
+    tp.vibOn      = p.vibEnable;
+    tp.vibRateHz  = p.vibSync ? syncHz (p.vibDivision) : p.vibRate;
+    tp.vibDepth   = p.vibDepth;
+    tp.vibMix     = p.vibMix;
+    tremVibEffect.process (buffer, tp);
+}
+
+void FXChain::processLimiter (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    Limiter::Params lp;
+    lp.enable      = p.limEnable;
+    lp.driveDb     = p.limDrive;
+    lp.ceilingDb   = p.limCeiling;
+    lp.releaseMs   = p.limRelease;
+    lp.autoRelease = p.limAutoRelease;
+    lp.character   = p.limCharacter;
+    lp.stereoLink  = p.limStereoLink;
+    lp.truePeak    = p.limTruePeak;
+    lp.lookahead   = p.limLookahead;
+    limiterEffect.process (buffer, lp);
+}
+
+int FXChain::limiterLatencySamples (const Params& p) const
+{
+    Limiter::Params lp;
+    lp.enable    = p.limEnable;
+    lp.lookahead = p.limLookahead;
+    return limiterEffect.latencySamples (lp);
+}
+
+void FXChain::processConvolve (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    const int n = buffer.getNumSamples();
+    const int numCh = juce::jmin (2, buffer.getNumChannels());
+
+    // Wet copy through the convolution, then blend with the dry (mix + width).
+    for (int ch = 0; ch < 2; ++ch)
+        convScratch.copyFrom (ch, 0, buffer, juce::jmin (ch, numCh - 1), 0, n);
+    auto block = juce::dsp::AudioBlock<float> (convScratch).getSubBlock (0, (size_t) n);
+    convolution.process (juce::dsp::ProcessContextReplacing<float> (block));
+
+    const float mix = juce::jlimit (0.0f, 1.0f, p.convMix);
+    const float width = juce::jlimit (0.0f, 1.0f, p.convWidth);
+    for (int i = 0; i < n; ++i)
+    {
+        float wL = convScratch.getSample (0, i);
+        float wR = convScratch.getSample (1, i);
+        if (numCh > 1)   // stereo width via mid/side on the wet
+        {
+            const float mid = 0.5f * (wL + wR);
+            const float side = 0.5f * (wL - wR) * width;
+            wL = mid + side; wR = mid - side;
+        }
+        buffer.setSample (0, i, buffer.getSample (0, i) * (1.0f - mix) + wL * mix);
+        if (numCh > 1)
+            buffer.setSample (1, i, buffer.getSample (1, i) * (1.0f - mix) + wR * mix);
+    }
+}
+
+void FXChain::loadConvolutionIR (const juce::File& irFile)
+{
+    if (! irFile.existsAsFile()) { convIrLoaded = false; return; }
+    convolution.loadImpulseResponse (irFile,
+                                     juce::dsp::Convolution::Stereo::yes,
+                                     juce::dsp::Convolution::Trim::yes,
+                                     0,
+                                     juce::dsp::Convolution::Normalise::yes);
+    convIrLoaded = true;
 }
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    if (! juce::approximatelyEqual (p.eqLowGainDb, lastLowGain)
-        || ! juce::approximatelyEqual (p.eqMidFreq, lastMidFreq)
-        || ! juce::approximatelyEqual (p.eqMidGainDb, lastMidGain)
-        || ! juce::approximatelyEqual (p.eqHighGainDb, lastHighGain))
-    {
-        lastLowGain = p.eqLowGainDb;
-        lastMidFreq = p.eqMidFreq;
-        lastMidGain = p.eqMidGainDb;
-        lastHighGain = p.eqHighGainDb;
-
-        const auto low = juce::dsp::IIR::Coefficients<float>::makeLowShelf (
-            sampleRate, 120.0f, 0.707f, juce::Decibels::decibelsToGain (p.eqLowGainDb));
-        const auto mid = juce::dsp::IIR::Coefficients<float>::makePeakFilter (
-            sampleRate, p.eqMidFreq, 0.7f, juce::Decibels::decibelsToGain (p.eqMidGainDb));
-        const auto high = juce::dsp::IIR::Coefficients<float>::makeHighShelf (
-            sampleRate, 6000.0f, 0.707f, juce::Decibels::decibelsToGain (p.eqHighGainDb));
-
-        for (auto& f : eqLow)  *f.coefficients = *low;
-        for (auto& f : eqMid)  *f.coefficients = *mid;
-        for (auto& f : eqHigh) *f.coefficients = *high;
-    }
-
-    for (int ch = 0; ch < juce::jmin (2, buffer.getNumChannels()); ++ch)
-    {
-        auto* data = buffer.getWritePointer (ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            auto v = eqLow[(size_t) ch].processSample (data[i]);
-            v = eqMid[(size_t) ch].processSample (v);
-            data[i] = eqHigh[(size_t) ch].processSample (v);
-        }
-    }
+    eq.setCharacter (p.eqCharacter);
+    eq.updateBands (p.eqBands);
+    eq.process (buffer);
 }
 
 } // namespace spa::dsp

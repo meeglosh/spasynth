@@ -168,6 +168,23 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
         glideRate = (glideTarget - glideNote) / (shared.glideTimeMs * 0.001f);
     }
 
+    // Voice-stack unison (Unison mode): spread this voice's pitch and pan by
+    // its slot in the burst. pending* were set by the synthesiser right before
+    // this startNote call.
+    unisonDetuneSemis = 0.0f;
+    unisonPanL = unisonPanR = 1.0f;
+    paraSawGate = false;
+    if (shared.voiceMode == params::VoiceMode::unison && shared.pendingUnisonCount > 1)
+    {
+        const int i = shared.pendingUnisonIndex, n = shared.pendingUnisonCount;
+        const float spread = (float) i / (float) (n - 1) * 2.0f - 1.0f;   // -1..1
+        unisonDetuneSemis = spread * shared.unisonDetuneCents / 100.0f;
+        const float pan = juce::jlimit (-1.0f, 1.0f, spread * shared.unisonWidth);
+        const float ang = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+        unisonPanL = std::cos (ang) * juce::MathConstants<float>::sqrt2;
+        unisonPanR = std::sin (ang) * juce::MathConstants<float>::sqrt2;
+    }
+
     if (shared.telemetry != nullptr)
         noteSerial = shared.telemetry->noteSerial.fetch_add (1) + 1;
 
@@ -364,7 +381,8 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
         const auto pitchOffset = denorm (eff, d.coarse)
                                + denorm (eff, d.fine) * 0.01f
                                + pitchBendSemitones
-                               + chaosPitch;
+                               + chaosPitch
+                               + unisonDetuneSemis;
 
         if (stat.mode == params::OscMode::wavetable)
         {
@@ -650,7 +668,16 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                 sumR += r * slotGains[(size_t) s];
             }
 
-            const auto envValue = ampEnv.getNextSample();
+            // Paraphonic voices follow the processor's shared amp envelope; all
+            // others use their own. ampEnv still advances so its release governs
+            // when non-paraphonic voices free themselves.
+            const auto ownEnv = ampEnv.getNextSample();
+            const bool para = shared.voiceMode == params::VoiceMode::paraphonic
+                              && shared.paraEnvBlock != nullptr;
+            const auto envValue = para
+                ? shared.paraEnvBlock[startSample + rendered + i]
+                : ownEnv;
+            if (para && shared.paraGateActive) paraSawGate = true;
             ampEnvLast = envValue;
             const auto gain = envValue * (0.2f + 0.8f * velocity) * chaosAmpGain;
 
@@ -707,11 +734,17 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
             }
 
             const auto n = rendered + i;
-            left[n] += outL * gain;
+            left[n] += outL * gain * unisonPanL;
             if (right != nullptr)
-                right[n] += outR * gain;
+                right[n] += outR * gain * unisonPanR;
 
-            if (! ampEnv.isActive())
+            // A paraphonic voice frees itself only once the shared gate has
+            // released and its level has reached zero; otherwise the voice's own
+            // amp envelope decides.
+            const bool finished = para
+                ? (paraSawGate && ! shared.paraGateActive && envValue < 1.0e-4f)
+                : ! ampEnv.isActive();
+            if (finished)
             {
                 clearCurrentNote();
                 return;

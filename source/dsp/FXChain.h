@@ -1,6 +1,11 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include "ModEffect.h"
+#include "TremVib.h"
+#include "Limiter.h"
+#include "FDNReverb.h"
+#include "ParametricEQ.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -15,7 +20,40 @@ class FXChain
 public:
     FXChain() = default;
 
-    enum class Module { distortion, chorus, delay, reverb, eq };
+    // Append-only: module ids are serialized in the per-preset chain order.
+    enum class Module { distortion, chorus, delay, reverb, eq, mod, tremVib, limiter, convolve };
+    static constexpr int numModules = 9;
+
+    // Pack/unpack the chain order into a uint64 (4 bits/module): a single atomic
+    // for the lock-free UI->audio hand-off and compact preset storage. Unpack
+    // validates the value is a permutation and falls back to the natural order.
+    static juce::uint64 packOrder (const Module* order)
+    {
+        juce::uint64 v = 0;
+        for (int i = 0; i < numModules; ++i)
+            v |= (juce::uint64) ((int) order[i] & 0xF) << (i * 4);
+        return v;
+    }
+    static juce::uint64 defaultOrderPacked()
+    {
+        Module def[numModules] { Module::distortion, Module::chorus, Module::mod,
+                                 Module::tremVib, Module::delay, Module::reverb,
+                                 Module::convolve, Module::eq, Module::limiter };
+        return packOrder (def);
+    }
+    static void unpackOrder (juce::uint64 packed, Module* order)
+    {
+        bool seen[16] = {}; bool ok = true; int tmp[numModules];
+        for (int i = 0; i < numModules; ++i)
+        {
+            const int id = (int) ((packed >> (i * 4)) & 0xF);
+            tmp[i] = id;
+            if (id < 0 || id >= numModules || seen[id]) { ok = false; break; }
+            seen[id] = true;
+        }
+        for (int i = 0; i < numModules; ++i)
+            order[i] = ok ? (Module) tmp[i] : (Module) i;
+    }
 
     struct Params
     {
@@ -40,18 +78,71 @@ public:
         float delayMix = 0.35f;
 
         bool reverbEnable = false;
+        int reverbMode = 0;         // 0 Hall 1 Plate 2 Chamber 3 Room 4 Spring
+        float reverbPreDelay = 20.0f;
         float reverbSize = 0.5f;
-        float reverbDamping = 0.5f;
+        float reverbDecay = 2.0f;   // RT60 seconds
+        float reverbDamping = 0.5f; // HF damp
+        float reverbModDepth = 0.2f;
+        float reverbLowCut = 20.0f;
+        float reverbHighCut = 12000.0f;
         float reverbWidth = 1.0f;
         float reverbMix = 0.3f;
 
         bool eqEnable = false;
-        float eqLowGainDb = 0.0f;
-        float eqMidFreq = 1000.0f;
-        float eqMidGainDb = 0.0f;
-        float eqHighGainDb = 0.0f;
+        int eqCharacter = 0;   // 0 Clean 1 Modern 2 Vintage 3 Tube
+        std::array<ParametricEQ::Band, ParametricEQ::numBands> eqBands {};
 
         double bpm = 120.0;
+
+        bool modEnable = false;
+        int modType = 0;           // 0 = Phaser, 1 = Flanger
+        float modRate = 0.5f;
+        bool modSync = false;
+        int modDivision = 6;
+        float modDepth = 0.5f;
+        float modFeedback = 0.3f;
+        int modStages = 6;
+        float modCentreHz = 800.0f;
+        float modManualMs = 3.0f;
+        float modWidth = 0.5f;
+        float modMix = 0.5f;
+
+        bool tremEnable = false;
+        float tremRate = 5.0f;
+        bool tremSync = false;
+        int tremDivision = 6;
+        float tremDepth = 0.5f;
+        int tremShape = 0;
+        float tremStereo = 0.0f;
+        float tremMix = 1.0f;
+
+        bool vibEnable = false;
+        float vibRate = 5.0f;
+        bool vibSync = false;
+        int vibDivision = 6;
+        float vibDepth = 0.5f;
+        float vibMix = 1.0f;
+
+        bool limEnable = false;
+        float limDrive = 0.0f;
+        float limCeiling = -0.3f;
+        float limRelease = 120.0f;
+        bool limAutoRelease = false;
+        int limCharacter = 0;
+        float limStereoLink = 1.0f;
+        bool limTruePeak = false;
+        bool limLookahead = false;
+
+        bool convEnable = false;
+        float convMix = 0.3f;
+        float convWidth = 1.0f;
+
+        // Runtime FX processing order (drag-reorderable, saved per preset).
+        Module order[numModules] {
+            Module::distortion, Module::chorus, Module::mod, Module::tremVib,
+            Module::delay, Module::reverb, Module::convolve, Module::eq, Module::limiter
+        };
     };
 
     void prepare (double sampleRate, int maxBlockSize);
@@ -62,18 +153,33 @@ public:
     // Worst-case ring-out for AudioProcessor::getTailLengthSeconds().
     double tailSeconds (const Params& params) const;
 
+    // Lookahead-limiter latency (reported to the host) + gain reduction meter.
+    int limiterLatencySamples (const Params& p) const;
+    float limiterGainReductionDb() const { return limiterEffect.gainReductionDb(); }
+
+    // Convolve (SFX / user WAV as impulse). juce::dsp::Convolution loads the IR
+    // on a background thread and swaps it in atomically.
+    void loadConvolutionIR (const juce::File& irFile);
+    bool hasConvolutionIR() const { return convIrLoaded; }
+
 private:
     void processDistortion (juce::AudioBuffer<float>&, const Params&);
     void processChorus (juce::AudioBuffer<float>&, const Params&);
     void processDelay (juce::AudioBuffer<float>&, const Params&);
     void processReverb (juce::AudioBuffer<float>&, const Params&);
     void processEQ (juce::AudioBuffer<float>&, const Params&);
-
-    static constexpr Module processOrder[] = {
-        Module::distortion, Module::chorus, Module::delay, Module::reverb, Module::eq,
-    };
+    void processMod (juce::AudioBuffer<float>&, const Params&);
+    void processTremVib (juce::AudioBuffer<float>&, const Params&);
+    void processLimiter (juce::AudioBuffer<float>&, const Params&);
+    void processConvolve (juce::AudioBuffer<float>&, const Params&);
 
     double sampleRate = 48000.0;
+    ModEffect modEffect;
+    TremVib tremVibEffect;
+    Limiter limiterEffect;
+    juce::dsp::Convolution convolution;
+    juce::AudioBuffer<float> convScratch;
+    bool convIrLoaded = false;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;
@@ -85,13 +191,10 @@ private:
     int delayWritePos = 0;
     juce::SmoothedValue<float> delaySamplesSmoothed;
 
-    juce::Reverb reverb;
+    FDNReverb reverb;
 
-    // EQ: low shelf / mid peak / high shelf per channel.
-    using IIR = juce::dsp::IIR::Filter<float>;
-    std::array<IIR, 2> eqLow, eqMid, eqHigh;
-    float lastLowGain = 1.0e9f, lastMidFreq = 0.0f, lastMidGain = 1.0e9f,
-          lastHighGain = 1.0e9f;
+    // 8-band parametric EQ (hand-rolled biquads, character saturation).
+    ParametricEQ eq;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FXChain)
 };

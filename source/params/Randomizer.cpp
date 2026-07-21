@@ -43,7 +43,11 @@ LockGroup lockGroupFor (Section s)
         case Section::fxChorus:
         case Section::fxDelay:
         case Section::fxReverb:
-        case Section::fxEQ:     return LockGroup::fx;
+        case Section::fxEQ:
+        case Section::fxMod:
+        case Section::fxTremVib:
+        case Section::fxLimiter:
+        case Section::fxConvolve: return LockGroup::fx;
         case Section::matrix:   return LockGroup::matrix;
         case Section::global:   break;
     }

@@ -27,6 +27,16 @@ SPASynthProcessor::SPASynthProcessor()
     raw.masterGain = apvts.getRawParameterValue (params::id::masterGain);
     raw.glideMode = apvts.getRawParameterValue (params::id::glideMode);
     raw.glideTime = apvts.getRawParameterValue (params::id::glideTime);
+    raw.voiceMode = apvts.getRawParameterValue (params::id::voiceMode);
+    raw.notePriority = apvts.getRawParameterValue (params::id::notePriority);
+    raw.unisonVoices = apvts.getRawParameterValue (params::id::unisonVoices);
+    raw.unisonDetune = apvts.getRawParameterValue (params::id::unisonDetune);
+    raw.unisonWidth = apvts.getRawParameterValue (params::id::unisonWidth);
+    raw.ampAttack = apvts.getRawParameterValue (params::id::ampAttack);
+    raw.ampDecay = apvts.getRawParameterValue (params::id::ampDecay);
+    raw.ampSustain = apvts.getRawParameterValue (params::id::ampSustain);
+    raw.ampRelease = apvts.getRawParameterValue (params::id::ampRelease);
+    raw.oversampling = apvts.getRawParameterValue (params::id::oversampling);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
     raw.filter2Enable = apvts.getRawParameterValue (params::id::filter2Enable);
@@ -138,15 +148,69 @@ SPASynthProcessor::SPASynthProcessor()
         rf.delayPingPong  = apvts.getRawParameterValue (fx::delayPingPong);
         rf.delayMix       = apvts.getRawParameterValue (fx::delayMix);
         rf.reverbEnable   = apvts.getRawParameterValue (fx::reverbEnable);
+        rf.reverbMode     = apvts.getRawParameterValue (fx::reverbMode);
+        rf.reverbPreDelay = apvts.getRawParameterValue (fx::reverbPreDelay);
         rf.reverbSize     = apvts.getRawParameterValue (fx::reverbSize);
+        rf.reverbDecay    = apvts.getRawParameterValue (fx::reverbDecay);
         rf.reverbDamping  = apvts.getRawParameterValue (fx::reverbDamping);
+        rf.reverbModDepth = apvts.getRawParameterValue (fx::reverbModDepth);
+        rf.reverbLowCut   = apvts.getRawParameterValue (fx::reverbLowCut);
+        rf.reverbHighCut  = apvts.getRawParameterValue (fx::reverbHighCut);
         rf.reverbWidth    = apvts.getRawParameterValue (fx::reverbWidth);
         rf.reverbMix      = apvts.getRawParameterValue (fx::reverbMix);
         rf.eqEnable       = apvts.getRawParameterValue (fx::eqEnable);
-        rf.eqLowGain      = apvts.getRawParameterValue (fx::eqLowGain);
-        rf.eqMidFreq      = apvts.getRawParameterValue (fx::eqMidFreq);
-        rf.eqMidGain      = apvts.getRawParameterValue (fx::eqMidGain);
-        rf.eqHighGain     = apvts.getRawParameterValue (fx::eqHighGain);
+        rf.eqCharacter    = apvts.getRawParameterValue (fx::eqCharacter);
+        for (int b = 0; b < 8; ++b)
+        {
+            auto& bp = rf.eqBands[(size_t) b];
+            bp.enable = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::enable));
+            bp.type   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::type));
+            bp.freq   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::freq));
+            bp.gain   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::gain));
+            bp.q      = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::q));
+        }
+
+        rf.modEnable      = apvts.getRawParameterValue (fx::modEnable);
+        rf.modType        = apvts.getRawParameterValue (fx::modType);
+        rf.modRate        = apvts.getRawParameterValue (fx::modRate);
+        rf.modSync        = apvts.getRawParameterValue (fx::modSync);
+        rf.modDivision    = apvts.getRawParameterValue (fx::modDivision);
+        rf.modDepth       = apvts.getRawParameterValue (fx::modDepth);
+        rf.modFeedback    = apvts.getRawParameterValue (fx::modFeedback);
+        rf.modStages      = apvts.getRawParameterValue (fx::modStages);
+        rf.modCentre      = apvts.getRawParameterValue (fx::modCentre);
+        rf.modManual      = apvts.getRawParameterValue (fx::modManual);
+        rf.modWidth       = apvts.getRawParameterValue (fx::modWidth);
+        rf.modMix         = apvts.getRawParameterValue (fx::modMix);
+
+        rf.tremEnable     = apvts.getRawParameterValue (fx::tremEnable);
+        rf.tremRate       = apvts.getRawParameterValue (fx::tremRate);
+        rf.tremSync       = apvts.getRawParameterValue (fx::tremSync);
+        rf.tremDivision   = apvts.getRawParameterValue (fx::tremDivision);
+        rf.tremDepth      = apvts.getRawParameterValue (fx::tremDepth);
+        rf.tremShape      = apvts.getRawParameterValue (fx::tremShape);
+        rf.tremStereo     = apvts.getRawParameterValue (fx::tremStereo);
+        rf.tremMix        = apvts.getRawParameterValue (fx::tremMix);
+        rf.vibEnable      = apvts.getRawParameterValue (fx::vibEnable);
+        rf.vibRate        = apvts.getRawParameterValue (fx::vibRate);
+        rf.vibSync        = apvts.getRawParameterValue (fx::vibSync);
+        rf.vibDivision    = apvts.getRawParameterValue (fx::vibDivision);
+        rf.vibDepth       = apvts.getRawParameterValue (fx::vibDepth);
+        rf.vibMix         = apvts.getRawParameterValue (fx::vibMix);
+
+        rf.limEnable      = apvts.getRawParameterValue (fx::limEnable);
+        rf.limDrive       = apvts.getRawParameterValue (fx::limDrive);
+        rf.limCeiling     = apvts.getRawParameterValue (fx::limCeiling);
+        rf.limRelease     = apvts.getRawParameterValue (fx::limRelease);
+        rf.limAutoRelease = apvts.getRawParameterValue (fx::limAutoRelease);
+        rf.limCharacter   = apvts.getRawParameterValue (fx::limCharacter);
+        rf.limStereoLink  = apvts.getRawParameterValue (fx::limStereoLink);
+        rf.limTruePeak    = apvts.getRawParameterValue (fx::limTruePeak);
+        rf.limLookahead   = apvts.getRawParameterValue (fx::limLookahead);
+
+        rf.convEnable     = apvts.getRawParameterValue (fx::convEnable);
+        rf.convMix        = apvts.getRawParameterValue (fx::convMix);
+        rf.convWidth      = apvts.getRawParameterValue (fx::convWidth);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -178,7 +242,7 @@ SPASynthProcessor::SPASynthProcessor()
             weak->refreshLibrary();
     });
 
-    startTimer (1000);  // purges retired wavetables
+    startTimer (150);  // purges retired wavetables; applies oversampling changes
 }
 
 SPASynthProcessor::~SPASynthProcessor()
@@ -188,6 +252,22 @@ SPASynthProcessor::~SPASynthProcessor()
 
 void SPASynthProcessor::timerCallback()
 {
+    // Apply a pending oversampling-factor change: rebuild the engine at the new
+    // rate under the callback lock so no processBlock touches it mid-rebuild.
+    if (const int pf = pendingOsFactor.load (std::memory_order_relaxed);
+        pf != currentOsFactor)
+    {
+        const juce::ScopedLock sl (getCallbackLock());
+        rebuildOversampling (pf);
+    }
+
+    // Report latency: the limiter's lookahead (engine samples -> host) plus the
+    // oversampler's own near-zero IIR latency.
+    const int lat = desiredLatency.load (std::memory_order_relaxed) / juce::jmax (1, currentOsFactor)
+                  + osLatencyHost;
+    if (lat != getLatencySamples())
+        setLatencySamples (lat);
+
     // Anything retired more than one timer period ago can no longer be in
     // use by the audio thread (it re-reads `live` every block).
     retiredTables.clear();
@@ -422,19 +502,163 @@ juce::String SPASynthProcessor::getWavetableError (int slot) const
 
 void SPASynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    currentSampleRate = sampleRate;
-    synth.setCurrentPlaybackSampleRate (sampleRate);
-    arp.prepare (sampleRate);
-    fxChain.prepare (sampleRate, samplesPerBlock);
-    masterGain.reset (sampleRate, 0.02);
+    hostSampleRate = sampleRate;
+    hostBlockSize = samplesPerBlock;
+    midiClock.prepare (sampleRate);   // tempo detection stays in the host domain
+
+    const int factor = 1 << juce::jlimit (0, 3, (int) raw.oversampling->load());
+    currentOsFactor = factor;
+    pendingOsFactor.store (factor, std::memory_order_relaxed);
+    prepareEngine (sampleRate * factor, samplesPerBlock * factor);
+
+    if (factor > 1)
+    {
+        oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, (size_t) juce::roundToInt (std::log2 ((double) factor)),
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false, false);
+        oversampler->initProcessing ((size_t) samplesPerBlock);
+        oversampler->reset();
+        osLatencyHost = (int) std::ceil (oversampler->getLatencyInSamples());
+    }
+    else
+    {
+        oversampler.reset();
+        osLatencyHost = 0;
+    }
+}
+
+// All rate-dependent engine setup, at the (possibly oversampled) engine rate.
+void SPASynthProcessor::prepareEngine (double engineRate, int engineBlock)
+{
+    currentSampleRate = engineRate;
+    synth.setCurrentPlaybackSampleRate (engineRate);
+    arp.prepare (engineRate);
+    fxChain.prepare (engineRate, engineBlock);
+
+    paraEnv.setSampleRate (engineRate);
+    paraEnv.reset();
+    paraGateWasOn = false;
+    paraEnvBuf.setSize (1, juce::jmax (1, engineBlock), false, false, true);
+    masterGain.reset (engineRate, 0.02);
     masterGain.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+}
+
+// Swap the oversampling factor (message thread; processing suspended by caller).
+void SPASynthProcessor::rebuildOversampling (int factor)
+{
+    factor = 1 << juce::jlimit (0, 3, (int) std::round (std::log2 ((double) factor)));
+    currentOsFactor = factor;
+    prepareEngine (hostSampleRate * factor, hostBlockSize * factor);
+
+    if (factor > 1)
+    {
+        oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, (size_t) juce::roundToInt (std::log2 ((double) factor)),
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false, false);
+        oversampler->initProcessing ((size_t) hostBlockSize);
+        oversampler->reset();
+        osLatencyHost = (int) std::ceil (oversampler->getLatencyInSamples());
+    }
+    else
+    {
+        oversampler.reset();
+        osLatencyHost = 0;
+    }
+}
+
+// Paraphonic pre-pass + voices + FX + master, at whatever rate `buffer` is
+// sized for. Called on the host buffer directly, or on the oversampled buffer.
+void SPASynthProcessor::renderEngine (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    // Paraphonic: advance one shared amp envelope from the collective key count
+    // and render it per-sample for the voices to read this block. Gated on the
+    // key count from the previous block, so voices attack one block after the
+    // first key lands (imperceptible, and keeps this a simple pre-pass).
+    if (shared.voiceMode == params::VoiceMode::paraphonic)
+    {
+        const bool anyKey = glideState.keysDown > 0;
+        if (anyKey != paraGateWasOn)
+        {
+            if (anyKey) paraEnv.noteOn(); else paraEnv.noteOff();
+            paraGateWasOn = anyKey;
+        }
+        paraEnv.setParameters ({ raw.ampAttack->load(), raw.ampDecay->load(),
+                                 raw.ampSustain->load(), raw.ampRelease->load() });
+        const int n = buffer.getNumSamples();
+        auto* pe = paraEnvBuf.getWritePointer (0);
+        for (int i = 0; i < n; ++i) pe[i] = paraEnv.getNextSample();
+        shared.paraEnvBlock = pe;
+        shared.paraGateActive = anyKey;
+    }
+    else
+    {
+        shared.paraEnvBlock = nullptr;
+        shared.paraGateActive = false;
+        if (paraGateWasOn) { paraEnv.reset(); paraGateWasOn = false; }
+    }
+
+    synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
+
+    updateFXParams();
+    fxChain.process (buffer, fxParams);
+
+    masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+    masterGain.applyGain (buffer, buffer.getNumSamples());
+}
+
+void SPASynthProcessor::setInternalBpm (double bpm)
+{
+    bpm = juce::jlimit (20.0, 300.0, bpm);
+    internalBpm.store (bpm, std::memory_order_relaxed);
+    apvts.state.setProperty ("standaloneBpm", bpm, nullptr);
+}
+
+void SPASynthProcessor::setTempoSyncMode (int mode)
+{
+    tempoSyncMode.store (mode, std::memory_order_relaxed);
+    apvts.state.setProperty ("tempoSyncMode", mode, nullptr);
+}
+
+void SPASynthProcessor::setFxOrder (const juce::Array<int>& moduleIds)
+{
+    if (moduleIds.size() != dsp::FXChain::numModules)
+        return;
+    dsp::FXChain::Module ord[dsp::FXChain::numModules];
+    for (int i = 0; i < dsp::FXChain::numModules; ++i)
+        ord[i] = (dsp::FXChain::Module) moduleIds[i];
+    const auto packed = dsp::FXChain::packOrder (ord);
+    fxOrderPacked.store (packed, std::memory_order_relaxed);
+    apvts.state.setProperty ("fxOrder", (juce::int64) packed, nullptr);
+}
+
+juce::Array<int> SPASynthProcessor::getFxOrder() const
+{
+    dsp::FXChain::Module ord[dsp::FXChain::numModules];
+    dsp::FXChain::unpackOrder (fxOrderPacked.load (std::memory_order_relaxed), ord);
+    juce::Array<int> ids;
+    for (auto m : ord)
+        ids.add ((int) m);
+    return ids;
+}
+
+void SPASynthProcessor::loadConvolutionIR (const juce::File& file)
+{
+    convIrPath = file.existsAsFile() ? file.getFullPathName() : juce::String();
+    fxChain.loadConvolutionIR (file);
+    const auto libraryRoot = library::findLibraryRoot();
+    apvts.state.setProperty ("convIR",
+        convIrPath.isEmpty() ? juce::String() : library::toPortable (file, libraryRoot),
+        nullptr);
+    sendChangeMessage();   // refresh the IR name in the UI
 }
 
 void SPASynthProcessor::updateFXParams()
 {
     const auto& rf = raw.fx;
     auto& p = fxParams;
+
+    dsp::FXChain::unpackOrder (fxOrderPacked.load (std::memory_order_relaxed), p.order);
 
     p.distEnable     = rf.distEnable->load() >= 0.5f;
     p.distType       = (int) rf.distType->load();
@@ -454,15 +678,75 @@ void SPASynthProcessor::updateFXParams()
     p.delayPingPong  = rf.delayPingPong->load() >= 0.5f;
     p.delayMix       = rf.delayMix->load();
     p.reverbEnable   = rf.reverbEnable->load() >= 0.5f;
+    p.reverbMode     = (int) rf.reverbMode->load();
+    p.reverbPreDelay = rf.reverbPreDelay->load();
     p.reverbSize     = rf.reverbSize->load();
+    p.reverbDecay    = rf.reverbDecay->load();
     p.reverbDamping  = rf.reverbDamping->load();
+    p.reverbModDepth = rf.reverbModDepth->load();
+    p.reverbLowCut   = rf.reverbLowCut->load();
+    p.reverbHighCut  = rf.reverbHighCut->load();
     p.reverbWidth    = rf.reverbWidth->load();
     p.reverbMix      = rf.reverbMix->load();
     p.eqEnable       = rf.eqEnable->load() >= 0.5f;
-    p.eqLowGainDb    = rf.eqLowGain->load();
-    p.eqMidFreq      = rf.eqMidFreq->load();
-    p.eqMidGainDb    = rf.eqMidGain->load();
-    p.eqHighGainDb   = rf.eqHighGain->load();
+    p.eqCharacter    = (int) rf.eqCharacter->load();
+    for (int b = 0; b < 8; ++b)
+    {
+        const auto& bp = rf.eqBands[(size_t) b];
+        auto& band = p.eqBands[(size_t) b];
+        band.enabled = bp.enable->load() >= 0.5f;
+        band.type    = (int) bp.type->load();
+        band.freq    = bp.freq->load();
+        band.gainDb  = bp.gain->load();
+        band.q       = bp.q->load();
+    }
+
+    p.modEnable   = rf.modEnable->load() >= 0.5f;
+    p.modType     = (int) rf.modType->load();
+    p.modRate     = rf.modRate->load();
+    p.modSync     = rf.modSync->load() >= 0.5f;
+    p.modDivision = (int) rf.modDivision->load();
+    p.modDepth    = rf.modDepth->load();
+    p.modFeedback = rf.modFeedback->load();
+    {
+        static constexpr int stageCounts[] = { 2, 4, 6, 8, 12 };
+        p.modStages = stageCounts[juce::jlimit (0, 4, (int) rf.modStages->load())];
+    }
+    p.modCentreHz = rf.modCentre->load();
+    p.modManualMs = rf.modManual->load();
+    p.modWidth    = rf.modWidth->load();
+    p.modMix      = rf.modMix->load();
+
+    p.tremEnable   = rf.tremEnable->load() >= 0.5f;
+    p.tremRate     = rf.tremRate->load();
+    p.tremSync     = rf.tremSync->load() >= 0.5f;
+    p.tremDivision = (int) rf.tremDivision->load();
+    p.tremDepth    = rf.tremDepth->load();
+    p.tremShape    = (int) rf.tremShape->load();
+    p.tremStereo   = rf.tremStereo->load();
+    p.tremMix      = rf.tremMix->load();
+    p.vibEnable    = rf.vibEnable->load() >= 0.5f;
+    p.vibRate      = rf.vibRate->load();
+    p.vibSync      = rf.vibSync->load() >= 0.5f;
+    p.vibDivision  = (int) rf.vibDivision->load();
+    p.vibDepth     = rf.vibDepth->load();
+    p.vibMix       = rf.vibMix->load();
+
+    p.limEnable      = rf.limEnable->load() >= 0.5f;
+    p.limDrive       = rf.limDrive->load();
+    p.limCeiling     = rf.limCeiling->load();
+    p.limRelease     = rf.limRelease->load();
+    p.limAutoRelease = rf.limAutoRelease->load() >= 0.5f;
+    p.limCharacter   = (int) rf.limCharacter->load();
+    p.limStereoLink  = rf.limStereoLink->load();
+    p.limTruePeak    = rf.limTruePeak->load() >= 0.5f;
+    p.limLookahead   = rf.limLookahead->load() >= 0.5f;
+
+    p.convEnable = rf.convEnable->load() >= 0.5f;
+    p.convMix    = rf.convMix->load();
+    p.convWidth  = rf.convWidth->load();
+
+    desiredLatency.store (fxChain.limiterLatencySamples (p), std::memory_order_relaxed);
     p.bpm            = shared.bpm;
 }
 
@@ -516,6 +800,11 @@ void SPASynthProcessor::updateSharedState (int blockLength)
 
     shared.glideMode = (params::GlideMode) (int) raw.glideMode->load();
     shared.glideTimeMs = raw.glideTime->load();
+    shared.voiceMode = (params::VoiceMode) (int) raw.voiceMode->load();
+    shared.notePriority = (params::NotePriority) (int) raw.notePriority->load();
+    shared.unisonVoices = (int) raw.unisonVoices->load();
+    shared.unisonDetuneCents = raw.unisonDetune->load();
+    shared.unisonWidth = raw.unisonWidth->load();
 
     shared.filterType = (params::FilterType) (int) raw.filterType->load();
     shared.filterKeytrack = raw.filterKeytrack->load();
@@ -547,12 +836,8 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         route.depth = depth;
     }
 
-    // Transport.
-    shared.bpm = 120.0;
-    if (auto* playHead = getPlayHead())
-        if (const auto position = playHead->getPosition())
-            if (const auto bpm = position->getBpm())
-                shared.bpm = *bpm;
+    // Transport (resolved once in processBlock: host, internal, or MIDI clock).
+    shared.bpm = blockBpm;
 
     // LFO params + global free-running phases (value at block start; advanced
     // past the block for next time).
@@ -604,10 +889,76 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // to splice a couple of queued note events and is uncontended in practice.
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
 
+    // Panic: from the UI button or an incoming All Sound/Notes Off (CC 120/123).
+    // Kill every voice with no tail-off and clear the arp's latched/held chord so
+    // a stuck (e.g. latched) note cannot keep sounding.
+    bool doPanic = panicRequested.exchange (false, std::memory_order_relaxed);
+    for (const auto md : midi)
+    {
+        const auto m = md.getMessage();
+        if (m.isController()
+            && (m.getControllerNumber() == 120 || m.getControllerNumber() == 123))
+            doPanic = true;
+    }
+    if (doPanic)
+    {
+        synth.allNotesOff (0, false);   // channel <= 0 = all voices, no tail-off
+        arp.reset();
+        keyboardState.allNotesOff (0);
+    }
+
+    // Resolve tempo + transport once per block: host playhead if it provides a
+    // tempo (plugin), otherwise the standalone internal BPM or external MIDI
+    // clock. Everything tempo-synced (arp, delay, LFOs) reads blockBpm below.
+    midiClock.process (midi, buffer.getNumSamples());
+    blockBpm = 120.0; blockPlaying = true; blockPpq = 0.0;
+    bool gotHostTempo = false;
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm())
+            {
+                blockBpm = *bpm;
+                blockPlaying = position->getIsPlaying();
+                if (const auto ppq = position->getPpqPosition())
+                    blockPpq = *ppq;
+                gotHostTempo = true;
+            }
+    if (! gotHostTempo)   // standalone / host without tempo
+    {
+        if (tempoSyncMode.load (std::memory_order_relaxed) == 1 && midiClock.hasClock())
+        {
+            blockBpm = midiClock.bpm();
+            blockPlaying = midiClock.isPlaying();
+        }
+        else
+        {
+            blockBpm = internalBpm.load (std::memory_order_relaxed);
+            blockPlaying = true;   // internal clock free-runs
+        }
+    }
+    currentBpm.store (blockBpm, std::memory_order_relaxed);
+
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
 
-    // Arpeggiator transforms the note stream ahead of the synth.
+    // Below the tempo/CC layer the whole engine runs at the engine rate, which
+    // equals the host rate unless oversampling is on. Ask the message thread to
+    // rebuild the engine if the factor changed (done under the callback lock).
+    pendingOsFactor.store (1 << juce::jlimit (0, 3, (int) raw.oversampling->load()),
+                           std::memory_order_relaxed);
+
+    const int factor = currentOsFactor;
+    const int hostN = buffer.getNumSamples();
+    const int engN = hostN * factor;
+
+    // Scale MIDI into the (possibly oversampled) engine sample domain.
+    juce::MidiBuffer scaledMidi;
+    if (factor > 1)
+        for (const auto md : midi)
+            scaledMidi.addEvent (md.getMessage(), md.samplePosition * factor);
+    juce::MidiBuffer& engMidi = factor > 1 ? scaledMidi : midi;
+
+    // Arpeggiator transforms the note stream ahead of the synth (engine domain).
     {
         dsp::Arpeggiator::Params ap;
         ap.enable       = raw.arp.enable->load() >= 0.5f;
@@ -623,32 +974,34 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         ap.stutter      = raw.arp.stutter->load();
         ap.jump         = raw.arp.jump->load();
         ap.humanize     = raw.arp.humanize->load();
-        ap.bpm          = 120.0;
-        ap.sampleRate   = currentSampleRate;
+        ap.bpm             = blockBpm;
+        ap.sampleRate      = currentSampleRate;   // engine rate
+        ap.hostPlaying     = blockPlaying;
+        ap.ppqAtBlockStart = blockPpq;
 
-        if (auto* playHead = getPlayHead())
-        {
-            if (const auto position = playHead->getPosition())
-            {
-                if (const auto bpm = position->getBpm())
-                    ap.bpm = *bpm;
-                ap.hostPlaying = position->getIsPlaying();
-                if (const auto ppq = position->getPpqPosition())
-                    ap.ppqAtBlockStart = *ppq;
-            }
-        }
-
-        arp.process (midi, buffer.getNumSamples(), ap);
+        arp.process (engMidi, engN, ap);
     }
 
-    updateSharedState (buffer.getNumSamples());
-    synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
+    updateSharedState (engN);
 
-    updateFXParams();
-    fxChain.process (buffer, fxParams);
-
-    masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
-    masterGain.applyGain (buffer, buffer.getNumSamples());
+    if (factor > 1 && oversampler != nullptr)
+    {
+        // Render the engine at the oversampled rate, then decimate to host rate.
+        juce::dsp::AudioBlock<float> hostBlock (buffer);
+        auto osBlock = oversampler->processSamplesUp (hostBlock);   // silent -> upsampled
+        const int numCh = buffer.getNumChannels();
+        float* chans[2] = { osBlock.getChannelPointer (0),
+                            numCh > 1 ? osBlock.getChannelPointer (1)
+                                      : osBlock.getChannelPointer (0) };
+        juce::AudioBuffer<float> osBuf (chans, numCh, (int) osBlock.getNumSamples());
+        osBuf.clear();
+        renderEngine (osBuf, engMidi);
+        oversampler->processSamplesDown (hostBlock);   // anti-alias + decimate
+    }
+    else
+    {
+        renderEngine (buffer, engMidi);
+    }
 
     // Block-level telemetry.
     int active = 0;
@@ -662,6 +1015,22 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                                ? buffer.getMagnitude (1, 0, buffer.getNumSamples())
                                : telemetry.peakL.load (std::memory_order_relaxed),
                            std::memory_order_relaxed);
+
+    // Feed the EQ spectrum analyzer: push the master output (mono sum) into the
+    // scope ring, write index published last so the UI reads a coherent window.
+    {
+        const int n = buffer.getNumSamples();
+        const auto* l = buffer.getReadPointer (0);
+        const auto* r = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : l;
+        int w = telemetry.scopeWrite.load (std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i)
+        {
+            telemetry.scope[(size_t) w].store (0.5f * (l[i] + r[i]),
+                                               std::memory_order_relaxed);
+            w = (w + 1) & (dsp::Telemetry::scopeSize - 1);
+        }
+        telemetry.scopeWrite.store (w, std::memory_order_release);
+    }
 }
 
 juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)
@@ -718,6 +1087,21 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
     }
 
     apvts.replaceState (state);
+
+    // Standalone tempo settings ride in the state tree (not parameters).
+    internalBpm.store ((double) apvts.state.getProperty ("standaloneBpm", 120.0),
+                       std::memory_order_relaxed);
+    tempoSyncMode.store ((int) apvts.state.getProperty ("tempoSyncMode", 0),
+                         std::memory_order_relaxed);
+    fxOrderPacked.store ((juce::uint64) (juce::int64) apvts.state.getProperty (
+                             "fxOrder", (juce::int64) dsp::FXChain::defaultOrderPacked()),
+                         std::memory_order_relaxed);
+
+    const auto convIR = apvts.state.getProperty ("convIR").toString();
+    convIrPath = convIR.isEmpty() ? juce::String()
+                                  : library::fromPortable (convIR, libraryRoot).getFullPathName();
+    juce::MessageManager::callAsync ([this, f = juce::File (convIrPath)]
+                                     { fxChain.loadConvolutionIR (f); });
 
     for (int s = 0; s < params::numOscSlots; ++s)
     {

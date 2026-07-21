@@ -10,12 +10,17 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
-## Current state (2026-07-20): v1.0.3 — 11 new features built, on branch `v1.0.3`
+## Current state (2026-07-21): v1.0.3 — merged to `main`, built + signed, in smoke testing
 
-All 11 planned v1.0.3 features are implemented, unit-tested (`SPASynthTests`
-ALL PASS), and the full plugin validates (`auval` PASS, `pluginval`
-strictness-8 SUCCESS incl. parameter fuzz). Work is on branch **`v1.0.3`**
-(main stays at shipped 1.0.2); CMake version is 1.0.3. One commit per feature:
+v1.0.3 is **merged to `main`** (CMake version 1.0.3; the release merge is
+`2559c2f`). All 11 planned features plus the post-merge smoke-test refinements
+below are implemented, unit-tested (`SPASynthTests` ALL PASS), and the full
+plugin validates (`auval` PASS, `pluginval` strictness-8 SUCCESS incl. param
+fuzz). The signed + notarized macOS pkg and the CI-built Windows exe are in
+`dist/installers/` and both `dist/shopify/SPASynth-{Standard,Pro}-1.0.3/`
+folders (byte-identical across locations; library zips APFS-cloned from 1.0.2,
+which is unchanged). **NOT yet distributed** — still 1.0.3, keep iterating on it
+(don't bump) until it goes out. The 11 base features, one commit each:
 
 1. Panic button (`b31f2ab`) — stop all sound + clear stuck/latched notes.
 2. Standalone tempo (`91274c9`) — internal BPM + tap + external MIDI clock.
@@ -49,11 +54,57 @@ The **Telemetry scope ring** (post-master, 2048 pow2) feeds the EQ analyzer.
 Paraphonic gate lags one block by design. Voice-mode + oversampling params live
 in `Section::global`; the EQ bands are generated via `id::eqBand(band, key)`.
 
-**Remaining for the 1.0.3 release (needs Mike / his secrets):** bump is done;
-run `./scripts/build_release.sh` with the signing env vars for the
-signed+notarized macOS pkg, build Windows via CI, reconcile `dist/`, refresh
-`docs/shopify-listings.md`/marketing if desired, then merge `v1.0.3` -> main.
-The customer changelog section is written (`docs/CHANGELOG.md`, house style).
+**Post-merge smoke-test refinements (all on `main`, each rebuilt + re-signed):**
+- FX tab grip fix (`465afcd`) — grips were drawn as a fixed left overlay while
+  the text was centred; after a drag reorder the bar re-laid-out tight and the
+  text slid onto the grips. Reserve grip width in `getTabButtonBestWidth` + the
+  text draw for DraggableTabButton (SPASynthLookAndFeel).
+- Glide layout (`8f0da9d`) — GLIDE knob now sits left of the mode dropdown.
+- EQ interactions (`50bbce1`,`36897de`) — double-click empty to add a band /
+  double-click a node to remove (single click just selects); Cmd/Ctrl-drag a
+  node vertically for Q (anchored, Pro-Q style) in addition to the wheel; a
+  selected-node ring + a freq/gain/Q readout + an on-panel hint and tooltip.
+- Limiter scrolling meter (`4f1956e`) — replaced the static curve with a Pro-L-
+  style scrolling output waveform + amber gain-reduction from the top + live GR
+  readout, fed by a new lock-free `Telemetry` limiter ring (limOut/limGrDb, one
+  frame per block; master level w/ 0 GR when off). Bigger display, compact strip.
+- Convolve library dropdown (`7c27640`) — a "From library..." button browses
+  packs then samples (one folder scanned at a time, like the osc quick-swap).
+- Convolve waveform + shaping (`db318f6`) — pre-delay (wet gap), decay (exp IR
+  fade), damping (IR HF roll-off) added; the raw IR is kept and RESHAPED (not
+  re-read) on the 150 ms timer, reloaded via `loadImpulseResponse(buffer,...)`,
+  and re-applied after `prepare` so it survives sr/oversampling changes. New
+  `ConvolveDisplay` draws the shaped-IR envelope with the pre-delay gap.
+- FX-order randomize + limiter auto-gain (`9356c43`) — RANDOMIZE ALL shuffles
+  the chain order (gated by the FX lock group), but the limiter keeps its slot;
+  the editor re-applies the tab order on the change broadcast (`refreshAll` ->
+  `fxTabs.applyOrder`). Limiter auto-gain toggle = output makeup of `1/drive`
+  (transparent peak control; off by default).
+- Changelog kept current for all of the above (`docs/CHANGELOG.md`, house style).
+
+**Signing/CI are ready on this machine:** the Developer ID Application +
+Installer certs are in the login keychain and the `SPASYNTH_NOTARY` notary
+profile works, so the signed+notarized macOS build runs unattended. The rebuild
+loop each time a fix lands: `export SPASYNTH_CODESIGN_IDENTITY="Developer ID
+Application: Kenzora Games (7K9WY5T49S)"`, `SPASYNTH_INSTALLER_IDENTITY=
+"Developer ID Installer: Kenzora Games (7K9WY5T49S)"`, `SPASYNTH_NOTARIZE_PROFILE
+="SPASYNTH_NOTARY"`, then `./scripts/build_release.sh -` (skip library repackage
+— unchanged); push `main` to trigger Windows CI (Windows-only-on-push, no 10x
+macOS); `gh run download <id> -n spasynth-installer-Windows`; copy the pkg+exe
+into the two shopify folders; verify one-hash byte-identity + `minos 11.0` +
+`spctl` accepted. (Mike's PAT expired mid-session once — `gh auth login` fixes
+it; the PAT needs `repo` + `workflow` scopes, Actions:read is enough.)
+
+**Remaining for launch (Mike's manual steps):**
+1. **Re-private the GitHub repo** — it was made public for the Windows CI builds.
+2. **Install + smoke-test the macOS pkg** (`sudo installer -pkg … -target /`; the
+   agent can't sudo). Exercise the new surfaces: EQ node editor, FX reorder +
+   RANDOMIZE reshuffle, voice modes, oversampling, the limiter meter + auto-gain,
+   the Convolve waveform/shaping + library browser.
+3. **Windows real-DAW smoke test** — the one untested surface.
+4. **Shopify build-out** per `docs/shopify-setup-guide.md`; the 1.0.3 folders are
+   ready to attach.
+5. Marketing site / announcement when ready.
 
 ## Current state (2026-07-20): v1.0.2 — first build to the testing team
 

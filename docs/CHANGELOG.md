@@ -9,22 +9,27 @@ A big update to the effects, the voice engine, and sound quality.
 - Panic button. If a note ever gets stuck, one click stops all sound and clears
   any held or latched notes. It also responds to your host's panic control.
 - Reorderable effects. Drag the effect tabs (there is a grip handle on each one)
-  to change the order the effects run in. The chain order is saved with your
-  preset.
+  to change the order the effects run in, and the chain order is saved with your
+  preset. RANDOMIZE ALL can now shuffle the order too, and the limiter keeps its
+  place at the end of the chain.
 - Mod tab. A new modulation effect that switches between Phaser and Flanger,
   with rate (free or tempo-synced), depth, feedback, stages, and stereo spread.
 - Tremolo / Vibrato tab. Independent tremolo (amplitude) and vibrato (pitch),
   usable together, with shape, rate, depth, and stereo controls.
 - Limiter / Maximizer. A loudness stage with drive, ceiling, character modes,
-  and optional lookahead (off by default). It sits last in the chain by default.
+  optional lookahead, and auto-gain, shown on a scrolling gain-reduction meter
+  so you can see it work in real time. It sits last in the chain by default.
 - Convolve. Use any sound from your library, or your own WAV, as a convolution
-  impulse for reverbs, spaces, and creative textures. Sits alongside the reverb.
+  impulse for reverbs, spaces, and creative textures. Browse your library packs
+  right from the tab, shape the impulse with pre-delay, decay, and damping, and
+  watch it on a live waveform view.
 - Reverb algorithms. The reverb now offers Hall, Plate, Chamber, Room, and
   Spring, with pre-delay, size, decay, damping, tail modulation, and tone
   controls.
 - Parametric EQ. A new Pro-style EQ with up to 8 bands, draggable nodes (drag
-  for frequency and gain, scroll for Q, double-click to add or remove a band),
-  a live spectrum analyzer, and Clean / Modern / Vintage / Tube character modes.
+  for frequency and gain, mouse wheel or Cmd/Ctrl-drag for Q, double-click to
+  add or remove a band), a live spectrum analyzer, and Clean / Modern / Vintage
+  / Tube character modes.
 
 **New voice engine**
 

@@ -360,6 +360,10 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ id::unisonWidth, "Unison Width", Section::global,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true } });
+    p.push_back ({ id::oversampling, "Oversampling", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Off", "2x", "4x", "8x" } });
 
     for (int slot = 0; slot < numOscSlots; ++slot)
         addOscSlotParams (p, slot);

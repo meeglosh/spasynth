@@ -947,6 +947,23 @@ void ContentComponent::showSettingsMenu()
     m.addItem ("Show Keyboard", true, keyboardVisible,
                [this] { setKeyboardVisible (! keyboardVisible); });
     m.addSeparator();
+
+    // Whole-synth oversampling (Off / 2x / 4x / 8x). Off by default; higher
+    // settings cost CPU but reduce aliasing on bright/nonlinear patches.
+    if (auto* osParam = processor.getAPVTS().getParameter (params::id::oversampling))
+    {
+        const int current = (int) osParam->convertFrom0to1 (osParam->getValue());
+        juce::PopupMenu os;
+        const char* names[] = { "Off", "2x", "4x", "8x" };
+        for (int i = 0; i < 4; ++i)
+            os.addItem (names[i], true, current == i, [osParam, i]
+            {
+                osParam->setValueNotifyingHost (osParam->convertTo0to1 ((float) i));
+            });
+        m.addSubMenu ("Oversampling", os);
+    }
+
+    m.addSeparator();
     m.addItem ("Clear All MIDI Learn", [this] { processor.getMidiLearn().clearAll(); });
 
     m.showMenuAsync (juce::PopupMenu::Options()

@@ -36,6 +36,7 @@ SPASynthProcessor::SPASynthProcessor()
     raw.ampDecay = apvts.getRawParameterValue (params::id::ampDecay);
     raw.ampSustain = apvts.getRawParameterValue (params::id::ampSustain);
     raw.ampRelease = apvts.getRawParameterValue (params::id::ampRelease);
+    raw.oversampling = apvts.getRawParameterValue (params::id::oversampling);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
     raw.filter2Enable = apvts.getRawParameterValue (params::id::filter2Enable);
@@ -241,7 +242,7 @@ SPASynthProcessor::SPASynthProcessor()
             weak->refreshLibrary();
     });
 
-    startTimer (1000);  // purges retired wavetables
+    startTimer (150);  // purges retired wavetables; applies oversampling changes
 }
 
 SPASynthProcessor::~SPASynthProcessor()
@@ -251,9 +252,20 @@ SPASynthProcessor::~SPASynthProcessor()
 
 void SPASynthProcessor::timerCallback()
 {
-    // Apply any lookahead-limiter latency change to the host (message thread).
-    if (const int lat = desiredLatency.load (std::memory_order_relaxed);
-        lat != getLatencySamples())
+    // Apply a pending oversampling-factor change: rebuild the engine at the new
+    // rate under the callback lock so no processBlock touches it mid-rebuild.
+    if (const int pf = pendingOsFactor.load (std::memory_order_relaxed);
+        pf != currentOsFactor)
+    {
+        const juce::ScopedLock sl (getCallbackLock());
+        rebuildOversampling (pf);
+    }
+
+    // Report latency: the limiter's lookahead (engine samples -> host) plus the
+    // oversampler's own near-zero IIR latency.
+    const int lat = desiredLatency.load (std::memory_order_relaxed) / juce::jmax (1, currentOsFactor)
+                  + osLatencyHost;
+    if (lat != getLatencySamples())
         setLatencySamples (lat);
 
     // Anything retired more than one timer period ago can no longer be in
@@ -490,19 +502,109 @@ juce::String SPASynthProcessor::getWavetableError (int slot) const
 
 void SPASynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    currentSampleRate = sampleRate;
-    synth.setCurrentPlaybackSampleRate (sampleRate);
-    arp.prepare (sampleRate);
-    midiClock.prepare (sampleRate);
-    fxChain.prepare (sampleRate, samplesPerBlock);
+    hostSampleRate = sampleRate;
+    hostBlockSize = samplesPerBlock;
+    midiClock.prepare (sampleRate);   // tempo detection stays in the host domain
 
-    paraEnv.setSampleRate (sampleRate);
+    const int factor = 1 << juce::jlimit (0, 3, (int) raw.oversampling->load());
+    currentOsFactor = factor;
+    pendingOsFactor.store (factor, std::memory_order_relaxed);
+    prepareEngine (sampleRate * factor, samplesPerBlock * factor);
+
+    if (factor > 1)
+    {
+        oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, (size_t) juce::roundToInt (std::log2 ((double) factor)),
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false, false);
+        oversampler->initProcessing ((size_t) samplesPerBlock);
+        oversampler->reset();
+        osLatencyHost = (int) std::ceil (oversampler->getLatencyInSamples());
+    }
+    else
+    {
+        oversampler.reset();
+        osLatencyHost = 0;
+    }
+}
+
+// All rate-dependent engine setup, at the (possibly oversampled) engine rate.
+void SPASynthProcessor::prepareEngine (double engineRate, int engineBlock)
+{
+    currentSampleRate = engineRate;
+    synth.setCurrentPlaybackSampleRate (engineRate);
+    arp.prepare (engineRate);
+    fxChain.prepare (engineRate, engineBlock);
+
+    paraEnv.setSampleRate (engineRate);
     paraEnv.reset();
     paraGateWasOn = false;
-    paraEnvBuf.setSize (1, juce::jmax (1, samplesPerBlock), false, false, true);
-    masterGain.reset (sampleRate, 0.02);
+    paraEnvBuf.setSize (1, juce::jmax (1, engineBlock), false, false, true);
+    masterGain.reset (engineRate, 0.02);
     masterGain.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+}
+
+// Swap the oversampling factor (message thread; processing suspended by caller).
+void SPASynthProcessor::rebuildOversampling (int factor)
+{
+    factor = 1 << juce::jlimit (0, 3, (int) std::round (std::log2 ((double) factor)));
+    currentOsFactor = factor;
+    prepareEngine (hostSampleRate * factor, hostBlockSize * factor);
+
+    if (factor > 1)
+    {
+        oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, (size_t) juce::roundToInt (std::log2 ((double) factor)),
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false, false);
+        oversampler->initProcessing ((size_t) hostBlockSize);
+        oversampler->reset();
+        osLatencyHost = (int) std::ceil (oversampler->getLatencyInSamples());
+    }
+    else
+    {
+        oversampler.reset();
+        osLatencyHost = 0;
+    }
+}
+
+// Paraphonic pre-pass + voices + FX + master, at whatever rate `buffer` is
+// sized for. Called on the host buffer directly, or on the oversampled buffer.
+void SPASynthProcessor::renderEngine (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    // Paraphonic: advance one shared amp envelope from the collective key count
+    // and render it per-sample for the voices to read this block. Gated on the
+    // key count from the previous block, so voices attack one block after the
+    // first key lands (imperceptible, and keeps this a simple pre-pass).
+    if (shared.voiceMode == params::VoiceMode::paraphonic)
+    {
+        const bool anyKey = glideState.keysDown > 0;
+        if (anyKey != paraGateWasOn)
+        {
+            if (anyKey) paraEnv.noteOn(); else paraEnv.noteOff();
+            paraGateWasOn = anyKey;
+        }
+        paraEnv.setParameters ({ raw.ampAttack->load(), raw.ampDecay->load(),
+                                 raw.ampSustain->load(), raw.ampRelease->load() });
+        const int n = buffer.getNumSamples();
+        auto* pe = paraEnvBuf.getWritePointer (0);
+        for (int i = 0; i < n; ++i) pe[i] = paraEnv.getNextSample();
+        shared.paraEnvBlock = pe;
+        shared.paraGateActive = anyKey;
+    }
+    else
+    {
+        shared.paraEnvBlock = nullptr;
+        shared.paraGateActive = false;
+        if (paraGateWasOn) { paraEnv.reset(); paraGateWasOn = false; }
+    }
+
+    synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
+
+    updateFXParams();
+    fxChain.process (buffer, fxParams);
+
+    masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
+    masterGain.applyGain (buffer, buffer.getNumSamples());
 }
 
 void SPASynthProcessor::setInternalBpm (double bpm)
@@ -839,7 +941,24 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);
 
-    // Arpeggiator transforms the note stream ahead of the synth.
+    // Below the tempo/CC layer the whole engine runs at the engine rate, which
+    // equals the host rate unless oversampling is on. Ask the message thread to
+    // rebuild the engine if the factor changed (done under the callback lock).
+    pendingOsFactor.store (1 << juce::jlimit (0, 3, (int) raw.oversampling->load()),
+                           std::memory_order_relaxed);
+
+    const int factor = currentOsFactor;
+    const int hostN = buffer.getNumSamples();
+    const int engN = hostN * factor;
+
+    // Scale MIDI into the (possibly oversampled) engine sample domain.
+    juce::MidiBuffer scaledMidi;
+    if (factor > 1)
+        for (const auto md : midi)
+            scaledMidi.addEvent (md.getMessage(), md.samplePosition * factor);
+    juce::MidiBuffer& engMidi = factor > 1 ? scaledMidi : midi;
+
+    // Arpeggiator transforms the note stream ahead of the synth (engine domain).
     {
         dsp::Arpeggiator::Params ap;
         ap.enable       = raw.arp.enable->load() >= 0.5f;
@@ -856,49 +975,33 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         ap.jump         = raw.arp.jump->load();
         ap.humanize     = raw.arp.humanize->load();
         ap.bpm             = blockBpm;
-        ap.sampleRate      = currentSampleRate;
+        ap.sampleRate      = currentSampleRate;   // engine rate
         ap.hostPlaying     = blockPlaying;
         ap.ppqAtBlockStart = blockPpq;
 
-        arp.process (midi, buffer.getNumSamples(), ap);
+        arp.process (engMidi, engN, ap);
     }
 
-    updateSharedState (buffer.getNumSamples());
+    updateSharedState (engN);
 
-    // Paraphonic: advance one shared amp envelope from the collective key count
-    // and render it per-sample for the voices to read this block. Gated on the
-    // key count from the previous block, so voices attack one block after the
-    // first key lands (imperceptible, and keeps this a simple pre-pass).
-    if (shared.voiceMode == params::VoiceMode::paraphonic)
+    if (factor > 1 && oversampler != nullptr)
     {
-        const bool anyKey = glideState.keysDown > 0;
-        if (anyKey != paraGateWasOn)
-        {
-            if (anyKey) paraEnv.noteOn(); else paraEnv.noteOff();
-            paraGateWasOn = anyKey;
-        }
-        paraEnv.setParameters ({ raw.ampAttack->load(), raw.ampDecay->load(),
-                                 raw.ampSustain->load(), raw.ampRelease->load() });
-        const int n = buffer.getNumSamples();
-        auto* pe = paraEnvBuf.getWritePointer (0);
-        for (int i = 0; i < n; ++i) pe[i] = paraEnv.getNextSample();
-        shared.paraEnvBlock = pe;
-        shared.paraGateActive = anyKey;
+        // Render the engine at the oversampled rate, then decimate to host rate.
+        juce::dsp::AudioBlock<float> hostBlock (buffer);
+        auto osBlock = oversampler->processSamplesUp (hostBlock);   // silent -> upsampled
+        const int numCh = buffer.getNumChannels();
+        float* chans[2] = { osBlock.getChannelPointer (0),
+                            numCh > 1 ? osBlock.getChannelPointer (1)
+                                      : osBlock.getChannelPointer (0) };
+        juce::AudioBuffer<float> osBuf (chans, numCh, (int) osBlock.getNumSamples());
+        osBuf.clear();
+        renderEngine (osBuf, engMidi);
+        oversampler->processSamplesDown (hostBlock);   // anti-alias + decimate
     }
     else
     {
-        shared.paraEnvBlock = nullptr;
-        shared.paraGateActive = false;
-        if (paraGateWasOn) { paraEnv.reset(); paraGateWasOn = false; }
+        renderEngine (buffer, engMidi);
     }
-
-    synth.renderNextBlock (buffer, midi, 0, buffer.getNumSamples());
-
-    updateFXParams();
-    fxChain.process (buffer, fxParams);
-
-    masterGain.setTargetValue (juce::Decibels::decibelsToGain (raw.masterGain->load(), -60.0f));
-    masterGain.applyGain (buffer, buffer.getNumSamples());
 
     // Block-level telemetry.
     int active = 0;

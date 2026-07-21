@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_dsp/juce_dsp.h>
 
 #include "params/ParameterRegistry.h"
 #include "dsp/SPASynthVoice.h"
@@ -170,6 +171,20 @@ private:
     juce::ADSR paraEnv;
     juce::AudioBuffer<float> paraEnvBuf;
     bool paraGateWasOn = false;
+
+    // Whole-synth oversampling: the entire engine (arp, voices, FX, master) runs
+    // at hostRate * factor into an oversampled block, then a near-zero-latency
+    // IIR polyphase filter decimates back to the host rate. Off by default.
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    int currentOsFactor = 1;
+    double hostSampleRate = 48000.0;
+    int hostBlockSize = 512;
+    int osLatencyHost = 0;
+    std::atomic<int> pendingOsFactor { 1 };
+
+    void prepareEngine (double engineRate, int engineBlock);   // rate-dependent setup
+    void rebuildOversampling (int factor);                     // message thread only
+    void renderEngine (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
 
     double currentSampleRate = 44100.0;
@@ -321,6 +336,7 @@ private:
         std::atomic<float>* ampDecay = nullptr;
         std::atomic<float>* ampSustain = nullptr;
         std::atomic<float>* ampRelease = nullptr;
+        std::atomic<float>* oversampling = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;
         std::atomic<float>* filter2Enable = nullptr;

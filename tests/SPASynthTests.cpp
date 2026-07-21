@@ -966,6 +966,45 @@ namespace
         }
     }
 
+    // Whole-synth oversampling must render correctly-levelled audio at every
+    // factor (the up/render/decimate path is easy to get silent or blown up).
+    // The factor is picked up at prepareToPlay, so we prepare fresh per factor.
+    static void oversamplingTest()
+    {
+        std::cout << "oversamplingTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+
+        auto renderPeak = [&] (int osIndex)
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::oversampling, (float) osIndex);
+            proc.prepareToPlay (sr, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, block);
+            float peak = 0.0f;
+            for (int b = 0; b < 24; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer m = (b == 0 ? midi : juce::MidiBuffer());
+                proc.processBlock (buf, m);
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+            }
+            return peak;
+        };
+
+        const float off = renderPeak (0);
+        const float os2 = renderPeak (1);
+        const float os4 = renderPeak (2);
+        const float os8 = renderPeak (3);
+        expect (off > 0.02f, "renders at 1x (" + juce::String (off) + ")");
+        expect (os2 > 0.02f && os2 < off * 2.0f + 0.1f, "2x level matches 1x");
+        expect (os4 > 0.02f && os4 < off * 2.0f + 0.1f, "4x level matches 1x");
+        expect (os8 > 0.02f && os8 < off * 2.0f + 0.1f, "8x level matches 1x");
+    }
+
     static void fxDelayReverbTest()
     {
         std::cout << "fxDelayReverbTest\n";
@@ -2392,6 +2431,7 @@ int main (int argc, char* argv[])
     reverbStabilityTest();
     parametricEqTest();
     voiceModeTest();
+    oversamplingTest();
     panicTest();
     midiClockTest();
     fxOrderTest();

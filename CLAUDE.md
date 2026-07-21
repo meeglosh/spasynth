@@ -10,6 +10,51 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-07-20): v1.0.3 — 11 new features built, on branch `v1.0.3`
+
+All 11 planned v1.0.3 features are implemented, unit-tested (`SPASynthTests`
+ALL PASS), and the full plugin validates (`auval` PASS, `pluginval`
+strictness-8 SUCCESS incl. parameter fuzz). Work is on branch **`v1.0.3`**
+(main stays at shipped 1.0.2); CMake version is 1.0.3. One commit per feature:
+
+1. Panic button (`b31f2ab`) — stop all sound + clear stuck/latched notes.
+2. Standalone tempo (`91274c9`) — internal BPM + tap + external MIDI clock.
+3. FX reorder foundation (`f1de48d`) — drag tabs -> chain order (packed atomic).
+4. Mod tab (`4d6a9b3`) — Phaser/Flanger, reorderable.
+5. Trem/Vib tab (`21b2548`) — independent tremolo + vibrato, reorderable.
+6. Limiter/Maximizer (`aadd140`) — reorderable, defaults last, optional lookahead.
+7. Convolve (`f4e12a5`) — library SFX / user WAV as impulse (juce::dsp::Convolution).
+8. FDN reverb (`748d2c3`) — 4-line FDN, Hall/Plate/Chamber/Room/Spring; ALSO
+   fixed a real reorder desync bug (bar moveTab moved only buttons, not the
+   TabbedComponent content array -> selecting a tab showed the wrong panel).
+9. Parametric EQ — DSP core (`b724b0b`, 8-band hand-rolled RBJ biquads, RT-safe,
+   character modes) + interactive Pro-Q editor (`8918ebd`, draggable nodes,
+   wheel=Q, double-click add/remove, live FFT analyzer via a Telemetry scope ring).
+10. Voice modes (`06070f0`) — Poly/Mono/Duo/Paraphonic/Unison in a rewritten
+    `GlideSynthesiser` (note-stack + priority; unison via direct startVoice with
+    per-voice detune/pan; paraphonic = shared amp env rendered by the processor,
+    per-voice `paraSawGate` latch). Header VOICE call-out. Also fixed a -Wswitch
+    gap in the randomizer lock-group map (the four new FX sections).
+11. Oversampling (`3e0fa5f`) — whole-synth Off/2x/4x/8x. `processBlock`'s engine
+    section factored into `renderEngine()`; runs on the host buffer or an
+    oversampled block (juce::dsp::Oversampling IIR polyphase), MIDI scaled to the
+    engine domain, tempo/CC layer stays host-domain. Factor swap on the message
+    thread under `getCallbackLock()` (purge timer now 150 ms). Settings-menu item.
+
+New invariants worth remembering: **FXChain::Module + numModules(9) + the
+default-order array + the fxOrder packed atomic are load-bearing** (order
+serialized per preset). **ParametricEQ band choice orders (types) and the
+VoiceMode/NotePriority/reverb-mode/EQ-character choice orders are append-only.**
+The **Telemetry scope ring** (post-master, 2048 pow2) feeds the EQ analyzer.
+Paraphonic gate lags one block by design. Voice-mode + oversampling params live
+in `Section::global`; the EQ bands are generated via `id::eqBand(band, key)`.
+
+**Remaining for the 1.0.3 release (needs Mike / his secrets):** bump is done;
+run `./scripts/build_release.sh` with the signing env vars for the
+signed+notarized macOS pkg, build Windows via CI, reconcile `dist/`, refresh
+`docs/shopify-listings.md`/marketing if desired, then merge `v1.0.3` -> main.
+The customer changelog section is written (`docs/CHANGELOG.md`, house style).
+
 ## Current state (2026-07-20): v1.0.2 — first build to the testing team
 
 v1.0.2 is the build Mike is sending to the partner testers (Paul, Phil) — the

@@ -797,6 +797,8 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
     p.push_back ({ fx::limLookahead, "Lim Lookahead", Section::fxLimiter,
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ fx::limAutoGain, "Lim Auto Gain", Section::fxLimiter,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
 
     // FX Convolve (SFX / user WAV as impulse; IR path stored in the state tree).
     p.push_back ({ fx::convEnable, "Conv On", Section::fxConvolve,

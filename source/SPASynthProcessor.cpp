@@ -207,6 +207,7 @@ SPASynthProcessor::SPASynthProcessor()
         rf.limStereoLink  = apvts.getRawParameterValue (fx::limStereoLink);
         rf.limTruePeak    = apvts.getRawParameterValue (fx::limTruePeak);
         rf.limLookahead   = apvts.getRawParameterValue (fx::limLookahead);
+        rf.limAutoGain    = apvts.getRawParameterValue (fx::limAutoGain);
 
         rf.convEnable     = apvts.getRawParameterValue (fx::convEnable);
         rf.convMix        = apvts.getRawParameterValue (fx::convMix);
@@ -451,6 +452,27 @@ void SPASynthProcessor::randomizeAll()
             if (auto* param = apvts.getParameter (params::id::filter2Cutoff))
                 param->setValueNotifyingHost (
                     param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
+    }
+
+    // FX chain order joins RANDOMIZE ALL (respecting the FX lock), but the
+    // limiter keeps its current slot so it stays where the user put it (last by
+    // default) rather than being shuffled into the middle of the chain.
+    const bool fxUnlocked = (lockedMask & (1u << (int) params::LockGroup::fx)) == 0;
+    if (fxUnlocked)
+    {
+        auto order = getFxOrder();
+        const int limiterId = (int) dsp::FXChain::Module::limiter;
+        const int limiterPos = order.indexOf (limiterId);
+        juce::Array<int> others;
+        for (int id : order) if (id != limiterId) others.add (id);
+        for (int i = others.size() - 1; i > 0; --i)
+            std::swap (others.getReference (i), others.getReference (rng.nextInt (i + 1)));
+
+        juce::Array<int> shuffled;
+        int oi = 0;
+        for (int pos = 0; pos < order.size(); ++pos)
+            shuffled.add (pos == limiterPos ? limiterId : others[oi++]);
+        setFxOrder (shuffled);
     }
 
     sendChangeMessage();
@@ -749,6 +771,7 @@ void SPASynthProcessor::updateFXParams()
     p.limStereoLink  = rf.limStereoLink->load();
     p.limTruePeak    = rf.limTruePeak->load() >= 0.5f;
     p.limLookahead   = rf.limLookahead->load() >= 0.5f;
+    p.limAutoGain    = rf.limAutoGain->load() >= 0.5f;
 
     p.convEnable   = rf.convEnable->load() >= 0.5f;
     p.convMix      = rf.convMix->load();

@@ -873,6 +873,10 @@ void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void ContentComponent::refreshAll()
 {
+    // Keep the FX tab order in sync with the processor (e.g. after RANDOMIZE ALL
+    // shuffles the chain). No-op when it already matches.
+    fxTabs.applyOrder (processor.getFxOrder());
+
     const auto& t = currentTheme();
 
     wildnessLabel.setColour (juce::Label::textColourId, t.textSecondary);

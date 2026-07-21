@@ -36,6 +36,7 @@ public:
         float stereoLink = 1.0f;    // 0..1
         bool truePeak = false;
         bool lookahead = false;
+        bool autoGain = false;      // compensate the drive at the output
     };
 
     int lookaheadSamples() const { return (int) (0.0015 * sampleRate); }   // 1.5 ms
@@ -60,6 +61,9 @@ public:
         const float relCoef = std::exp (-1.0f / (float) (sampleRate * relMs * 0.001f));
         const float atkCoef = la > 0 ? std::exp (-1.0f / (float) juce::jmax (1, la)) : 0.0f;
         const float link = juce::jlimit (0.0f, 1.0f, p.stereoLink);
+        // Auto-gain undoes the input drive at the output, so the drive knob
+        // controls how hard it limits without changing the overall level.
+        const float outGain = p.autoGain && drive > 0.0f ? 1.0f / drive : 1.0f;
 
         float* L = buffer.getWritePointer (0);
         float* R = numCh > 1 ? buffer.getWritePointer (1) : L;
@@ -92,8 +96,8 @@ public:
                 oL = std::tanh (oL / ceiling) * ceiling;
                 oR = std::tanh (oR / ceiling) * ceiling;
             }
-            L[i] = juce::jlimit (-ceiling, ceiling, oL);
-            if (numCh > 1) R[i] = juce::jlimit (-ceiling, ceiling, oR);
+            L[i] = juce::jlimit (-ceiling, ceiling, oL) * outGain;
+            if (numCh > 1) R[i] = juce::jlimit (-ceiling, ceiling, oR) * outGain;
 
             gmin = juce::jmin (gmin, gr);
             opk = juce::jmax (opk, std::abs (L[i]), numCh > 1 ? std::abs (R[i]) : 0.0f);

@@ -376,6 +376,7 @@ namespace id
         inline constexpr const char* limStereoLink  = "fxLim.stereoLink";
         inline constexpr const char* limTruePeak    = "fxLim.truePeak";
         inline constexpr const char* limLookahead   = "fxLim.lookahead";
+        inline constexpr const char* limAutoGain     = "fxLim.autoGain";
 
         inline constexpr const char* convEnable   = "fxConv.enable";
         inline constexpr const char* convMix      = "fxConv.mix";

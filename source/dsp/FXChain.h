@@ -134,6 +134,7 @@ public:
         float limStereoLink = 1.0f;
         bool limTruePeak = false;
         bool limLookahead = false;
+        bool limAutoGain = false;
 
         bool convEnable = false;
         float convMix = 0.3f;

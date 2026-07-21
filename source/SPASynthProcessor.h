@@ -437,6 +437,7 @@ private:
             std::atomic<float>* limStereoLink = nullptr;
             std::atomic<float>* limTruePeak = nullptr;
             std::atomic<float>* limLookahead = nullptr;
+            std::atomic<float>* limAutoGain = nullptr;
 
             std::atomic<float>* convEnable = nullptr;
             std::atomic<float>* convMix = nullptr;

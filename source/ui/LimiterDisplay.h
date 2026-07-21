@@ -135,18 +135,21 @@ public:
           release (apvts, params::id::fx::limRelease, "Release"),
           link    (apvts, params::id::fx::limStereoLink, "Link"),
           character (apvts, params::id::fx::limCharacter),
-          autoRel (apvts, params::id::fx::limAutoRelease, "AUTO"),
+          autoRel (apvts, params::id::fx::limAutoRelease, "AUTO REL"),
           truePeak (apvts, params::id::fx::limTruePeak, "TRUE PK"),
-          lookahead (apvts, params::id::fx::limLookahead, "LOOK")
+          lookahead (apvts, params::id::fx::limLookahead, "LOOK"),
+          autoGain (apvts, params::id::fx::limAutoGain, "AUTO GAIN")
     {
         title.setText ("LIMITER", juce::dontSendNotification);
         title.setFont (metrics::sectionFont());
         title.setColour (juce::Label::textColourId, currentTheme().accent);
+        autoGain.button.setTooltip ("Compensate the drive at the output, so drive "
+                                    "controls how hard it limits without raising the level");
         addAndMakeVisible (title);
         addAndMakeVisible (display);
         for (auto* c : std::initializer_list<juce::Component*> {
                  &enable, &drive, &ceiling, &release, &link, &character,
-                 &autoRel, &truePeak, &lookahead })
+                 &autoRel, &truePeak, &lookahead, &autoGain })
             addAndMakeVisible (*c);
     }
 
@@ -163,22 +166,23 @@ public:
         auto strip = r.removeFromBottom (58);
         display.setBounds (r.reduced (0, 2));
 
-        enable.setBounds (strip.removeFromLeft (54).reduced (2, 20));
-        strip.removeFromLeft (6);
+        enable.setBounds (strip.removeFromLeft (50).reduced (2, 20));
+        strip.removeFromLeft (4);
         for (auto* k : { &drive, &ceiling, &release, &link })
         {
-            k->setBounds (strip.removeFromLeft (58));
+            k->setBounds (strip.removeFromLeft (56));
             strip.removeFromLeft (2);
         }
         strip.removeFromLeft (6);
-        auto toggles = strip.removeFromRight (juce::jmin (240, strip.getWidth()));
-        auto tRow = toggles.removeFromTop (toggles.getHeight() / 2 + 2);
-        autoRel.setBounds (tRow.removeFromLeft (tRow.getWidth() / 2).reduced (2, 2));
-        truePeak.setBounds (tRow.reduced (2, 2));
-        lookahead.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (2, 2));
-        character.setBounds (toggles.reduced (2, 3));
-        // Any gap between the knobs and the toggles is intentional breathing room.
-        juce::ignoreUnused (strip);
+        character.setBounds (strip.removeFromRight (92).reduced (2, 18));
+        strip.removeFromRight (6);
+        // 2 x 2 toggle grid in what remains.
+        auto toggles = strip;
+        auto tTop = toggles.removeFromTop (toggles.getHeight() / 2);
+        autoRel.setBounds  (tTop.removeFromLeft (tTop.getWidth() / 2).reduced (2, 1));
+        truePeak.setBounds (tTop.reduced (2, 1));
+        lookahead.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (2, 1));
+        autoGain.setBounds (toggles.reduced (2, 1));
     }
 
 private:
@@ -187,7 +191,7 @@ private:
     Toggle enable;
     Knob drive, ceiling, release, link;
     Choice character;
-    Toggle autoRel, truePeak, lookahead;
+    Toggle autoRel, truePeak, lookahead, autoGain;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LimiterPanel)
 };

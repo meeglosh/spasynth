@@ -252,6 +252,7 @@ void FXChain::processLimiter (juce::AudioBuffer<float>& buffer, const Params& p)
     lp.stereoLink  = p.limStereoLink;
     lp.truePeak    = p.limTruePeak;
     lp.lookahead   = p.limLookahead;
+    lp.autoGain    = p.limAutoGain;
     limiterEffect.process (buffer, lp);
 }
 

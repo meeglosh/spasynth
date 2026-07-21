@@ -324,9 +324,12 @@ public:
         : processor (p),
           inner (p.getAPVTS(), FXDisplay::Kind::reverb, params::Section::fxConvolve, "Convolve")
     {
-        irButton.setTooltip ("Choose an impulse from your library or any WAV");
+        libraryButton.setTooltip ("Pick an impulse from a pack in your loaded library");
+        libraryButton.onClick = [this] { chooseLibraryPack(); };
+        irButton.setTooltip ("Load any WAV file as an impulse");
         irButton.onClick = [this] { chooseIR(); };
         updateLabel();
+        addAndMakeVisible (libraryButton);
         addAndMakeVisible (irButton);
         addAndMakeVisible (inner);
         processor.addChangeListener (this);
@@ -337,7 +340,10 @@ public:
     void resized() override
     {
         auto r = getLocalBounds();
-        irButton.setBounds (r.removeFromTop (26).reduced (6, 3));
+        auto top = r.removeFromTop (26).reduced (6, 3);
+        libraryButton.setBounds (top.removeFromLeft (130));
+        top.removeFromLeft (5);
+        irButton.setBounds (top);
         inner.setBounds (r);
     }
 
@@ -347,7 +353,47 @@ private:
     void updateLabel()
     {
         const auto n = processor.getConvolutionIRName();
-        irButton.setButtonText (n.isEmpty() ? "Load impulse (SFX / WAV)..." : "IR: " + n);
+        libraryButton.setButtonText ("From library...");
+        irButton.setButtonText (n.isEmpty() ? "Load WAV..." : "IR: " + n);
+    }
+
+    // Two-step browse (one folder scanned at a time, so it stays snappy on a
+    // big library): pick a pack, then a sample from it.
+    void chooseLibraryPack()
+    {
+        const auto root = library::findLibraryRoot();
+        if (! root.isDirectory()) return;
+        auto packs = root.findChildFiles (juce::File::findDirectories, false);
+        std::sort (packs.begin(), packs.end(), [] (const juce::File& a, const juce::File& b)
+                   { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
+
+        juce::PopupMenu menu;
+        for (const auto& folder : packs)
+        {
+            const auto f = folder;
+            menu.addItem (folder.getFileName(), [this, f] { chooseLibrarySample (f); });
+        }
+        if (menu.getNumItems() == 0)
+            menu.addItem ("(no library found)", false, false, nullptr);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
+    }
+
+    void chooseLibrarySample (const juce::File& packFolder)
+    {
+        auto wavs = packFolder.findChildFiles (juce::File::findFiles, false, "*.wav;*.WAV");
+        std::sort (wavs.begin(), wavs.end(), [] (const juce::File& a, const juce::File& b)
+                   { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
+
+        juce::PopupMenu menu;
+        for (const auto& wav : wavs)
+        {
+            const auto f = wav;
+            menu.addItem (wav.getFileNameWithoutExtension(),
+                          [this, f] { processor.loadConvolutionIR (f); updateLabel(); });
+        }
+        if (menu.getNumItems() == 0)
+            menu.addItem ("(no samples in this pack)", false, false, nullptr);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
     }
 
     void chooseIR()
@@ -364,6 +410,7 @@ private:
     }
 
     SPASynthProcessor& processor;
+    juce::TextButton libraryButton { "library" };
     juce::TextButton irButton { "browser" };
     FXPanel inner;
     std::unique_ptr<juce::FileChooser> fileChooser;

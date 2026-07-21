@@ -829,10 +829,11 @@ void ContentComponent::resized()
     right.removeFromRight (4);
     panicButton.setBounds (right.removeFromRight (22).reduced (0, 5));   // by the meter
     accentButton.setBounds (right.removeFromRight (32).reduced (2, 6));
+    // Glide: knob first (left), then the behavior dropdown (right).
+    glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
     auto glideArea = right.removeFromRight (44);
     glideLabel.setBounds (glideArea.removeFromBottom (11));
     glideSlider.setBounds (glideArea);
-    glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));
     right.removeFromRight (6);
     voiceButton.setBounds (right.removeFromRight (46).reduced (0, 5));
     right.removeFromRight (6);

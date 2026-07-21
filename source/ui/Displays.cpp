@@ -1,5 +1,6 @@
 #include "Displays.h"
 #include "../SPASynthProcessor.h"
+#include "../dsp/ParametricEQ.h"
 
 namespace spa::ui
 {
@@ -599,8 +600,19 @@ juce::StringArray FXDisplay::watchedFor (Kind kind)
                                         fx::delayMix };
         case Kind::reverb:     return { fx::reverbEnable, fx::reverbSize, fx::reverbDamping,
                                         fx::reverbMix };
-        case Kind::eq:         return { fx::eqEnable, fx::eqLowGain, fx::eqMidFreq,
-                                        fx::eqMidGain, fx::eqHighGain };
+        case Kind::eq:
+        {
+            juce::StringArray ids { fx::eqEnable, fx::eqCharacter };
+            for (int b = 0; b < 8; ++b)
+            {
+                ids.add (params::id::eqBand (b, fx::eqband::enable));
+                ids.add (params::id::eqBand (b, fx::eqband::type));
+                ids.add (params::id::eqBand (b, fx::eqband::freq));
+                ids.add (params::id::eqBand (b, fx::eqband::gain));
+                ids.add (params::id::eqBand (b, fx::eqband::q));
+            }
+            return ids;
+        }
     }
     return {};
 }
@@ -756,29 +768,31 @@ void FXDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
         case Kind::eq:
         {
-            // Composite response of the three bands, +/-12 dB.
-            const auto low = value (fx::eqLowGain);
-            const auto midFreq = value (fx::eqMidFreq);
-            const auto mid = value (fx::eqMidGain);
-            const auto high = value (fx::eqHighGain);
+            // Composite response of the 8 active parametric bands, +/-24 dB,
+            // computed by the same function the DSP uses.
+            std::array<dsp::ParametricEQ::Band, 8> bands;
+            for (int b = 0; b < 8; ++b)
+            {
+                auto& bd = bands[(size_t) b];
+                bd.enabled = value (params::id::eqBand (b, fx::eqband::enable)) >= 0.5f;
+                bd.type    = (int) value (params::id::eqBand (b, fx::eqband::type));
+                bd.freq    = value (params::id::eqBand (b, fx::eqband::freq));
+                bd.gainDb  = value (params::id::eqBand (b, fx::eqband::gain));
+                bd.q       = value (params::id::eqBand (b, fx::eqband::q));
+            }
 
             g.setColour (t.outline.withAlpha (0.7f));
             g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
 
             juce::Path curve;
-            constexpr int steps = 120;
+            constexpr int steps = 160;
             for (int i = 0; i <= steps; ++i)
             {
                 const auto freq = 20.0f * std::pow (1000.0f, (float) i / steps);
-                const auto lowShelf = low / (1.0f + std::pow (freq / 120.0f, 2.0f));
-                const auto highShelf = high * (std::pow (freq / 6000.0f, 2.0f)
-                                               / (1.0f + std::pow (freq / 6000.0f, 2.0f)));
-                const auto logRatio = std::log (freq / juce::jmax (20.0f, midFreq));
-                const auto peak = mid * std::exp (-(logRatio * logRatio) / 0.5f);
-                const auto dB = juce::jlimit (-14.0f, 14.0f, lowShelf + peak + highShelf);
-
+                const auto dB = juce::jlimit (-24.0f, 24.0f,
+                    dsp::ParametricEQ::magnitudeDb (bands, freq, 48000.0));
                 const auto x = area.getX() + area.getWidth() * (float) i / steps;
-                const auto y = juce::jmap (dB, -14.0f, 14.0f, area.getBottom(), area.getY());
+                const auto y = juce::jmap (dB, -24.0f, 24.0f, area.getBottom(), area.getY());
                 if (i == 0)
                     curve.startNewSubPath (x, y);
                 else

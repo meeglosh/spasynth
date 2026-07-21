@@ -351,10 +351,16 @@ private:
             std::atomic<float>* reverbWidth = nullptr;
             std::atomic<float>* reverbMix = nullptr;
             std::atomic<float>* eqEnable = nullptr;
-            std::atomic<float>* eqLowGain = nullptr;
-            std::atomic<float>* eqMidFreq = nullptr;
-            std::atomic<float>* eqMidGain = nullptr;
-            std::atomic<float>* eqHighGain = nullptr;
+            std::atomic<float>* eqCharacter = nullptr;
+            struct EqBandPtrs
+            {
+                std::atomic<float>* enable = nullptr;
+                std::atomic<float>* type = nullptr;
+                std::atomic<float>* freq = nullptr;
+                std::atomic<float>* gain = nullptr;
+                std::atomic<float>* q = nullptr;
+            };
+            std::array<EqBandPtrs, 8> eqBands {};
 
             std::atomic<float>* modEnable = nullptr;
             std::atomic<float>* modType = nullptr;

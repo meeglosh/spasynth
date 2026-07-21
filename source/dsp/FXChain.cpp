@@ -29,11 +29,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
 
     reverb.prepare (sampleRate, maxBlockSize);
 
-    for (auto& f : eqLow)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    for (auto& f : eqMid)  f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    for (auto& f : eqHigh) f.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 1 });
-    lastLowGain = lastMidGain = lastHighGain = 1.0e9f;
-    lastMidFreq = 0.0f;
+    eq.prepare (sampleRate, maxBlockSize);
 
     reset();
 }
@@ -49,9 +45,7 @@ void FXChain::reset()
     convolution.reset();
     delayBuffer.clear();
     reverb.reset();
-    for (auto& f : eqLow)  f.reset();
-    for (auto& f : eqMid)  f.reset();
-    for (auto& f : eqHigh) f.reset();
+    eq.reset();
 }
 
 double FXChain::tailSeconds (const Params& p) const
@@ -306,38 +300,9 @@ void FXChain::loadConvolutionIR (const juce::File& irFile)
 
 void FXChain::processEQ (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    if (! juce::approximatelyEqual (p.eqLowGainDb, lastLowGain)
-        || ! juce::approximatelyEqual (p.eqMidFreq, lastMidFreq)
-        || ! juce::approximatelyEqual (p.eqMidGainDb, lastMidGain)
-        || ! juce::approximatelyEqual (p.eqHighGainDb, lastHighGain))
-    {
-        lastLowGain = p.eqLowGainDb;
-        lastMidFreq = p.eqMidFreq;
-        lastMidGain = p.eqMidGainDb;
-        lastHighGain = p.eqHighGainDb;
-
-        const auto low = juce::dsp::IIR::Coefficients<float>::makeLowShelf (
-            sampleRate, 120.0f, 0.707f, juce::Decibels::decibelsToGain (p.eqLowGainDb));
-        const auto mid = juce::dsp::IIR::Coefficients<float>::makePeakFilter (
-            sampleRate, p.eqMidFreq, 0.7f, juce::Decibels::decibelsToGain (p.eqMidGainDb));
-        const auto high = juce::dsp::IIR::Coefficients<float>::makeHighShelf (
-            sampleRate, 6000.0f, 0.707f, juce::Decibels::decibelsToGain (p.eqHighGainDb));
-
-        for (auto& f : eqLow)  *f.coefficients = *low;
-        for (auto& f : eqMid)  *f.coefficients = *mid;
-        for (auto& f : eqHigh) *f.coefficients = *high;
-    }
-
-    for (int ch = 0; ch < juce::jmin (2, buffer.getNumChannels()); ++ch)
-    {
-        auto* data = buffer.getWritePointer (ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            auto v = eqLow[(size_t) ch].processSample (data[i]);
-            v = eqMid[(size_t) ch].processSample (v);
-            data[i] = eqHigh[(size_t) ch].processSample (v);
-        }
-    }
+    eq.setCharacter (p.eqCharacter);
+    eq.updateBands (p.eqBands);
+    eq.process (buffer);
 }
 
 } // namespace spa::dsp

@@ -856,6 +856,53 @@ namespace
         }
     }
 
+    // Validates the parametric-EQ RBJ coefficients: the analytic magnitude
+    // response must match what the biquads actually do, a bell boost must raise
+    // its band's energy, and a high-cut must attenuate highs.
+    static void parametricEqTest()
+    {
+        std::cout << "parametricEqTest\n";
+        using EQ = spa::dsp::ParametricEQ;
+        constexpr double sr = 48000.0;
+        constexpr float twoPi = juce::MathConstants<float>::twoPi;
+
+        std::array<EQ::Band, EQ::numBands> bands {};
+        bands[0] = { true, (int) EQ::Type::bell, 1000.0f, 12.0f, 2.0f };
+        const float atCentre = EQ::magnitudeDb (bands, 1000.0f, sr);
+        const float atFar    = EQ::magnitudeDb (bands, 60.0f, sr);
+        expect (std::abs (atCentre - 12.0f) < 0.5f,
+                "bell centre gain ~ +12 dB (" + juce::String (atCentre) + ")");
+        expect (std::abs (atFar) < 1.0f,
+                "bell far from centre ~ flat (" + juce::String (atFar) + ")");
+
+        auto rmsThrough = [&] (const std::array<EQ::Band, EQ::numBands>& bs, float freq)
+        {
+            EQ eq; eq.prepare (sr, 512);
+            eq.updateBands (bs);
+            juce::AudioBuffer<float> buf (2, 8192);
+            for (int i = 0; i < 8192; ++i)
+            {
+                const float s = std::sin (twoPi * freq * (float) i / (float) sr);
+                buf.setSample (0, i, s); buf.setSample (1, i, s);
+            }
+            eq.process (buf);
+            double sum = 0; int n = 0;
+            for (int i = 2000; i < 8192; ++i) { const float v = buf.getSample (0, i); sum += v * v; ++n; }
+            return (float) std::sqrt (sum / n);
+        };
+
+        std::array<EQ::Band, EQ::numBands> off {};
+        std::array<EQ::Band, EQ::numBands> boost {};
+        boost[0] = { true, (int) EQ::Type::bell, 1000.0f, 12.0f, 2.0f };
+        expect (rmsThrough (boost, 1000.0f) > rmsThrough (off, 1000.0f) * 2.0f,
+                "bell boost raises 1 kHz RMS");
+
+        std::array<EQ::Band, EQ::numBands> hicut {};
+        hicut[0] = { true, (int) EQ::Type::highCut, 2000.0f, 0.0f, 0.707f };
+        expect (rmsThrough (hicut, 10000.0f) < rmsThrough (off, 10000.0f) * 0.3f,
+                "high-cut attenuates 10 kHz");
+    }
+
     static void fxDelayReverbTest()
     {
         std::cout << "fxDelayReverbTest\n";
@@ -942,10 +989,16 @@ namespace
         const auto flat = brightnessWith ([] (auto&) {});
         const auto darkened = brightnessWith ([] (auto& proc)
         {
-            setParam (proc, id::fx::eqEnable, 1.0f);
-            setParam (proc, id::fx::eqHighGain, -12.0f);
-            setParam (proc, id::fx::eqMidGain, -12.0f);
-            setParam (proc, id::fx::eqMidFreq, 4000.0f);
+            namespace fx = id::fx;
+            setParam (proc, fx::eqEnable, 1.0f);
+            // Band 7: high-shelf cut. Band 5: bell cut at 4 kHz.
+            setParam (proc, id::eqBand (6, fx::eqband::enable), 1.0f);
+            setParam (proc, id::eqBand (6, fx::eqband::type), 2.0f /* High Shelf */);
+            setParam (proc, id::eqBand (6, fx::eqband::gain), -18.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::enable), 1.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::type), 0.0f /* Bell */);
+            setParam (proc, id::eqBand (5, fx::eqband::freq), 4000.0f);
+            setParam (proc, id::eqBand (5, fx::eqband::gain), -18.0f);
         });
         expect (darkened < flat * 0.8f,
                 "EQ high/mid cut darkens output (flat " + juce::String (flat)
@@ -2274,6 +2327,7 @@ int main (int argc, char* argv[])
     fxDelayReverbTest();
     reverbMixTest();
     reverbStabilityTest();
+    parametricEqTest();
     panicTest();
     midiClockTest();
     fxOrderTest();

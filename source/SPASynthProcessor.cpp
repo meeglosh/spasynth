@@ -149,10 +149,16 @@ SPASynthProcessor::SPASynthProcessor()
         rf.reverbWidth    = apvts.getRawParameterValue (fx::reverbWidth);
         rf.reverbMix      = apvts.getRawParameterValue (fx::reverbMix);
         rf.eqEnable       = apvts.getRawParameterValue (fx::eqEnable);
-        rf.eqLowGain      = apvts.getRawParameterValue (fx::eqLowGain);
-        rf.eqMidFreq      = apvts.getRawParameterValue (fx::eqMidFreq);
-        rf.eqMidGain      = apvts.getRawParameterValue (fx::eqMidGain);
-        rf.eqHighGain     = apvts.getRawParameterValue (fx::eqHighGain);
+        rf.eqCharacter    = apvts.getRawParameterValue (fx::eqCharacter);
+        for (int b = 0; b < 8; ++b)
+        {
+            auto& bp = rf.eqBands[(size_t) b];
+            bp.enable = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::enable));
+            bp.type   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::type));
+            bp.freq   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::freq));
+            bp.gain   = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::gain));
+            bp.q      = apvts.getRawParameterValue (params::id::eqBand (b, fx::eqband::q));
+        }
 
         rf.modEnable      = apvts.getRawParameterValue (fx::modEnable);
         rf.modType        = apvts.getRawParameterValue (fx::modType);
@@ -567,10 +573,17 @@ void SPASynthProcessor::updateFXParams()
     p.reverbWidth    = rf.reverbWidth->load();
     p.reverbMix      = rf.reverbMix->load();
     p.eqEnable       = rf.eqEnable->load() >= 0.5f;
-    p.eqLowGainDb    = rf.eqLowGain->load();
-    p.eqMidFreq      = rf.eqMidFreq->load();
-    p.eqMidGainDb    = rf.eqMidGain->load();
-    p.eqHighGainDb   = rf.eqHighGain->load();
+    p.eqCharacter    = (int) rf.eqCharacter->load();
+    for (int b = 0; b < 8; ++b)
+    {
+        const auto& bp = rf.eqBands[(size_t) b];
+        auto& band = p.eqBands[(size_t) b];
+        band.enabled = bp.enable->load() >= 0.5f;
+        band.type    = (int) bp.type->load();
+        band.freq    = bp.freq->load();
+        band.gainDb  = bp.gain->load();
+        band.q       = bp.q->load();
+    }
 
     p.modEnable   = rf.modEnable->load() >= 0.5f;
     p.modType     = (int) rf.modType->load();

@@ -111,6 +111,11 @@ namespace id
         return "env" + juce::String (envNumber) + "." + key;
     }
 
+    juce::String eqBand (int band, const char* key)
+    {
+        return "fxEQ.band" + juce::String (band) + "." + key;
+    }
+
     juce::String lfoParam (int lfoIndex, const char* key)
     {
         return "lfo" + juce::String (lfoIndex + 1) + "." + key;
@@ -628,18 +633,42 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::eqEnable, "EQ On", Section::fxEQ,
                    ParamKind::boolParam, {}, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
-    p.push_back ({ fx::eqLowGain, "EQ Low", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
-    p.push_back ({ fx::eqMidFreq, "EQ Mid Freq", Section::fxEQ,
-                   ParamKind::floatParam, frequencyRange (200.0f, 8000.0f), 1000.0f, "Hz",
-                   false, { .enabled = true } });
-    p.push_back ({ fx::eqMidGain, "EQ Mid", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
-    p.push_back ({ fx::eqHighGain, "EQ High", Section::fxEQ,
-                   ParamKind::floatParam, { -12.0f, 12.0f, 0.1f }, 0.0f, "dB",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    p.push_back ({ fx::eqCharacter, "EQ Character", Section::fxEQ,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = true },
+                   juce::StringArray { "Clean", "Modern", "Vintage", "Tube" } });
+
+    // 8 parametric bands. Disabled by default (flat); default freqs spread log-
+    // wide with shelf types at the ends, so enabling a band drops a sensible node.
+    {
+        struct BandDef { float freq; int type; };
+        const BandDef defs[8] = {
+            {    80.0f, 1 /* Low Shelf */ }, {   200.0f, 0 }, {  500.0f, 0 },
+            {  1200.0f, 0 }, {  3000.0f, 0 }, {  6000.0f, 0 },
+            { 10000.0f, 2 /* High Shelf */ }, { 15000.0f, 0 } };
+
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto bn = "EQ B" + juce::String (b + 1) + " ";
+            p.push_back ({ id::eqBand (b, fx::eqband::enable), bn + "On", Section::fxEQ,
+                           ParamKind::boolParam, {}, 0.0f, "",
+                           false, { .enabled = true, .biasCentre = 0.2f, .biasStrength = 0.5f } });
+            p.push_back ({ id::eqBand (b, fx::eqband::type), bn + "Type", Section::fxEQ,
+                           ParamKind::choiceParam, {}, (float) defs[b].type, "",
+                           false, { .enabled = false },
+                           juce::StringArray { "Bell", "Low Shelf", "High Shelf",
+                                               "Low Cut", "High Cut", "Notch" } });
+            p.push_back ({ id::eqBand (b, fx::eqband::freq), bn + "Freq", Section::fxEQ,
+                           ParamKind::floatParam, frequencyRange (20.0f, 20000.0f),
+                           defs[b].freq, "Hz", false, { .enabled = true } });
+            p.push_back ({ id::eqBand (b, fx::eqband::gain), bn + "Gain", Section::fxEQ,
+                           ParamKind::floatParam, { -24.0f, 24.0f, 0.1f }, 0.0f, "dB",
+                           false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+            p.push_back ({ id::eqBand (b, fx::eqband::q), bn + "Q", Section::fxEQ,
+                           ParamKind::floatParam, skewedRange (0.1f, 18.0f, 1.0f), 0.707f, "",
+                           false, { .enabled = true, .biasCentre = 0.3f } });
+        }
+    }
 
     // FX Mod (Phaser / Flanger, switchable).
     p.push_back ({ fx::modEnable, "Mod On", Section::fxMod,

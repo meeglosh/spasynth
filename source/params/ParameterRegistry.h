@@ -223,6 +223,9 @@ namespace id
     // Envelope 2/3 parameter IDs: envParam(2, "attack") -> "env2.attack"
     juce::String envParam (int envNumber, const char* key);
 
+    // Parametric-EQ band IDs: eqBand(0, "freq") -> "fxEQ.band0.freq"
+    juce::String eqBand (int band, const char* key);
+
     // LFO parameter IDs: lfoParam(0, "rate") -> "lfo1.rate"
     namespace lfo
     {
@@ -314,11 +317,19 @@ namespace id
         inline constexpr const char* reverbWidth    = "fxReverb.width";
         inline constexpr const char* reverbMix      = "fxReverb.mix";
 
-        inline constexpr const char* eqEnable   = "fxEQ.enable";
-        inline constexpr const char* eqLowGain  = "fxEQ.lowGain";
-        inline constexpr const char* eqMidFreq  = "fxEQ.midFreq";
-        inline constexpr const char* eqMidGain  = "fxEQ.midGain";
-        inline constexpr const char* eqHighGain = "fxEQ.highGain";
+        inline constexpr const char* eqEnable    = "fxEQ.enable";
+        inline constexpr const char* eqCharacter = "fxEQ.character";
+
+        // Per-band parametric-EQ keys, combined via eqBand(band, key) ->
+        // "fxEQ.band0.freq" etc.
+        namespace eqband
+        {
+            inline constexpr const char* enable = "enable";
+            inline constexpr const char* type   = "type";   // Bell/LoShelf/HiShelf/LoCut/HiCut/Notch
+            inline constexpr const char* freq   = "freq";
+            inline constexpr const char* gain   = "gain";
+            inline constexpr const char* q      = "q";
+        }
 
         inline constexpr const char* modEnable   = "fxMod.enable";
         inline constexpr const char* modType     = "fxMod.type";

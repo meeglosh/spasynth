@@ -5,6 +5,7 @@
 #include "TremVib.h"
 #include "Limiter.h"
 #include "FDNReverb.h"
+#include "ParametricEQ.h"
 #include "../params/ParameterRegistry.h"
 
 namespace spa::dsp
@@ -89,10 +90,8 @@ public:
         float reverbMix = 0.3f;
 
         bool eqEnable = false;
-        float eqLowGainDb = 0.0f;
-        float eqMidFreq = 1000.0f;
-        float eqMidGainDb = 0.0f;
-        float eqHighGainDb = 0.0f;
+        int eqCharacter = 0;   // 0 Clean 1 Modern 2 Vintage 3 Tube
+        std::array<ParametricEQ::Band, ParametricEQ::numBands> eqBands {};
 
         double bpm = 120.0;
 
@@ -194,11 +193,8 @@ private:
 
     FDNReverb reverb;
 
-    // EQ: low shelf / mid peak / high shelf per channel.
-    using IIR = juce::dsp::IIR::Filter<float>;
-    std::array<IIR, 2> eqLow, eqMid, eqHigh;
-    float lastLowGain = 1.0e9f, lastMidFreq = 0.0f, lastMidGain = 1.0e9f,
-          lastHighGain = 1.0e9f;
+    // 8-band parametric EQ (hand-rolled biquads, character saturation).
+    ParametricEQ eq;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FXChain)
 };

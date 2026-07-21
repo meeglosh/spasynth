@@ -865,6 +865,22 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                                ? buffer.getMagnitude (1, 0, buffer.getNumSamples())
                                : telemetry.peakL.load (std::memory_order_relaxed),
                            std::memory_order_relaxed);
+
+    // Feed the EQ spectrum analyzer: push the master output (mono sum) into the
+    // scope ring, write index published last so the UI reads a coherent window.
+    {
+        const int n = buffer.getNumSamples();
+        const auto* l = buffer.getReadPointer (0);
+        const auto* r = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : l;
+        int w = telemetry.scopeWrite.load (std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i)
+        {
+            telemetry.scope[(size_t) w].store (0.5f * (l[i] + r[i]),
+                                               std::memory_order_relaxed);
+            w = (w + 1) & (dsp::Telemetry::scopeSize - 1);
+        }
+        telemetry.scopeWrite.store (w, std::memory_order_release);
+    }
 }
 
 juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)

@@ -1,6 +1,7 @@
 #include "SPASynthEditor.h"
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
+#include "EqEditor.h"
 
 #include "BinaryData.h"
 
@@ -542,8 +543,8 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                    FXDisplay::Kind::delay, params::Section::fxDelay, "Delay"), true);
     fxTabs.addTab ("REVERB", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb"), true);
-    fxTabs.addTab ("EQ", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::eq, params::Section::fxEQ, "EQ"), true);
+    fxTabs.addTab ("EQ", tabBg, new EqEditor (processor.getAPVTS(), processor.getTelemetry(),
+                   [&proc = processor] { return proc.getSampleRate(); }), true);
     fxTabs.addTab ("MOD", tabBg, new FXPanel (processor.getAPVTS(),
                    FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation"), true);
     fxTabs.addTab ("TREM/VIB", tabBg, new FXPanel (processor.getAPVTS(),

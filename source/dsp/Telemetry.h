@@ -52,6 +52,13 @@ struct Telemetry
     // Block peaks after the FX chain and master gain.
     std::atomic<float> peakL { 0.0f };
     std::atomic<float> peakR { 0.0f };
+
+    // Post-master mono scope ring for the EQ spectrum analyzer. The audio thread
+    // pushes the master output sample-by-sample; the UI reads the latest window
+    // ending at scopeWrite and runs its own FFT. Cosmetic, so relaxed atomics.
+    static constexpr int scopeSize = 2048;   // power of two for the FFT
+    std::array<std::atomic<float>, scopeSize> scope {};
+    std::atomic<int> scopeWrite { 0 };
 };
 
 } // namespace spa::dsp

@@ -211,6 +211,9 @@ SPASynthProcessor::SPASynthProcessor()
         rf.convEnable     = apvts.getRawParameterValue (fx::convEnable);
         rf.convMix        = apvts.getRawParameterValue (fx::convMix);
         rf.convWidth      = apvts.getRawParameterValue (fx::convWidth);
+        rf.convPreDelay   = apvts.getRawParameterValue (fx::convPreDelay);
+        rf.convDecay      = apvts.getRawParameterValue (fx::convDecay);
+        rf.convDamping    = apvts.getRawParameterValue (fx::convDamping);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -267,6 +270,11 @@ void SPASynthProcessor::timerCallback()
                   + osLatencyHost;
     if (lat != getLatencySamples())
         setLatencySamples (lat);
+
+    // Convolution IR shaping (decay/damping) reshapes + reloads the IR; do it
+    // here (message thread), debounced to the timer, only when the values move.
+    if (raw.fx.convDecay != nullptr)
+        fxChain.setConvolutionShaping (raw.fx.convDecay->load(), raw.fx.convDamping->load());
 
     // Anything retired more than one timer period ago can no longer be in
     // use by the audio thread (it re-reads `live` every block).
@@ -742,9 +750,12 @@ void SPASynthProcessor::updateFXParams()
     p.limTruePeak    = rf.limTruePeak->load() >= 0.5f;
     p.limLookahead   = rf.limLookahead->load() >= 0.5f;
 
-    p.convEnable = rf.convEnable->load() >= 0.5f;
-    p.convMix    = rf.convMix->load();
-    p.convWidth  = rf.convWidth->load();
+    p.convEnable   = rf.convEnable->load() >= 0.5f;
+    p.convMix      = rf.convMix->load();
+    p.convWidth    = rf.convWidth->load();
+    p.convPreDelay = rf.convPreDelay->load();
+    p.convDecay    = rf.convDecay->load();
+    p.convDamping  = rf.convDamping->load();
 
     desiredLatency.store (fxChain.limiterLatencySamples (p), std::memory_order_relaxed);
     p.bpm            = shared.bpm;

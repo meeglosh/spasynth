@@ -21,6 +21,11 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     limiterEffect.prepare (sampleRate, maxBlockSize);
     convolution.prepare (spec);
     convScratch.setSize (2, maxBlockSize, false, false, true);
+    for (auto& b : convPreBuf) { b.setSize (1, (int) (0.2 * sampleRate) + 8); b.clear(); }
+    convPreWrite = 0;
+    // Re-shape/reload the IR at the new rate so it survives sample-rate and
+    // oversampling changes (prepare resets the convolution engine).
+    if (haveRawIR) reshapeConvolutionIR();
 
     delayBuffer.setSize (2, (int) (sampleRate * 4.0) + 8);
     delayBuffer.clear();
@@ -269,6 +274,23 @@ void FXChain::processConvolve (juce::AudioBuffer<float>& buffer, const Params& p
     auto block = juce::dsp::AudioBlock<float> (convScratch).getSubBlock (0, (size_t) n);
     convolution.process (juce::dsp::ProcessContextReplacing<float> (block));
 
+    // Wet pre-delay (gap before the reverb).
+    const int rs = convPreBuf[0].getNumSamples();
+    const int pd = juce::jlimit (0, rs - 1, (int) (p.convPreDelay * 0.001f * (float) sampleRate));
+    if (pd > 0 && rs > 1)
+        for (int i = 0; i < n; ++i)
+        {
+            const int w = convPreWrite;
+            const int rd = (w - pd + rs) % rs;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* ring = convPreBuf[(size_t) ch].getWritePointer (0);
+                ring[w] = convScratch.getSample (ch, i);
+                convScratch.setSample (ch, i, ring[rd]);
+            }
+            convPreWrite = (w + 1) % rs;
+        }
+
     const float mix = juce::jlimit (0.0f, 1.0f, p.convMix);
     const float width = juce::jlimit (0.0f, 1.0f, p.convWidth);
     for (int i = 0; i < n; ++i)
@@ -289,11 +311,79 @@ void FXChain::processConvolve (juce::AudioBuffer<float>& buffer, const Params& p
 
 void FXChain::loadConvolutionIR (const juce::File& irFile)
 {
-    if (! irFile.existsAsFile()) { convIrLoaded = false; return; }
-    convolution.loadImpulseResponse (irFile,
+    haveRawIR = false;
+    convIrLoaded = false;
+    if (! irFile.existsAsFile()) return;
+    if (convFormats.getNumKnownFormats() == 0) convFormats.registerBasicFormats();
+
+    std::unique_ptr<juce::AudioFormatReader> reader (convFormats.createReaderFor (irFile));
+    if (reader == nullptr || reader->lengthInSamples <= 0) return;
+
+    const int maxSamples = (int) (reader->sampleRate * 10.0);   // cap the IR at 10 s
+    const int n = (int) juce::jmin ((juce::int64) maxSamples, reader->lengthInSamples);
+    rawIR.setSize ((int) juce::jmin ((juce::uint32) 2, reader->numChannels), n);
+    reader->read (&rawIR, 0, n, 0, true, true);
+    rawIRSampleRate = reader->sampleRate;
+    haveRawIR = true;
+    reshapeConvolutionIR();
+}
+
+void FXChain::setConvolutionShaping (float decay, float damping)
+{
+    if (juce::approximatelyEqual (decay, convDecayApplied)
+        && juce::approximatelyEqual (damping, convDampingApplied))
+        return;
+    convDecayApplied = decay;
+    convDampingApplied = damping;
+    if (haveRawIR) reshapeConvolutionIR();
+}
+
+// Builds the shaped IR (decay envelope + HF damping) from the raw IR and loads
+// it; also refreshes the display envelope. Message thread only.
+void FXChain::reshapeConvolutionIR()
+{
+    if (! haveRawIR || rawIR.getNumSamples() == 0) { convIrLoaded = false; return; }
+
+    const int n = rawIR.getNumSamples();
+    const int ch = rawIR.getNumChannels();
+    const double sr = rawIRSampleRate > 0.0 ? rawIRSampleRate : sampleRate;
+    irLengthSeconds = (double) n / sr;
+
+    const float decay = juce::jlimit (0.05f, 1.0f, convDecayApplied);
+    const float damp  = juce::jlimit (0.0f, 1.0f, convDampingApplied);
+    const float kDecay = 6.9f / (decay * (float) juce::jmax (1, n));   // -60 dB at decay*len
+    const float cutoff = juce::jmap (damp, 0.0f, 1.0f, 20000.0f, 800.0f);
+    const float lpCoef = damp > 0.001f
+        ? 1.0f - std::exp (-juce::MathConstants<float>::twoPi * cutoff / (float) sr)
+        : 1.0f;
+
+    juce::AudioBuffer<float> shaped (ch, n);
+    for (auto& e : irEnvelope) e = 0.0f;
+
+    for (int c = 0; c < ch; ++c)
+    {
+        const float* src = rawIR.getReadPointer (c);
+        float* dst = shaped.getWritePointer (c);
+        float lp = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            float v = src[i];
+            if (damp > 0.001f) { lp += lpCoef * (v - lp); v = lp; }
+            dst[i] = v * std::exp (-kDecay * (float) i);
+        }
+    }
+
+    for (int i = 0; i < n; ++i)
+    {
+        const int b = juce::jlimit (0, convEnvPoints - 1, i * convEnvPoints / juce::jmax (1, n));
+        float a = std::abs (shaped.getSample (0, i));
+        if (ch > 1) a = juce::jmax (a, std::abs (shaped.getSample (1, i)));
+        irEnvelope[(size_t) b] = juce::jmax (irEnvelope[(size_t) b], a);
+    }
+
+    convolution.loadImpulseResponse (std::move (shaped), sr,
                                      juce::dsp::Convolution::Stereo::yes,
-                                     juce::dsp::Convolution::Trim::yes,
-                                     0,
+                                     juce::dsp::Convolution::Trim::no,
                                      juce::dsp::Convolution::Normalise::yes);
     convIrLoaded = true;
 }

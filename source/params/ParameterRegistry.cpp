@@ -807,6 +807,15 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::convWidth, "Conv Width", Section::fxConvolve,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = false } });
+    p.push_back ({ fx::convPreDelay, "Conv Pre", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 200.0f }, 0.0f, "ms",
+                   false, { .enabled = true, .maxNorm = 0.4f } });
+    p.push_back ({ fx::convDecay, "Conv Decay", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.05f, 1.0f }, 1.0f, "",
+                   false, { .enabled = true, .minNorm = 0.3f } });
+    p.push_back ({ fx::convDamping, "Conv Damp", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.6f } });
 
     return p;
 }

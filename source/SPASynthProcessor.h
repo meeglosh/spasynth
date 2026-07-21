@@ -124,6 +124,12 @@ public:
     // remembers the path (portable, saved per preset). Empty name = none.
     void loadConvolutionIR (const juce::File& file);
     juce::String getConvolutionIRName() const { return juce::File (convIrPath).getFileNameWithoutExtension(); }
+    // Shaped-IR waveform envelope for the Convolve display (message thread).
+    const std::array<float, dsp::FXChain::convEnvPoints>& getConvolutionEnvelope() const
+    {
+        return fxChain.convolutionEnvelope();
+    }
+    bool hasConvolutionIR() const { return fxChain.hasConvolutionIR(); }
 
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
@@ -435,6 +441,9 @@ private:
             std::atomic<float>* convEnable = nullptr;
             std::atomic<float>* convMix = nullptr;
             std::atomic<float>* convWidth = nullptr;
+            std::atomic<float>* convPreDelay = nullptr;
+            std::atomic<float>* convDecay = nullptr;
+            std::atomic<float>* convDamping = nullptr;
         } fx {};
     } raw;
 

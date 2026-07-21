@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include "ModEffect.h"
 #include "TremVib.h"
 #include "Limiter.h"
@@ -137,6 +138,9 @@ public:
         bool convEnable = false;
         float convMix = 0.3f;
         float convWidth = 1.0f;
+        float convPreDelay = 0.0f;   // ms, wet pre-delay
+        float convDecay = 1.0f;      // 0..1 IR tail length (shorter = tighter)
+        float convDamping = 0.0f;    // 0..1 HF damping of the IR
 
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
@@ -158,10 +162,17 @@ public:
     float limiterGainReductionDb() const { return limiterEffect.gainReductionDb(); }
     float limiterOutputPeak() const { return limiterEffect.outputPeak(); }
 
-    // Convolve (SFX / user WAV as impulse). juce::dsp::Convolution loads the IR
-    // on a background thread and swaps it in atomically.
+    // Convolve (SFX / user WAV as impulse). The raw IR is read once and kept;
+    // decay/damping reshape it and it is (re)loaded into juce::dsp::Convolution
+    // on a background thread. All of these run on the message thread.
     void loadConvolutionIR (const juce::File& irFile);
+    void setConvolutionShaping (float decay, float damping);   // reshapes if changed
     bool hasConvolutionIR() const { return convIrLoaded; }
+
+    // Downsampled magnitude envelope of the shaped IR for the UI waveform.
+    static constexpr int convEnvPoints = 256;
+    const std::array<float, convEnvPoints>& convolutionEnvelope() const { return irEnvelope; }
+    double convolutionLengthSeconds() const { return irLengthSeconds; }
 
 private:
     void processDistortion (juce::AudioBuffer<float>&, const Params&);
@@ -181,6 +192,21 @@ private:
     juce::dsp::Convolution convolution;
     juce::AudioBuffer<float> convScratch;
     bool convIrLoaded = false;
+
+    // Raw (unshaped) IR kept so decay/damping can reshape without re-reading the
+    // file; the reshaped copy is what gets loaded into the convolution engine.
+    void reshapeConvolutionIR();
+    juce::AudioFormatManager convFormats;
+    juce::AudioBuffer<float> rawIR;
+    double rawIRSampleRate = 0.0;
+    bool haveRawIR = false;
+    float convDecayApplied = 1.0f, convDampingApplied = 0.0f;
+    double irLengthSeconds = 0.0;
+    std::array<float, convEnvPoints> irEnvelope {};
+
+    // Wet pre-delay ring (per channel), up to 200 ms.
+    std::array<juce::AudioBuffer<float>, 2> convPreBuf;
+    int convPreWrite = 0;
 
     // Distortion tone filter (post-shaper lowpass), one per channel.
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> toneFilters;

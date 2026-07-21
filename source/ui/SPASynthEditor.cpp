@@ -315,36 +315,145 @@ private:
     double lastTap = 0.0, tapBpm = 0.0;
 };
 
-// Convolve tab: an IR picker (library SFX or any WAV) above the FX controls.
+// Shaped-IR waveform view for the Convolve tab: the impulse envelope with the
+// pre-delay shown as a leading gap. Reflects decay/damping (which reshape the
+// IR) and pre-delay in ~real time.
+class ConvolveDisplay : public juce::Component,
+                        private juce::Timer
+{
+public:
+    explicit ConvolveDisplay (SPASynthProcessor& p) : processor (p)
+    {
+        setInterceptsMouseClicks (false, false);
+        startTimerHz (20);
+    }
+    ~ConvolveDisplay() override { stopTimer(); }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& t = currentTheme();
+        auto area = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (t.display);
+        g.fillRoundedRectangle (area, 4.0f);
+        g.setColour (t.outline.withAlpha (0.5f));
+        g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
+
+        if (! processor.hasConvolutionIR())
+        {
+            g.setColour (t.textSecondary.withAlpha (0.5f));
+            g.setFont (metrics::smallFont());
+            g.drawText ("No impulse loaded - pick one above", area, juce::Justification::centred);
+            g.setColour (t.outline);
+            g.drawRoundedRectangle (area, 4.0f, 1.0f);
+            return;
+        }
+
+        const auto& env = processor.getConvolutionEnvelope();
+        float peak = 1.0e-6f;
+        for (auto v : env) peak = juce::jmax (peak, v);
+
+        const float preMs = processor.getAPVTS()
+                                .getRawParameterValue (params::id::fx::convPreDelay)->load();
+        const float gapFrac = juce::jlimit (0.0f, 0.4f, preMs / 400.0f);
+        const float x0 = area.getX() + gapFrac * area.getWidth();
+        const float w = area.getRight() - x0;
+        const float cy = area.getCentreY();
+        const float halfH = area.getHeight() * 0.45f;
+        const int N = (int) env.size();
+
+        juce::Path top;
+        for (int i = 0; i < N; ++i)
+        {
+            const float a = env[(size_t) i] / peak * halfH;
+            const float x = x0 + w * (float) i / (float) (N - 1);
+            if (i == 0) top.startNewSubPath (x, cy - a); else top.lineTo (x, cy - a);
+        }
+        juce::Path fill = top;
+        for (int i = N - 1; i >= 0; --i)
+        {
+            const float a = env[(size_t) i] / peak * halfH;
+            fill.lineTo (x0 + w * (float) i / (float) (N - 1), cy + a);
+        }
+        fill.closeSubPath();
+        g.setColour (t.accent.withAlpha (0.22f));
+        g.fillPath (fill);
+        g.setColour (t.accent);
+        g.strokePath (top, juce::PathStrokeType (1.2f));
+
+        if (gapFrac > 0.001f)   // pre-delay marker
+        {
+            g.setColour (t.textSecondary.withAlpha (0.5f));
+            g.drawVerticalLine ((int) x0, area.getY(), area.getBottom());
+        }
+
+        g.setColour (t.outline);
+        g.drawRoundedRectangle (area, 4.0f, 1.0f);
+    }
+
+    void timerCallback() override { repaint(); }
+
+private:
+    SPASynthProcessor& processor;
+};
+
+// Convolve tab: IR pickers, the waveform display, and the shaping controls.
 class ConvolvePanel : public juce::Component,
                       private juce::ChangeListener
 {
 public:
     explicit ConvolvePanel (SPASynthProcessor& p)
-        : processor (p),
-          inner (p.getAPVTS(), FXDisplay::Kind::reverb, params::Section::fxConvolve, "Convolve")
+        : processor (p), display (p),
+          enable   (p.getAPVTS(), params::id::fx::convEnable, "ON"),
+          mix      (p.getAPVTS(), params::id::fx::convMix, "Mix"),
+          predelay (p.getAPVTS(), params::id::fx::convPreDelay, "Pre"),
+          decay    (p.getAPVTS(), params::id::fx::convDecay, "Decay"),
+          damping  (p.getAPVTS(), params::id::fx::convDamping, "Damp"),
+          width    (p.getAPVTS(), params::id::fx::convWidth, "Width")
     {
         libraryButton.setTooltip ("Pick an impulse from a pack in your loaded library");
         libraryButton.onClick = [this] { chooseLibraryPack(); };
         irButton.setTooltip ("Load any WAV file as an impulse");
         irButton.onClick = [this] { chooseIR(); };
+        title.setText ("CONVOLVE", juce::dontSendNotification);
+        title.setFont (metrics::sectionFont());
+        title.setColour (juce::Label::textColourId, currentTheme().accent);
         updateLabel();
+        addAndMakeVisible (title);
         addAndMakeVisible (libraryButton);
         addAndMakeVisible (irButton);
-        addAndMakeVisible (inner);
+        addAndMakeVisible (display);
+        for (auto* c : std::initializer_list<juce::Component*> {
+                 &enable, &mix, &predelay, &decay, &damping, &width })
+            addAndMakeVisible (*c);
         processor.addChangeListener (this);
     }
 
     ~ConvolvePanel() override { processor.removeChangeListener (this); }
 
+    void paint (juce::Graphics& g) override { g.fillAll (currentTheme().panel); }
+
     void resized() override
     {
-        auto r = getLocalBounds();
-        auto top = r.removeFromTop (26).reduced (6, 3);
-        libraryButton.setBounds (top.removeFromLeft (130));
+        auto r = getLocalBounds().reduced (7, 5);
+        title.setBounds (r.removeFromTop (16));
+        r.removeFromTop (2);
+
+        auto top = r.removeFromTop (24);
+        libraryButton.setBounds (top.removeFromLeft (128).reduced (0, 1));
         top.removeFromLeft (5);
-        irButton.setBounds (top);
-        inner.setBounds (r);
+        irButton.setBounds (top.reduced (0, 1));
+        r.removeFromTop (4);
+
+        auto strip = r.removeFromBottom (58);
+        display.setBounds (r.reduced (0, 2));
+
+        enable.setBounds (strip.removeFromLeft (54).reduced (2, 20));
+        strip.removeFromLeft (4);
+        for (auto* k : { &mix, &predelay, &decay, &damping, &width })
+        {
+            k->setBounds (strip.removeFromLeft (juce::jmin (60, strip.getWidth() / 5)));
+            strip.removeFromLeft (2);
+        }
     }
 
 private:
@@ -410,9 +519,12 @@ private:
     }
 
     SPASynthProcessor& processor;
+    juce::Label title;
     juce::TextButton libraryButton { "library" };
     juce::TextButton irButton { "browser" };
-    FXPanel inner;
+    ConvolveDisplay display;
+    Toggle enable;
+    Knob mix, predelay, decay, damping, width;
     std::unique_ptr<juce::FileChooser> fileChooser;
 };
 

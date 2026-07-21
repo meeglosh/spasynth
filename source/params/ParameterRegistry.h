@@ -377,9 +377,12 @@ namespace id
         inline constexpr const char* limTruePeak    = "fxLim.truePeak";
         inline constexpr const char* limLookahead   = "fxLim.lookahead";
 
-        inline constexpr const char* convEnable = "fxConv.enable";
-        inline constexpr const char* convMix    = "fxConv.mix";
-        inline constexpr const char* convWidth  = "fxConv.width";
+        inline constexpr const char* convEnable   = "fxConv.enable";
+        inline constexpr const char* convMix      = "fxConv.mix";
+        inline constexpr const char* convWidth    = "fxConv.width";
+        inline constexpr const char* convPreDelay = "fxConv.predelay";
+        inline constexpr const char* convDecay    = "fxConv.decay";
+        inline constexpr const char* convDamping  = "fxConv.damping";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

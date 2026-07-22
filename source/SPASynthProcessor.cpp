@@ -946,7 +946,7 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // clock. Everything tempo-synced (arp, delay, LFOs) reads blockBpm below.
     midiClock.process (midi, buffer.getNumSamples());
     blockBpm = 120.0; blockPlaying = true; blockPpq = 0.0;
-    bool gotHostTempo = false;
+    bool gotHostTempo = false, gotHostPpq = false;
     if (auto* playHead = getPlayHead())
         if (const auto position = playHead->getPosition())
             if (const auto bpm = position->getBpm())
@@ -954,7 +954,7 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 blockBpm = *bpm;
                 blockPlaying = position->getIsPlaying();
                 if (const auto ppq = position->getPpqPosition())
-                    blockPpq = *ppq;
+                    { blockPpq = *ppq; gotHostPpq = true; }
                 gotHostTempo = true;
             }
     if (! gotHostTempo)   // standalone / host without tempo
@@ -1010,7 +1010,12 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         ap.humanize     = raw.arp.humanize->load();
         ap.bpm             = blockBpm;
         ap.sampleRate      = currentSampleRate;   // engine rate
-        ap.hostPlaying     = blockPlaying;
+        // Follow the host's ppq timeline only when we actually have one AND it is
+        // playing; otherwise (standalone/internal clock, or a stopped host) the
+        // arp free-runs on its own beat clock. Passing hostPlaying=true with a
+        // frozen ppq (as the internal clock did) made it re-fire beat 0 every
+        // block, so every note stuck.
+        ap.hostPlaying     = gotHostPpq && blockPlaying;
         ap.ppqAtBlockStart = blockPpq;
 
         arp.process (engMidi, engN, ap);

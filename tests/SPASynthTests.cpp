@@ -1884,6 +1884,66 @@ namespace
         expect (sawPassThrough, "disabled arp passes MIDI through");
     }
 
+    // Full chain: arp on, hold a key through several steps, release it, then let
+    // it ring out. Every voice must free itself (no stuck notes).
+    static void arpStuckNoteTest()
+    {
+        std::cout << "arpStuckNoteTest\n";
+        namespace id = spa::params::id;
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, block);
+        setParam (proc, id::arp::enable, 1.0f);
+        setParam (proc, id::arp::division, 12.0f);   // 1/16
+
+        juce::AudioBuffer<float> buf (2, block);
+        juce::MidiBuffer onMsg;
+        onMsg.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 110), 0);
+        for (int b = 0; b < 60; ++b)                 // hold through several steps
+        {
+            buf.clear();
+            juce::MidiBuffer m = (b == 0 ? onMsg : juce::MidiBuffer());
+            proc.processBlock (buf, m);
+        }
+
+        juce::MidiBuffer offMsg;
+        offMsg.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        buf.clear();
+        proc.processBlock (buf, offMsg);
+        for (int b = 0; b < 400; ++b)                // let releases finish (~2 s)
+        {
+            buf.clear();
+            juce::MidiBuffer m;
+            proc.processBlock (buf, m);
+        }
+
+        expect (proc.getTelemetry().activeVoices.load() == 0,
+                "arp: no stuck notes after release ("
+                + juce::String (proc.getTelemetry().activeVoices.load()) + " active)");
+
+        // The arp must actually run on the internal clock (no host): the held key
+        // should have produced sound while it was down.
+        float held = 0.0f;
+        {
+            spa::SPASynthProcessor p2;
+            p2.prepareToPlay (sr, block);
+            setParam (p2, id::arp::enable, 1.0f);
+            setParam (p2, id::arp::division, 12.0f);
+            juce::AudioBuffer<float> b2 (2, block);
+            juce::MidiBuffer on2; on2.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 110), 0);
+            for (int b = 0; b < 80; ++b)
+            {
+                b2.clear();
+                juce::MidiBuffer m = (b == 0 ? on2 : juce::MidiBuffer());
+                p2.processBlock (b2, m);
+                held = juce::jmax (held, b2.getMagnitude (0, 0, block));
+            }
+            expect (held > 0.01f, "arp runs on the internal clock (audible while held)");
+        }
+    }
+
     static void arpChanceTest()
     {
         std::cout << "arpChanceTest\n";
@@ -2441,6 +2501,7 @@ int main (int argc, char* argv[])
     editorHitTestProbe();
     midiLearnTest();
     arpeggiatorTest();
+    arpStuckNoteTest();
     arpChanceTest();
     extraEnginesTest();
     filterExtrasTest();

@@ -592,7 +592,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true, .minNorm = 0.3f } });
     p.push_back ({ fx::distMix, "Dist Mix", Section::fxDist,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
-                   false, { .enabled = true, .minNorm = 0.3f } });
+                   false, { .enabled = true, .minNorm = 0.3f } , {}, true});
 
     p.push_back ({ fx::chorusEnable, "Chorus On", Section::fxChorus,
                    ParamKind::boolParam, {}, 0.0f, "",
@@ -608,7 +608,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
     p.push_back ({ fx::chorusMix, "Chorus Mix", Section::fxChorus,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } , {}, true});
 
     p.push_back ({ fx::delayEnable, "Delay On", Section::fxDelay,
                    ParamKind::boolParam, {}, 0.0f, "",
@@ -632,7 +632,7 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::delayMix, "Delay Mix", Section::fxDelay,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.35f, "",
                    false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.35f,
-                            .biasStrength = 0.3f } });
+                            .biasStrength = 0.3f } , {}, true});
 
     p.push_back ({ fx::reverbEnable, "Reverb On", Section::fxReverb,
                    ParamKind::boolParam, {}, 0.0f, "",
@@ -671,7 +671,7 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::reverbMix, "Reverb Mix", Section::fxReverb,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
                    false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.3f,
-                            .biasStrength = 0.3f } });
+                            .biasStrength = 0.3f } , {}, true});
 
     p.push_back ({ fx::eqEnable, "EQ On", Section::fxEQ,
                    ParamKind::boolParam, {}, 0.0f, "",
@@ -757,7 +757,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true } });
     p.push_back ({ fx::modMix, "Mod Mix", Section::fxMod,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
-                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } });
+                   false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } , {}, true});
 
     // FX Tremolo / Vibrato (independent sections in one tab).
     p.push_back ({ fx::tremEnable, "Trem On", Section::fxTremVib,
@@ -782,7 +782,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true } });
     p.push_back ({ fx::tremMix, "Trem Mix", Section::fxTremVib,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
-                   false, { .enabled = true } });
+                   false, { .enabled = true } , {}, true});
     p.push_back ({ fx::vibEnable, "Vib On", Section::fxTremVib,
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
     p.push_back ({ fx::vibRate, "Vib Rate", Section::fxTremVib,
@@ -798,7 +798,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true } });
     p.push_back ({ fx::vibMix, "Vib Mix", Section::fxTremVib,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
-                   false, { .enabled = true } });
+                   false, { .enabled = true } , {}, true});
 
     // FX Limiter / Maximizer (defaults last in the chain).
     p.push_back ({ fx::limEnable, "Lim On", Section::fxLimiter,
@@ -833,7 +833,7 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
     p.push_back ({ fx::convMix, "Conv Mix", Section::fxConvolve,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.3f, "",
-                   false, { .enabled = true, .maxNorm = 0.6f } });
+                   false, { .enabled = true, .maxNorm = 0.6f } , {}, true});
     p.push_back ({ fx::convWidth, "Conv Width", Section::fxConvolve,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = false } });
@@ -972,6 +972,25 @@ static std::unique_ptr<juce::RangedAudioParameter> makeParameter (const ParamDef
         return juce::String (value, magnitude >= 1000.0f ? 0
                                   : magnitude >= 100.0f ? 1 : 2);
     };
+
+    if (def.percentDisplay)
+    {
+        // 0..1 stored range displayed as a whole-number percentage (the FX
+        // MIX knobs). "%" is a real unit label, not decoration, so it goes
+        // through withLabel like every other unit — round-trips via
+        // withValueFromStringFunction so host automation lanes that type
+        // "13" or "13 %" both parse back to 0.13.
+        const auto formatPercent = [] (float value, int) { return juce::String (juce::roundToInt (value * 100.0f)) + " %"; };
+        const auto parsePercent = [] (const juce::String& text)
+        {
+            return juce::jlimit (0.0f, 1.0f, text.retainCharacters ("0123456789.-").getFloatValue() * 0.01f);
+        };
+        return std::make_unique<juce::AudioParameterFloat> (
+            pid, def.name, def.range, def.defaultValue,
+            juce::AudioParameterFloatAttributes().withLabel ("%")
+                .withStringFromValueFunction (formatPercent)
+                .withValueFromStringFunction (parsePercent));
+    }
 
     return std::make_unique<juce::AudioParameterFloat> (
         pid, def.name, def.range, def.defaultValue,

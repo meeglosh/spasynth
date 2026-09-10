@@ -7,7 +7,7 @@
 #include "ModEffect.h"
 #include "TremVib.h"
 #include "Limiter.h"
-#include "FDNReverb.h"
+#include "PlateReverb.h"
 #include "ParametricEQ.h"
 #include "../params/ParameterRegistry.h"
 
@@ -256,7 +256,7 @@ private:
     int delayWritePos = 0;
     juce::SmoothedValue<float> delaySamplesSmoothed;
 
-    FDNReverb reverb;
+    PlateReverb reverb;
 
     // 8-band parametric EQ (hand-rolled biquads, character saturation).
     ParametricEQ eq;

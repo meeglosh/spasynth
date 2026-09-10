@@ -120,6 +120,11 @@ struct ParamDef
     bool modDestination = false;             // can appear as a mod matrix destination
     RandomSpec random {};
     juce::StringArray choices {};            // choiceParam only
+    // 0..1-range floatParams that read best as a percentage in the UI/host
+    // automation lane (the FX MIX knobs) -- display-only, the stored/
+    // automated range is unchanged (still 0..1) so sessions/presets are
+    // unaffected by turning this on.
+    bool percentDisplay = false;
 };
 
 // A parameter that can be a modulation destination, with its dense index into

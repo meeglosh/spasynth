@@ -1,6 +1,7 @@
 // Headless test suite: exercises the real processor and the wavetable
 // pipeline without a host.
 
+#include <cstring>
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
 #include "dsp/FXChain.h"
@@ -1503,6 +1504,349 @@ namespace
             expect (peak < 3.0f,
                     "reverb mode " + juce::String (mode) + " stays bounded (peak "
                     + juce::String (peak) + ")");
+        }
+    }
+
+    // The Dattorro-plate-derived engine (PlateReverb, replacing the FDN in
+    // 1.0.15): per-mode character, stereo width, the linear mix law, and a
+    // denormal/finite safety net across a long silent tail.
+    static void plateReverbCharacterTest()
+    {
+        std::cout << "plateReverbCharacterTest\n";
+        using FX = spa::dsp::FXChain;
+        constexpr double sr = 48000.0;
+        constexpr int n = 256;
+
+        // Renders a mono impulse response for `mode` and returns it plus its
+        // stereo width test buffers.
+        auto renderIR = [&] (int mode, float decaySec, float width, std::vector<float>& monoOut,
+                              std::vector<float>* lOut = nullptr, std::vector<float>* rOut = nullptr)
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMode = mode;
+            p.reverbMix = 1.0f;
+            p.reverbDecay = decaySec;
+            p.reverbSize = 0.5f;
+            p.reverbDamping = 0.5f;
+            p.reverbModDepth = 0.6f;
+            p.reverbWidth = width;
+
+            const double renderSec = 6.0;
+            const int blocks = (int) (renderSec * sr / n);
+            juce::AudioBuffer<float> buf (2, n);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                if (b == 0) { buf.setSample (0, 0, 1.0f); buf.setSample (1, 0, 1.0f); }
+                fx.process (buf, p);
+                for (int s = 0; s < n; ++s)
+                {
+                    monoOut.push_back (0.5f * (buf.getSample (0, s) + buf.getSample (1, s)));
+                    if (lOut) lOut->push_back (buf.getSample (0, s));
+                    if (rOut) rOut->push_back (buf.getSample (1, s));
+                }
+            }
+        };
+
+        auto rms = [] (const std::vector<float>& v, size_t from, size_t to)
+        {
+            double sum = 0.0;
+            for (size_t i = from; i < to && i < v.size(); ++i) sum += (double) v[i] * v[i];
+            const size_t count = juce::jmax ((size_t) 1, juce::jmin (to, v.size()) - from);
+            return std::sqrt (sum / (double) count);
+        };
+
+        // RT60: block-RMS envelope in dB, smoothed, first crossing of
+        // (peakDb - 60) searched FROM THE PEAK ONWARD -- the tank has a
+        // genuine onset latency before the first pass of energy reaches the
+        // output (it must travel the whole mod-AP + long-delay + damping +
+        // decay-AP chain once), which varies by mode/size; searching from
+        // sample 0 would spuriously match that pre-onset silence itself as
+        // "60dB down from the peak" and report ~0s.
+        auto rt60Seconds = [&] (const std::vector<float>& v, double* peakDbOut = nullptr) -> double
+        {
+            constexpr int block = 256;
+            std::vector<double> envDb;
+            double peakDb = -300.0;
+            size_t peakIdx = 0;
+            for (size_t i = 0; i + block <= v.size(); i += block)
+            {
+                const double r = rms (v, i, i + block);
+                const double db = 20.0 * std::log10 (juce::jmax (1.0e-9, r));
+                envDb.push_back (db);
+                if (db > peakDb) { peakDb = db; peakIdx = envDb.size() - 1; }
+            }
+            // 5-block moving average to tame noise-floor jitter.
+            for (size_t i = 0; i < envDb.size(); ++i)
+            {
+                if ((int) i < 2 || i + 2 >= envDb.size()) continue;
+                envDb[i] = (envDb[i - 2] + envDb[i - 1] + envDb[i] + envDb[i + 1] + envDb[i + 2]) / 5.0;
+            }
+            if (peakDbOut != nullptr) *peakDbOut = peakDb;
+            for (size_t i = peakIdx; i < envDb.size(); ++i)
+                if (envDb[i] < peakDb - 60.0)
+                    return (double) ((i - peakIdx) * block) / sr;
+            return (double) (v.size() - peakIdx * block) / sr;   // never reached -60dB inside the render
+        };
+
+        // 1) Finite + decays, all 5 modes. Compares the tank's true peak
+        // level (wherever the onset latency puts it -- longer/bigger modes
+        // like Hall start later) against the last 0.5s, rather than a fixed
+        // 0-0.2s window that would misread a slow-onset mode's silence
+        // before its first pass arrives as "already decayed".
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            std::vector<float> mono;
+            renderIR (mode, 2.0f, 1.0f, mono);
+            bool finite = true;
+            for (float x : mono) if (! std::isfinite (x)) { finite = false; break; }
+            expect (finite, "plate reverb mode " + juce::String (mode) + " impulse response is finite");
+
+            double peakDb = -300.0;
+            rt60Seconds (mono, &peakDb);
+            const double late = rms (mono, mono.size() - (size_t) (0.5 * sr), mono.size());
+            const double lateDb = 20.0 * std::log10 (juce::jmax (1.0e-9, late));
+            expect (lateDb < peakDb - 50.0,
+                    "plate reverb mode " + juce::String (mode) + " decays over 6s (peak "
+                    + juce::String (peakDb) + " dB, late " + juce::String (lateDb) + " dB)");
+        }
+
+        // 2) RT60 of Plate at decay 2s within 30% of 2s.
+        {
+            std::vector<float> mono;
+            renderIR ((int) spa::dsp::PlateReverb::Mode::plate, 2.0f, 1.0f, mono);
+            const double rt = rt60Seconds (mono);
+            expect (rt > 1.4 && rt < 2.6,
+                    "plate mode RT60 at decay=2s is within 30% of 2s (measured " + juce::String (rt) + "s)");
+        }
+
+        // 3) Hall longer than Room at the same decay setting.
+        {
+            std::vector<float> hallMono, roomMono;
+            renderIR ((int) spa::dsp::PlateReverb::Mode::hall, 2.0f, 1.0f, hallMono);
+            renderIR ((int) spa::dsp::PlateReverb::Mode::room, 2.0f, 1.0f, roomMono);
+            const double hallRt = rt60Seconds (hallMono);
+            const double roomRt = rt60Seconds (roomMono);
+            expect (hallRt > roomRt,
+                    "hall RT60 (" + juce::String (hallRt) + "s) exceeds room RT60 ("
+                    + juce::String (roomRt) + "s)");
+        }
+
+        // 4) Spring shows more modulation (spectral flux) than Plate. Flux
+        // is normalized per-frame-transition by that transition's own
+        // magnitude sum (a modulation RATE, not raw energy) over a short,
+        // fixed early window common to both modes -- otherwise a mode whose
+        // tank simply rings on longer (Plate's RT60 is much longer than
+        // Spring's short, bright decay) racks up more raw total flux just
+        // by having more non-silent frames to sum over, independent of how
+        // much each frame actually wobbles. A short decaying impulse turned
+        // out to be too noisy a probe for this (broadband diffusion energy
+        // swamps the much subtler allpass-modulation signal), so this feeds
+        // a SUSTAINED tone through the wet path instead and measures pitch
+        // wobble directly via zero-crossing interval variance (a standard
+        // vibrato-depth measure) -- a modulated delay applied to a steady
+        // tone visibly perturbs its zero-crossing spacing in direct
+        // proportion to the modulation depth/rate, which is exactly the
+        // "boing" character difference REVERB MOD DEPTH is meant to voice
+        // per mode.
+        {
+            auto zeroCrossingJitter = [&] (int mode)
+            {
+                FX fx;
+                fx.prepare (sr, n);
+                FX::Params p;
+                p.reverbEnable = true;
+                p.reverbMode = mode;
+                p.reverbMix = 1.0f;
+                p.reverbDecay = 3.0f;
+                p.reverbSize = 0.5f;
+                p.reverbDamping = 0.3f;
+                p.reverbModDepth = 1.0f;
+
+                constexpr double toneHz = 220.0;
+                const int totalSamples = (int) (2.0 * sr);
+                std::vector<float> wet ((size_t) totalSamples);
+                juce::AudioBuffer<float> buf (2, n);
+                int written = 0;
+                for (int b = 0; written < totalSamples; ++b)
+                {
+                    for (int s = 0; s < n; ++s)
+                    {
+                        const float x = (float) std::sin (juce::MathConstants<double>::twoPi * toneHz
+                                                 * (double) (b * n + s) / sr);
+                        buf.setSample (0, s, x); buf.setSample (1, s, x);
+                    }
+                    fx.process (buf, p);
+                    for (int s = 0; s < n && written < totalSamples; ++s, ++written)
+                        wet[(size_t) written] = buf.getSample (0, s);
+                }
+
+                // Zero-crossing intervals over the settled second half (past
+                // the tank's onset latency for every mode).
+                std::vector<double> intervals;
+                size_t lastCross = 0; bool have = false;
+                const size_t start = (size_t) (1.0 * sr);
+                for (size_t i = start + 1; i < wet.size(); ++i)
+                {
+                    if ((wet[i - 1] <= 0.0f) != (wet[i] <= 0.0f))
+                    {
+                        if (have) intervals.push_back ((double) (i - lastCross));
+                        lastCross = i; have = true;
+                    }
+                }
+                if (intervals.size() < 4) return 0.0;
+                double mean = 0.0;
+                for (double v : intervals) mean += v;
+                mean /= (double) intervals.size();
+                double var = 0.0;
+                for (double v : intervals) var += (v - mean) * (v - mean);
+                var /= (double) intervals.size();
+                return std::sqrt (var);   // stdev of zero-crossing spacing, in samples
+            };
+
+            const double plateJitter = zeroCrossingJitter ((int) spa::dsp::PlateReverb::Mode::plate);
+            const double springJitter = zeroCrossingJitter ((int) spa::dsp::PlateReverb::Mode::spring);
+            expect (springJitter > plateJitter,
+                    "spring mode shows more modulation (zero-crossing jitter " + juce::String (springJitter)
+                    + " samples) than plate (" + juce::String (plateJitter) + " samples)");
+        }
+
+        // 5) Stereo width: correlation drops with width=1, stays near 1 with width=0.
+        {
+            std::vector<float> mono, l1, r1;
+            renderIR ((int) spa::dsp::PlateReverb::Mode::hall, 2.0f, 1.0f, mono, &l1, &r1);
+            std::vector<float> mono0, l0, r0;
+            renderIR ((int) spa::dsp::PlateReverb::Mode::hall, 2.0f, 0.0f, mono0, &l0, &r0);
+
+            auto correlation = [] (const std::vector<float>& l, const std::vector<float>& r, size_t from, size_t to)
+            {
+                double sumLR = 0.0, sumLL = 0.0, sumRR = 0.0;
+                for (size_t i = from; i < to; ++i)
+                {
+                    sumLR += (double) l[i] * r[i];
+                    sumLL += (double) l[i] * l[i];
+                    sumRR += (double) r[i] * r[i];
+                }
+                return sumLR / juce::jmax (1.0e-9, std::sqrt (sumLL * sumRR));
+            };
+
+            const size_t from = (size_t) (0.3 * sr), to = (size_t) (1.5 * sr);
+            const double corrWide = correlation (l1, r1, from, to);
+            const double corrNarrow = correlation (l0, r0, from, to);
+            expect (corrWide < 0.9, "width=1 decorrelates L/R (corr " + juce::String (corrWide) + ")");
+            expect (corrNarrow > 0.99, "width=0 keeps L/R mono (corr " + juce::String (corrNarrow) + ")");
+        }
+
+        // 6) Mix=0 is bit-exact dry.
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMix = 0.0f;
+            juce::AudioBuffer<float> buf (2, n);
+            uint32_t rng = 4242u;
+            auto noise = [&rng] { rng = rng * 1664525u + 1013904223u; return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f; };
+            bool exact = true;
+            for (int b = 0; b < 8; ++b)
+            {
+                std::vector<float> in (2 * (size_t) n);
+                for (int s = 0; s < n; ++s)
+                {
+                    const float v = noise();
+                    buf.setSample (0, s, v); in[(size_t) s] = v;
+                    const float v2 = noise();
+                    buf.setSample (1, s, v2); in[(size_t) n + (size_t) s] = v2;
+                }
+                fx.process (buf, p);
+                for (int s = 0; s < n; ++s)
+                {
+                    if (std::memcmp (&in[(size_t) s], buf.getReadPointer (0) + s, sizeof (float)) != 0) exact = false;
+                    if (std::memcmp (&in[(size_t) n + (size_t) s], buf.getReadPointer (1) + s, sizeof (float)) != 0) exact = false;
+                }
+            }
+            expect (exact, "reverb mix=0 passes the dry signal through bit-exact");
+        }
+
+        // 7) No denormal slowdown / runaway: 30s of silence after an impulse
+        // stays finite and settles far below audibility.
+        {
+            FX fx;
+            fx.prepare (sr, n);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMix = 1.0f;
+            p.reverbDecay = 3.0f;
+            juce::AudioBuffer<float> buf (2, n);
+            {
+                juce::ScopedNoDenormals noDenormals;
+                buf.clear();
+                buf.setSample (0, 0, 1.0f); buf.setSample (1, 0, 1.0f);
+                fx.process (buf, p);
+                const int blocks = (int) (30.0 * sr / n);
+                bool finite = true;
+                float lastPeak = 0.0f;
+                for (int b = 0; b < blocks; ++b)
+                {
+                    buf.clear();
+                    fx.process (buf, p);
+                    lastPeak = 0.0f;
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int s = 0; s < n; ++s)
+                        {
+                            const float v = buf.getSample (ch, s);
+                            if (! std::isfinite (v)) finite = false;
+                            lastPeak = juce::jmax (lastPeak, std::abs (v));
+                        }
+                }
+                expect (finite, "reverb stays finite across 30s of post-impulse silence");
+                expect (lastPeak < 1.0e-12f,
+                        "reverb tail settles below audibility by 30s (last block peak "
+                        + juce::String (lastPeak, 15) + ")");
+            }
+        }
+    }
+
+    // reverbMix (and the other FX MIX knobs) now display as a 0-decimal
+    // percentage, with 0..1 storage unchanged -- the stored/automated range
+    // and default values are untouched, only getText/getValueForText change.
+    static void reverbMixPercentTest()
+    {
+        std::cout << "reverbMixPercentTest\n";
+        namespace fx = spa::params::id::fx;
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 256);
+
+        auto* reverbMix = proc.getAPVTS().getParameter (fx::reverbMix);
+        jassert (reverbMix != nullptr);
+        reverbMix->setValueNotifyingHost (reverbMix->convertTo0to1 (0.13f));
+        const auto text = reverbMix->getCurrentValueAsText();
+        expect (text == "13 %", "reverbMix at 0.13 displays as \"13 %\" (got \"" + text + "\")");
+        const auto roundTrip = reverbMix->getValueForText (text);
+        expect (std::abs (roundTrip - reverbMix->convertTo0to1 (0.13f)) < 0.005f,
+                "reverbMix getValueForText(\"13 %\") round-trips to 0.13 (got "
+                + juce::String (reverbMix->convertFrom0to1 (roundTrip)) + ")");
+
+        // 0% and 100% at the extremes.
+        reverbMix->setValueNotifyingHost (0.0f);
+        expect (reverbMix->getCurrentValueAsText() == "0 %", "reverbMix at 0 displays \"0 %\"");
+        reverbMix->setValueNotifyingHost (1.0f);
+        expect (reverbMix->getCurrentValueAsText() == "100 %", "reverbMix at 1 displays \"100 %\"");
+
+        // The other FX MIX knobs format as percent too.
+        const char* otherMixIDs[] = { fx::distMix, fx::chorusMix, fx::delayMix,
+                                       fx::modMix, fx::tremMix, fx::vibMix, fx::convMix };
+        for (auto* pid : otherMixIDs)
+        {
+            auto* p = proc.getAPVTS().getParameter (juce::String (pid));
+            jassert (p != nullptr);
+            p->setValueNotifyingHost (p->convertTo0to1 (0.5f));
+            expect (p->getCurrentValueAsText() == "50 %",
+                    juce::String (pid) + " displays as percent (got \""
+                    + p->getCurrentValueAsText() + "\")");
         }
     }
 
@@ -3759,8 +4103,8 @@ namespace
         const auto written = pm.generateFactoryPresets (packs, libRoot);
         expect (written == 36, "3 presets x 12 packs written (" + juce::String (written) + ")");
 
-        expect (lib::PresetManager::factoryRecipeVersion == 4,
-                "factoryRecipeVersion stamps at v4 ("
+        expect (lib::PresetManager::factoryRecipeVersion == 6,
+                "factoryRecipeVersion stamps at v6 ("
                     + juce::String (lib::PresetManager::factoryRecipeVersion) + ")");
 
         // Reads one PARAM's value out of a captured state ValueTree.
@@ -8335,6 +8679,8 @@ int main (int argc, char* argv[])
     convolveTailLengthTest();
     reverbMixTest();
     reverbStabilityTest();
+    plateReverbCharacterTest();
+    reverbMixPercentTest();
     distCrushTest();
     parametricEqTest();
     eqBandTypesTest();

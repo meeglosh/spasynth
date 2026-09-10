@@ -90,7 +90,17 @@ public:
     // real, long SFX file for as long as it's held, rather than riding that
     // one file's own natural decay into silence -- found and fixed via a
     // real-library audibility pass (factoryPresetsRealLibraryAudibleTest).
-    static constexpr int factoryRecipeVersion = 4;
+    // v5 (1.0.15) = reverbMix values retuned for the new LINEAR mix law
+    // (0..1 = dry..wet, replacing the old equal-power crossfade) that ships
+    // alongside the Dattorro-plate-derived reverb engine -- the old 0.3-0.6
+    // values were ear-tuned against the old curve and read far too wet under
+    // the new one. v6 (1.0.15) = Pulse variant 5 ("Bright Pluck Layer")'s
+    // amp sustain raised 0.06 -> 0.35: its PLUCK layer decays to silence on
+    // its own (a physically-modeled excitation, not a sustaining
+    // oscillator) and the old low sustain floor let a held note ride both
+    // layers under the silence threshold -- found via --real-library
+    // ("Budgie Parakeet Pulse", "Paper Pulse").
+    static constexpr int factoryRecipeVersion = 6;
 
     static constexpr int numKeysVariants = 6;
     static constexpr int numTextureVariants = 5;

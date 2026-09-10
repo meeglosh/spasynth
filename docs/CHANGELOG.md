@@ -78,6 +78,13 @@ A large round of features and fixes from our testers' playtest sessions.
 - The on-screen keyboard's computer-key playing can now be shifted by octave
   with the Z and X keys, or the new minus and plus buttons on the keyboard
   strip. The setting is saved with your session.
+- The REVERB effect has a new engine, based on the classic plate reverb
+  design, for a smoother and more natural tail across all five modes (Hall,
+  Plate, Chamber, Room, Spring).
+- All the effects' MIX knobs, including REVERB, now read in percent, and an
+  even 50% now gives an exact half-and-half blend of the dry and processed
+  signal instead of the more sensitive curve REVERB used before. Factory
+  presets have been refreshed for the new REVERB feel.
 
 **Notes for this build**
 

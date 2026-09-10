@@ -227,11 +227,13 @@ void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)
 
 void FXChain::processReverb (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    // 4-line FDN engine (FDNReverb) with mode voicings. MIX is a true dry/wet
-    // dial handled inside the engine as an equal-power (sin/cos) crossfade:
-    // unity dry at 0, full wet (pure reverb) at 1, perceived level roughly
-    // constant since the tail and the dry signal are decorrelated.
-    FDNReverb::Params rp;
+    // Dattorro-plate-derived engine (PlateReverb) with mode voicings. MIX is
+    // a LINEAR dry/wet dial handled inside the engine (dry = 1-mix, wet =
+    // mix): 0% is untouched dry, 100% is pure wet, 50% is exactly half of
+    // each. (1.0.14 and earlier used an equal-power sin/cos crossfade on the
+    // old FDN engine, which made the knob feel oversensitive near 0 -- see
+    // CHANGELOG 1.0.15.)
+    PlateReverb::Params rp;
     rp.mode = p.reverbMode;
     rp.preDelayMs = p.reverbPreDelay;
     rp.size = p.reverbSize;

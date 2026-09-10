@@ -372,7 +372,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
         default:
             writeParam (state, id::ampRelease, 0.35f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbMix, 0.4f);
+            writeParam (state, id::fx::reverbMix, 0.15f);
             break;
 
         case 1:   // sample + detuned wavetable layer underneath
@@ -384,7 +384,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::oscSlot (1, id::osc::fine), 8.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -12.0f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbMix, 0.35f);
+            writeParam (state, id::fx::reverbMix, 0.13f);
             break;
 
         case 2:   // sample (kept audible in OSC A per the common preamble
@@ -420,7 +420,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::routeParam (0, id::route::depth), 0.5f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
             writeParam (state, id::fx::reverbSize, 0.6f);
-            writeParam (state, id::fx::reverbMix, 0.5f);
+            writeParam (state, id::fx::reverbMix, 0.18f);
             break;
 
         case 5:   // sample, unison voice mode
@@ -429,7 +429,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::unisonVoices, 4.0f);
             writeParam (state, id::unisonDetune, 18.0f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbMix, 0.3f);
+            writeParam (state, id::fx::reverbMix, 0.12f);
             break;
     }
 
@@ -485,7 +485,7 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::chaos::positionAmount, 0.35f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
             writeParam (state, id::fx::reverbSize, 0.7f);
-            writeParam (state, id::fx::reverbMix, 0.6f);
+            writeParam (state, id::fx::reverbMix, 0.3f);
             writeParam (state, id::fx::chorusEnable, 1.0f);
             break;
 
@@ -496,7 +496,7 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::chaos::positionAmount, 0.4f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
             writeParam (state, id::fx::reverbSize, 0.85f);
-            writeParam (state, id::fx::reverbMix, 0.6f);
+            writeParam (state, id::fx::reverbMix, 0.3f);
             break;
 
         case 2:   // two granular slots (largest + middle), detuned against each other
@@ -514,7 +514,7 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::oscSlot (1, id::osc::fine), 15.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -8.0f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbMix, 0.35f);
+            writeParam (state, id::fx::reverbMix, 0.18f);
             break;
 
         case 3:   // granular through a swept band-pass + fold distortion
@@ -726,6 +726,23 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
                   // short env, own follower panning it, + a plucked layer
                   // whose DAMPING (excitation brightness) is driven by the
                   // sample's own amp follower, reverb
+                  //
+                  // Real-library audibility fix: osc B here is PLUCK, a
+                  // physically-modeled excitation that decays to silence on
+                  // its own regardless of the amp envelope's sustain phase
+                  // (it only fires once per note, unlike a sustaining
+                  // oscillator) -- combined with the old 0.06 sustain floor
+                  // on the WHOLE voice, a held note could ride both layers
+                  // down under the silence threshold well before release,
+                  // even though the sample layer's loop still had audible
+                  // content to give. Found via --real-library on "Budgie
+                  // Parakeet Pulse"/"Paper Pulse" (this is the only Pulse
+                  // recipe using a self-decaying oscillator, so it was the
+                  // one exposed). Raised the sustain floor from 0.06 to
+                  // 0.35 -- the sample layer (a real, looping, NOT self-
+                  // decaying source) then carries the held note clearly
+                  // above the silence threshold on its own, independent of
+                  // whatever the pluck layer has decayed to.
             writeParam (state, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
             writeSamplePath (state, 0, toPortable (smallest, libraryRoot));
             writeParam (state, id::oscSlot (0, id::osc::keytrack), 1.0f);
@@ -735,7 +752,7 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::filter1Cutoff, 500.0f);
             writeParam (state, id::ampAttack, 0.001f);
             writeParam (state, id::ampDecay, 0.12f);
-            writeParam (state, id::ampSustain, 0.06f);
+            writeParam (state, id::ampSustain, 0.35f);
             writeParam (state, id::ampRelease, 0.08f);
             writeParam (state, id::routeParam (0, id::route::source), sfxAAmp);
             writeParam (state, id::routeParam (0, id::route::dest),
@@ -751,7 +768,7 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::routeParam (1, id::route::depth), 0.6f);
             writeParam (state, id::fx::reverbEnable, 1.0f);
             writeParam (state, id::fx::reverbSize, 0.5f);
-            writeParam (state, id::fx::reverbMix, 0.4f);
+            writeParam (state, id::fx::reverbMix, 0.15f);
             break;
     }
 

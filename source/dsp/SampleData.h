@@ -25,6 +25,32 @@ struct SampleData
     std::vector<float> pitchCurve;
     double hopSeconds = 0.010;
 
+    // Tempo sync analysis (transient detection at load time). detectedBpm is
+    // folded into 60..180; bpmConfidence 0..1 (0 = one-shot/no reliable
+    // periodicity -- SYNC then falls back to "stretch to the nearest whole
+    // beat count"). detectedBeats = the file's own length expressed in beats
+    // at detectedBpm (UI readout, and syncBeatsOverride==0 default).
+    double detectedBpm = 120.0;
+    float bpmConfidence = 0.0f;
+    float detectedBeats = 1.0f;
+
+    // 1.0 at hops where an onset was detected, else 0.0 -- same hop grid as
+    // ampCurve/pitchCurve. Lets the SYNC time-stretch engine shorten grains
+    // right at transients (audio-thread read, no allocation) without
+    // re-running detection at play time.
+    std::vector<float> onsetCurve;
+    bool onsetNear (double seconds, double windowSeconds) const noexcept
+    {
+        if (onsetCurve.empty() || hopSeconds <= 0.0)
+            return false;
+        const auto span = juce::jmax (1, (int) (windowSeconds / hopSeconds));
+        const auto centre = (int) (seconds / hopSeconds);
+        for (int i = juce::jmax (0, centre - span); i <= juce::jmin ((int) onsetCurve.size() - 1, centre + span); ++i)
+            if (onsetCurve[(size_t) i] > 0.5f)
+                return true;
+        return false;
+    }
+
     int lengthSamples() const noexcept { return audio.getNumSamples(); }
     double lengthSeconds() const noexcept
     {

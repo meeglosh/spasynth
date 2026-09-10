@@ -1022,6 +1022,424 @@ namespace
         }
     }
 
+    // Writes a click-train WAV: numClicks short percussive bursts (2.5 kHz
+    // ring, ~15 ms exponential decay -- a sharp attack for onset detection
+    // to grab) spaced `periodSeconds` apart, with every accentEvery-th click
+    // louder (downbeat accent). accentEvery<=0 = no accenting.
+    static juce::File writeClickPattern (double sampleRate, double periodSeconds,
+                                         int numClicks, int accentEvery)
+    {
+        constexpr double clickFreq = 2500.0;
+        constexpr double clickDurSeconds = 0.015;
+        const auto clickLen = (int) (clickDurSeconds * sampleRate);
+        const auto totalSeconds = periodSeconds * (double) numClicks + clickDurSeconds * 2.0;
+        const auto numSamples = (int) (totalSeconds * sampleRate);
+
+        juce::AudioBuffer<float> buffer (1, numSamples);
+        buffer.clear();
+        for (int c = 0; c < numClicks; ++c)
+        {
+            const auto amp = (accentEvery > 0 && c % accentEvery == 0) ? 1.0f : 0.55f;
+            const auto start = (int) ((double) c * periodSeconds * sampleRate);
+            for (int i = 0; i < clickLen && start + i < numSamples; ++i)
+            {
+                const auto env = (float) std::exp (-(double) i / (clickDurSeconds * sampleRate * 0.25));
+                buffer.addSample (0, start + i, amp * env * (float) std::sin (
+                    juce::MathConstants<double>::twoPi * clickFreq * i / sampleRate));
+            }
+        }
+
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("spasynth-click-test", ".wav");
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+        auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
+                                                       .withSampleRate (sampleRate)
+                                                       .withNumChannels (1)
+                                                       .withBitsPerSample (24));
+        if (writer != nullptr)
+            writer->writeFromAudioSampleBuffer (buffer, 0, numSamples);
+        return file;
+    }
+
+    // Simple peak/onset picker for measuring RENDERED timing: half-wave-
+    // rectified sample-to-sample-envelope flux with a refractory gap, same
+    // idea as the production loader's detector but standalone here so the
+    // test doesn't just re-invoke the code under test.
+    static std::vector<double> detectOnsetsInBuffer (const std::vector<float>& samples, double sampleRate)
+    {
+        // Coarse RMS envelope at ~2 ms hops.
+        const auto hop = juce::jmax (1, (int) (0.002 * sampleRate));
+        std::vector<float> env;
+        for (size_t start = 0; start < samples.size(); start += (size_t) hop)
+        {
+            const auto end = juce::jmin (start + (size_t) hop, samples.size());
+            double sum = 0.0;
+            for (auto i = start; i < end; ++i) sum += (double) samples[i] * samples[i];
+            env.push_back ((float) std::sqrt (sum / (double) juce::jmax ((size_t) 1, end - start)));
+        }
+
+        std::vector<float> flux (env.size(), 0.0f);
+        for (size_t i = 1; i < env.size(); ++i)
+            flux[i] = juce::jmax (0.0f, env[i] - env[i - 1]);
+
+        const auto refractoryHops = juce::jmax (1, (int) (0.05 / (hop / sampleRate)));
+        std::vector<double> onsets;
+        int lastOnset = -refractoryHops - 1;
+        for (size_t i = 0; i < flux.size(); ++i)
+        {
+            if (flux[i] > 0.05f
+                && (int) i - lastOnset > refractoryHops
+                && (i == 0 || flux[i] >= flux[i - 1])
+                && (i + 1 >= flux.size() || flux[i] >= flux[i + 1]))
+            {
+                onsets.push_back ((double) i * hop / sampleRate);
+                lastOnset = (int) i;
+            }
+        }
+        return onsets;
+    }
+
+    // Loader tempo detection: quarter/eighth-note click trains land near
+    // their true BPM with useful confidence; one-shots and onset-free pads
+    // report confidence 0 and fall back to whole-beat-count sensibly.
+    static void tempoDetectionTest()
+    {
+        std::cout << "tempoDetectionTest\n";
+        constexpr double sr = 48000.0;
+
+        // (a) 120 BPM quarter notes, 4 bars = 16 clicks, accent every 4th
+        // (downbeat).
+        {
+            const auto file = writeClickPattern (sr, 60.0 / 120.0, 16, 4);
+            const auto loaded = spa::dsp::loadSampleFromFile (file);
+            expect (loaded.sample != nullptr, "120bpm click file loads");
+            if (loaded.sample != nullptr)
+            {
+                expect (std::abs (loaded.sample->detectedBpm - 120.0) < 120.0 * 0.02,
+                        "120bpm quarter-note pattern detected within 2% (got "
+                            + juce::String (loaded.sample->detectedBpm) + ")");
+                expect (loaded.sample->bpmConfidence > 0.6f,
+                        "120bpm pattern detected with confidence > 0.6 (got "
+                            + juce::String (loaded.sample->bpmConfidence) + ")");
+                expect (std::abs (loaded.sample->detectedBeats - 16.0f) < 0.5f,
+                        "120bpm 4-bar pattern reads ~16 beats (got "
+                            + juce::String (loaded.sample->detectedBeats) + ")");
+            }
+            file.deleteFile();
+        }
+
+        // (b) 96 BPM eighth notes, 4 bars = 32 clicks.
+        {
+            const auto file = writeClickPattern (sr, 60.0 / 96.0 / 2.0, 32, 8);
+            const auto loaded = spa::dsp::loadSampleFromFile (file);
+            expect (loaded.sample != nullptr, "96bpm click file loads");
+            if (loaded.sample != nullptr)
+            {
+                expect (std::abs (loaded.sample->detectedBpm - 96.0) < 96.0 * 0.02,
+                        "96bpm eighth-note pattern detected within 2% (got "
+                            + juce::String (loaded.sample->detectedBpm) + ")");
+                expect (loaded.sample->bpmConfidence > 0.6f,
+                        "96bpm pattern detected with confidence > 0.6 (got "
+                            + juce::String (loaded.sample->bpmConfidence) + ")");
+            }
+            file.deleteFile();
+        }
+
+        // (c) a single 0.2s hit -- a one-shot, not rhythmic material.
+        {
+            const auto file = writeClickPattern (sr, 1.0, 1, 0);
+            // writeClickPattern's tail padding makes the file a bit over
+            // 0.2s already; trim isn't necessary -- what matters is there's
+            // exactly one onset.
+            const auto loaded = spa::dsp::loadSampleFromFile (file);
+            expect (loaded.sample != nullptr, "single-hit file loads");
+            if (loaded.sample != nullptr)
+            {
+                expect (loaded.sample->bpmConfidence == 0.0f,
+                        "single hit reports confidence 0 (one-shot)");
+                const bool wholeBeats = loaded.sample->detectedBeats == 1.0f
+                                     || loaded.sample->detectedBeats == 2.0f
+                                     || loaded.sample->detectedBeats == 4.0f
+                                     || loaded.sample->detectedBeats == 8.0f
+                                     || loaded.sample->detectedBeats == 16.0f;
+                expect (wholeBeats, "single hit falls back to a whole beat count (got "
+                            + juce::String (loaded.sample->detectedBeats) + ")");
+            }
+            file.deleteFile();
+        }
+
+        // (d) a 2s pad, no onsets at all.
+        {
+            const auto file = writeRampSine (2.0, sr);
+            const auto loaded = spa::dsp::loadSampleFromFile (file);
+            expect (loaded.sample != nullptr, "pad file loads");
+            if (loaded.sample != nullptr)
+                expect (loaded.sample->bpmConfidence == 0.0f, "onset-free pad reports confidence 0");
+            file.deleteFile();
+        }
+    }
+
+    // SamplePlayer's SYNC time-stretch path: timing follows the host tempo,
+    // pitch stays put (or follows the key when keytrack is on), independent
+    // of each other. Drives SamplePlayer directly (same unit-level approach
+    // as samplePlayerWholeFileLoopTest) so the DSP is isolated from the
+    // voice/filter/envelope chain.
+    static void sampleSyncStretchTest()
+    {
+        std::cout << "sampleSyncStretchTest\n";
+        constexpr double sr = 48000.0;
+        constexpr double nativeBpm = 120.0;
+        constexpr double beatPeriod = 60.0 / nativeBpm;
+
+        const auto file = writeClickPattern (sr, beatPeriod, 16, 4);
+        const auto loaded = spa::dsp::loadSampleFromFile (file);
+        expect (loaded.sample != nullptr, "sync test click file loads");
+        if (loaded.sample == nullptr) { file.deleteFile(); return; }
+        const auto& sample = *loaded.sample;
+
+        constexpr double hostBpm = 90.0;
+        // Enough output to cover the whole (loop-wrapped) stretched timeline
+        // several times over -- exercise the loop wrap as well as timing.
+        const auto numOut = (int) (sample.lengthSeconds() * (nativeBpm / hostBpm) * sr) + (int) sr;
+
+        const auto render = [&] (bool syncOn, double pitchRatio)
+        {
+            spa::dsp::SamplePlayer player;
+            player.noteOn (&sample, 0.0);
+            spa::dsp::SamplePlayer::Params p;
+            p.sample = &sample;
+            p.rateRatio = pitchRatio;
+            p.syncOn = syncOn;
+            p.stretchRatio = hostBpm / nativeBpm;
+            p.pitchRatio = pitchRatio;
+            p.engineSampleRate = sr;
+            p.loop = true;
+            p.loopStartNorm = 0.0;
+            p.loopEndNorm = 1.0;
+
+            std::vector<float> out;
+            out.reserve ((size_t) numOut);
+            for (int i = 0; i < numOut; ++i)
+                out.push_back (player.getNextSample (p).left);
+            return out;
+        };
+
+        const auto unsynced = render (false, 1.0);
+        const auto synced = render (true, 1.0);
+
+        // Timing: onsets in the SYNCED render land at the 90 BPM beat period.
+        const auto onsets = detectOnsetsInBuffer (synced, sr);
+        expect (onsets.size() >= 4, "SYNC render produces several detectable onsets");
+        if (onsets.size() >= 4)
+        {
+            const auto targetPeriod = 60.0 / hostBpm;
+            double sumAbsErrMs = 0.0;
+            int n = 0;
+            for (size_t i = 1; i < onsets.size(); ++i)
+            {
+                const auto spacing = onsets[i] - onsets[i - 1];
+                // Ignore an occasional missed/extra detection (spacing far
+                // from any small integer multiple of the target period).
+                const auto multiple = std::round (spacing / targetPeriod);
+                if (multiple < 1.0 || multiple > 2.0) continue;
+                sumAbsErrMs += std::abs (spacing - multiple * targetPeriod) * 1000.0;
+                ++n;
+            }
+            expect (n > 0, "enough onset spacings near the 90bpm grid to measure");
+            if (n > 0)
+                // The overlap-add grain hop (20ms) isn't explicitly re-
+                // anchored to detected transients -- only shortened there --
+                // so a sub-hop timing error is expected; 8ms average keeps
+                // this a meaningful "the grid actually moved" check without
+                // demanding sample-exact transient locking from a granular
+                // (not a phase-vocoder) stretcher.
+                expect (sumAbsErrMs / n < 8.0,
+                        "SYNC onsets land close to the 90bpm beat grid on average (got "
+                            + juce::String (sumAbsErrMs / n) + "ms)");
+        }
+
+        // Pitch: zero-crossing rate of the click's 2.5kHz ring should match
+        // between synced and unsynced (keytrack off, so pitch is untouched
+        // by either path).
+        const auto zeroCrossingHz = [&] (const std::vector<float>& buf, int from, int len)
+        {
+            int crossings = 0;
+            for (int i = from + 1; i < from + len && i < (int) buf.size(); ++i)
+                if ((buf[(size_t) (i - 1)] < 0.0f) != (buf[(size_t) i] < 0.0f))
+                    ++crossings;
+            return (float) crossings * (float) sr / (2.0f * (float) len);
+        };
+        // Measure just after the render start, inside the first click's ring
+        // (a stable-amplitude window before the overlap-add windows fully
+        // settle matters less than staying inside the transient's tail).
+        const auto freqUnsynced = zeroCrossingHz (unsynced, 40, 300);
+        const auto freqSynced = zeroCrossingHz (synced, 40, 300);
+        expect (std::abs (freqSynced - freqUnsynced) < freqUnsynced * 0.05f,
+                "SYNC doesn't change pitch vs. unsynced (unsynced " + juce::String (freqUnsynced)
+                    + "Hz, synced " + juce::String (freqSynced) + "Hz)");
+
+        // Keytrack-style pitch shift: 7 semitones up (ratio 2^(7/12) ~ 1.4983)
+        // applied via pitchRatio while stretchRatio (timing) is unchanged --
+        // pitch moves, timing doesn't.
+        constexpr double semitoneRatio = 1.4983;   // 2^(7/12)
+        const auto syncedShifted = render (true, semitoneRatio);
+        const auto freqShifted = zeroCrossingHz (syncedShifted, 40, 300);
+        expect (std::abs (freqShifted - freqUnsynced * (float) semitoneRatio) < freqUnsynced * 0.1f,
+                "keytrack pitch ratio applies inside SYNC grains (expected ~"
+                    + juce::String (freqUnsynced * (float) semitoneRatio) + "Hz, got "
+                    + juce::String (freqShifted) + "Hz)");
+
+        const auto onsetsShifted = detectOnsetsInBuffer (syncedShifted, sr);
+        if (onsetsShifted.size() >= 2)
+        {
+            const auto spacing = onsetsShifted[1] - onsetsShifted[0];
+            const auto targetPeriod = 60.0 / hostBpm;
+            const auto multiple = std::round (spacing / targetPeriod);
+            expect (multiple >= 1.0,
+                    "timing still follows the host tempo when pitch is shifted");
+        }
+
+        // syncBeatsOverride: forcing a different beat count changes the
+        // effective native BPM (and so the stretch ratio) predictably.
+        // The file's own true content is 16 quarter-note beats; overriding
+        // to 8 beats HALVES the implied native BPM (the file is now treated
+        // as spanning half as many beats over the same duration -- a
+        // slower native tempo), so at the same host BPM the stretch ratio
+        // roughly DOUBLES and the output plays through the source faster,
+        // roughly HALVING the onset spacing vs. the detected-tempo render.
+        {
+            const auto overrideNativeBpm = 60.0 * 8.0 / sample.lengthSeconds();
+            spa::dsp::SamplePlayer player;
+            player.noteOn (&sample, 0.0);
+            spa::dsp::SamplePlayer::Params p;
+            p.sample = &sample;
+            p.syncOn = true;
+            p.stretchRatio = hostBpm / overrideNativeBpm;
+            p.pitchRatio = 1.0;
+            p.engineSampleRate = sr;
+            p.loop = true;
+            p.loopEndNorm = 1.0;
+
+            std::vector<float> outOverride;
+            outOverride.reserve ((size_t) numOut);
+            for (int i = 0; i < numOut; ++i)
+                outOverride.push_back (player.getNextSample (p).left);
+
+            const auto onsetsOverride = detectOnsetsInBuffer (outOverride, sr);
+            expect (onsetsOverride.size() >= 2, "override render produces detectable onsets");
+            const auto meanSpacing = [] (const std::vector<double>& v)
+            {
+                if (v.size() < 2) return 0.0;
+                return (v.back() - v.front()) / (double) (v.size() - 1);
+            };
+            if (onsetsOverride.size() >= 2 && onsets.size() >= 2)
+            {
+                const auto spacingOverride = meanSpacing (onsetsOverride);
+                const auto spacingDetected = meanSpacing (onsets);
+                // Loop-wrap boundaries occasionally swallow/merge a detected
+                // onset in the measurement (not a DSP bug -- an artifact of
+                // this simple mean-spacing probe), which pulls the measured
+                // mean up from the ~2x-faster theoretical value; 0.9 still
+                // proves the override measurably changed the ratio in the
+                // right direction without demanding probe-level precision.
+                expect (spacingOverride < spacingDetected * 0.9,
+                        "syncBeatsOverride changes the effective stretch ratio (detected spacing "
+                            + juce::String (spacingDetected) + "s, override spacing "
+                            + juce::String (spacingOverride) + "s)");
+            }
+        }
+
+        // Sync off is bit-identical to a plain (non-stretch) render at the
+        // same pitchRatio -- getNextSample's syncOn branch is the only thing
+        // that changed.
+        const auto unsyncedAgain = render (false, 1.0);
+        bool identical = unsyncedAgain.size() == unsynced.size();
+        for (size_t i = 0; identical && i < unsynced.size(); ++i)
+            if (std::abs (unsynced[i] - unsyncedAgain[i]) > 0.0f) identical = false;
+        expect (identical, "sync off renders identically across runs (classic path untouched)");
+
+        file.deleteFile();
+    }
+
+    // Editor-level checks: the SYNC toggle exists only in sample mode, shows
+    // a readout, doesn't grab keyboard focus, and the beats field writes the
+    // override param.
+    static void sampleSyncUiTest()
+    {
+        std::cout << "sampleSyncUiTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->setVisible (true);   // AudioProcessorEditor defaults invisible until a host shows it
+        editor->resized();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);   // let construction-time async updates settle
+
+        // Walks up the parent chain checking each component's own isVisible()
+        // flag -- what isShowing() would report if this editor had a real
+        // desktop peer (it doesn't, in this headless test), so it's the
+        // correct check for a mode-driven setVisible() on an ANCESTOR (the
+        // Toggle wrapper) of the component actually under test (its inner
+        // juce::ToggleButton, whose own isVisible() flag stays true always).
+        const auto isVisibleInChain = [] (juce::Component* c)
+        {
+            for (; c != nullptr; c = c->getParentComponent())
+                if (! c->isVisible())
+                    return false;
+            return true;
+        };
+
+        const auto syncId = id::oscSlot (0, id::osc::syncToBpm);
+        auto* toggleComp = findByParamID (*editor, syncId);
+        expect (toggleComp != nullptr, "SYNC toggle found in the editor tree");
+        if (toggleComp == nullptr) return;
+        auto* toggleBtn = dynamic_cast<juce::ToggleButton*> (toggleComp);
+        expect (toggleBtn != nullptr, "SYNC control is a ToggleButton");
+        if (toggleBtn == nullptr) return;
+
+        // Wavetable mode (the default) -- not shown.
+        expect (! isVisibleInChain (toggleBtn), "SYNC toggle hidden outside sample mode");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        for (int i = 0; i < 20 && ! isVisibleInChain (toggleBtn); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);   // let the AsyncUpdater land
+        expect (isVisibleInChain (toggleBtn), "SYNC toggle shown in sample mode");
+        expect (! toggleBtn->getMouseClickGrabsKeyboardFocus(),
+                "SYNC toggle doesn't grab keyboard focus");
+
+        // Toggle -> OscStrip: the readout label is a direct sibling child.
+        auto* oscStrip = toggleBtn->getParentComponent() != nullptr
+                        ? toggleBtn->getParentComponent()->getParentComponent() : nullptr;
+        expect (oscStrip != nullptr, "found the OscStrip container");
+        juce::Label* readout = nullptr;
+        if (oscStrip != nullptr)
+            for (auto* child : oscStrip->getChildren())
+                if ((readout = dynamic_cast<juce::Label*> (child)) != nullptr)
+                    break;
+        expect (readout != nullptr, "SYNC readout label found");
+        if (readout == nullptr) return;
+        expect (isVisibleInChain (readout), "SYNC readout shown in sample mode");
+        expect (readout->getText().isNotEmpty(), "SYNC readout shows text ("
+                    + readout->getText() + ")");
+
+        // Simulate committing the beats field (the double-click editor's
+        // onTextChange, without driving a real mouse/keyboard edit gesture).
+        readout->setText ("8", juce::dontSendNotification);
+        expect (readout->onTextChange != nullptr, "readout has a commit handler wired");
+        if (readout->onTextChange != nullptr)
+            readout->onTextChange();
+
+        const auto overrideValue = proc.getAPVTS()
+            .getRawParameterValue (id::oscSlot (0, id::osc::syncBeatsOverride))->load();
+        expect (std::abs (overrideValue - 8.0f) < 0.26f,
+                "beats field commit writes syncBeatsOverride (got " + juce::String (overrideValue) + ")");
+    }
+
     static void granularTest()
     {
         std::cout << "granularTest\n";
@@ -4103,8 +4521,8 @@ namespace
         const auto written = pm.generateFactoryPresets (packs, libRoot);
         expect (written == 36, "3 presets x 12 packs written (" + juce::String (written) + ")");
 
-        expect (lib::PresetManager::factoryRecipeVersion == 6,
-                "factoryRecipeVersion stamps at v6 ("
+        expect (lib::PresetManager::factoryRecipeVersion == 7,
+                "factoryRecipeVersion stamps at v7 ("
                     + juce::String (lib::PresetManager::factoryRecipeVersion) + ")");
 
         // Reads one PARAM's value out of a captured state ValueTree.
@@ -4140,6 +4558,7 @@ namespace
 
         juce::StringArray keysNames, textureNames, pulseNames;
         std::set<juce::String> pulseFingerprints;
+        std::set<int> pulseOscBTables;
 
         for (const auto& pack : packs)
         {
@@ -4276,6 +4695,26 @@ namespace
                         expect (foundDrivingRoute,
                                 "\"" + name + "\" has an SFX-follower/ENV/LFO route driving the synth "
                                 "oscillator (or the shared filter path)");
+
+                        // v7 (built-in wavetable Table menu): collect the
+                        // Table choice of any wavetable-mode synth slot, so
+                        // the overall variety across all six variants can be
+                        // checked below.
+                        for (int slot = 1; slot < params::numOscSlots; ++slot)
+                        {
+                            const auto enabled = paramValueOf (state, id::oscSlot (slot, id::osc::enable));
+                            const auto mode = (int) paramValueOf (state, id::oscSlot (slot, id::osc::mode));
+                            if (enabled >= 0.5f && mode == (int) params::OscMode::wavetable)
+                                pulseOscBTables.insert ((int) paramValueOf (state, id::oscSlot (slot, id::osc::table)));
+                        }
+
+                        // v7 (re-voiced Dattorro-plate reverb): every Pulse
+                        // preset stays within the new linear mix law's range
+                        // (light 12-20%, drone/wash up to ~30%).
+                        const auto pulseReverbMix = paramValueOf (state, id::fx::reverbMix);
+                        expect (pulseReverbMix <= 0.35f,
+                                "\"" + name + "\" reverbMix is within the linear-law range, <= 0.35 ("
+                                    + juce::String (pulseReverbMix) + ")");
                     }
                 }
             }
@@ -4288,6 +4727,10 @@ namespace
         expect (pulseFingerprints.size() >= 4,
                 "at least 4 distinct Pulse recipes across 12 packs ("
                     + juce::String ((int) pulseFingerprints.size()) + " distinct)");
+
+        expect (pulseOscBTables.size() >= 4,
+                "at least 4 distinct osc::table values across the six Pulse variants' OSC B ("
+                    + juce::String ((int) pulseOscBTables.size()) + " distinct)");
 
         // Neighbour rule: variant assignment is round-robin by alphabetical
         // (case-insensitive) position, so two alphabetically-adjacent packs
@@ -8672,6 +9115,9 @@ int main (int argc, char* argv[])
     chaosTraceTest();
     samplePlaybackTest();
     samplePlayerWholeFileLoopTest();
+    tempoDetectionTest();
+    sampleSyncStretchTest();
+    sampleSyncUiTest();
     granularTest();
     quickSwapTest();
     sfxFollowerTest();

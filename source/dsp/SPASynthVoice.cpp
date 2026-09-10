@@ -121,6 +121,7 @@ SPASynthVoice::SPASynthVoice (const SharedState& sharedState, int voiceIndex)
       random ((juce::int64) 0x5350417500000000LL ^ (juce::int64) voiceIndex)
 {
     DestLookup::get();  // resolve indices before the audio thread needs them
+    smoothedStretchRatio.fill (1.0);
 }
 
 bool SPASynthVoice::canPlaySound (juce::SynthesiserSound* sound)
@@ -441,10 +442,32 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
             if (stat.mode == params::OscMode::sample)
             {
                 const auto ratio = std::exp2 ((keySemis + pitchOffset) / 12.0f);
+                const auto srcToEngine = stat.sample != nullptr
+                                        ? stat.sample->sourceSampleRate / sampleRate : 1.0;
+                const auto pitchRatio = (double) ratio * srcToEngine;
+
+                auto& smoothed = smoothedStretchRatio[(size_t) s];
+                if (stat.syncToBpm && stat.sample != nullptr && stat.nativeBpm > 1.0)
+                {
+                    // ~20ms one-pole smoothing at the chunk rate so a live
+                    // host-tempo change doesn't zipper.
+                    const auto target = (shared.bpm / stat.nativeBpm) * srcToEngine;
+                    const auto chunkSeconds = chunkSize / juce::jmax (1.0, sampleRate);
+                    const auto coeff = juce::jlimit (0.0, 1.0, chunkSeconds / 0.02);
+                    smoothed += (target - smoothed) * coeff;
+                }
+                else
+                {
+                    smoothed = pitchRatio;
+                }
+
                 sampleParams[(size_t) s] = {
                     stat.sample,
-                    (double) ratio * (stat.sample != nullptr
-                                          ? stat.sample->sourceSampleRate / sampleRate : 1.0),
+                    pitchRatio,
+                    stat.syncToBpm,
+                    smoothed,
+                    pitchRatio,
+                    sampleRate,
                     stat.loop,
                     (double) stat.loopStart,
                     (double) stat.loopEnd,

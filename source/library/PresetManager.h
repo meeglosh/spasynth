@@ -100,7 +100,20 @@ public:
     // oscillator) and the old low sustain floor let a held note ride both
     // layers under the silence threshold -- found via --real-library
     // ("Budgie Parakeet Pulse", "Paper Pulse").
-    static constexpr int factoryRecipeVersion = 6;
+    // v7 (1.0.17) = regenerated for the built-in wavetable Table menu and
+    // the re-voiced Dattorro-plate reverb engine (Mike's request: "regenerate
+    // all the Pulse presets to account for the new wavetable options and the
+    // updated reverb"). Pulse's OSC B wavetable layers now pick a table that
+    // suits the variant's character (Supersaw, Unison Spread, PWM, Bells --
+    // see the Pulse recipe table in PresetManager.cpp) instead of always
+    // defaulting to Basic Shapes; the FM layers (variants 1 and 4) stay FM,
+    // since the FM oscillator engine has no table param to select at all.
+    // Reverb on every Pulse/Keys/Texture variant that uses it now sets an
+    // explicit reverbMode (Room/Plate/Chamber/Hall/Spring) suited to its
+    // character, with size/decay/damping tuned per mode, and mix kept in
+    // the linear-law range (12-20% light, up to ~30% for the drone/wash
+    // variants).
+    static constexpr int factoryRecipeVersion = 7;
 
     static constexpr int numKeysVariants = 6;
     static constexpr int numTextureVariants = 5;

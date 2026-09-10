@@ -1,5 +1,7 @@
 #include "PresetManager.h"
 #include "../params/ParameterRegistry.h"
+#include "../dsp/WavetableFactory.h"
+#include "../dsp/PlateReverb.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -327,24 +329,34 @@ juce::ValueTree PresetManager::makeTemplateState() const
 // PLUS a real synth oscillator (wavetable/analog/fm/pluck) in OSC B at
 // >= -12dB, with the sample's own SFX-follower (or an ENV/LFO on the
 // audible layer) driving that synth layer in a DIFFERENT way per variant --
-// level, pitch, the shared filter, wavetable position, FM amount, pluck
-// damping. "SFX A" = the follower for OSC A's own sample (sfxFollowerBase +
-// 0 amp / +1 pitch):
+// level, pitch, the shared filter, wavetable position, FM amount. "SFX A" =
+// the follower for OSC A's own sample (sfxFollowerBase + 0 amp / +1 pitch).
+//
+// v7 (factoryRecipeVersion 7): regenerated to pick a built-in wavetable
+// Table per wavetable-mode OSC B layer, suited to its character (rather
+// than every wavetable layer defaulting to Basic Shapes), and to re-voice
+// every variant's reverb on the new Dattorro-plate engine (explicit mode +
+// size/decay/damping, mix kept in the 12-20%/~30%-wash linear-law range).
+// The FM layers (variants 1 and 4) stay FM -- the FM oscillator engine has
+// no Table param to select, so there is nothing to change there.
 //   0  sample (middle WAV, kt) + wavetable        | fast attack, short    | SFX A amp -> osc B LEVEL                 | tremolo (rhythmic gate) + delay
-//      layer (osc B, -8dB)                         release                | (sample dynamics gate the synth)         |
+//      layer (osc B, -8dB, Supersaw table)          release                | (sample dynamics gate the synth)         | + reverb (Plate, light)
 //   1  sample (middle WAV, kt), fast decay,        | fast decay, low       | env2 -> filter1 cutoff (percussive open);| crush distortion (low drive)
-//      nonzero sustain floor + FM layer             sustain floor          | SFX A pitch -> osc B FINE                |
-//      (osc B, -10dB)                                                      | (sample's pitch contour plays the synth) |
+//      nonzero sustain floor + FM layer             sustain floor          | SFX A pitch -> osc B FINE                | + reverb (Room, light)
+//      (osc B, -10dB, stays FM)                                            | (sample's pitch contour plays the synth) |
 //   2  granular (largest WAV, NOT keytracked --    | slow attack/release,  | LFO1 -> filter1 cutoff; chaos -> amp;    | delay (ping-pong)
-//      the drone exception) + a sustained analog     sustain 1              | SFX A amp -> osc B LEVEL (pad gated by   |
-//      pad (osc B, -9dB, -12st)                                             | the sample's own dynamics)               |
+//      the drone exception) + a sustained            sustain 1              | SFX A amp -> osc B LEVEL (pad gated by   | + reverb (Hall, wash)
+//      wavetable pad (osc B, -9dB, -12st,                                   | the sample's own dynamics)               |
+//      Unison Spread table)                                                 |                                           |
 //   3  sample (middle WAV, kt) + a quieter (-8dB)   | plain ADSR            | SFX A amp -> osc B WAVETABLE POSITION    | chorus
-//      sub wavetable layer -12st (osc B)                                    | (sample dynamics scan the wavetable)     |
+//      sub wavetable layer -12st (osc B,                                    | (sample dynamics scan the wavetable)     |
+//      PWM table)                                                           |                                           |
 //   4  sample (middle WAV, kt) + an FM layer        | plain ADSR            | LFO1 -> filter1 cutoff (band-pass sweep);| fold distortion
-//      (osc B, -10dB)                                                       | env2 -> osc B FM AMOUNT (metallic bite)  |
-//   5  sample (smallest WAV, kt), bright            | short/percussive env, | SFX A amp -> osc A pan; SFX A amp ->     | reverb
-//      (high-passed) + a plucked layer               nonzero sustain floor  | osc B PLUCK DAMP (excitation brightness) |
-//      (osc B, -9dB)                                                        |                                           |
+//      (osc B, -10dB, stays FM)                                             | env2 -> osc B FM AMOUNT (metallic bite)  |
+//   5  sample (smallest WAV, kt), bright            | short/percussive env, | SFX A amp -> osc A pan; SFX A amp ->     | reverb (Spring, light)
+//      (high-passed) + a wavetable layer               nonzero sustain floor  | osc B WAVETABLE POSITION (excitation   |
+//      (osc B, -9dB, Bells table -- metallic,                               | brightness, in place of the old         |
+//      replaces the old physically-modeled pluck)                          | pluck-damp route)                        |
 // =============================================================================
 
 juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const juce::File& libraryRoot,
@@ -371,7 +383,13 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
         case 0:   // sample, keytracked (original recipe)
         default:
             writeParam (state, id::ampRelease, 0.35f);
+            // Re-voiced for the Dattorro-plate reverb engine: a plain, light
+            // Room tail.
             writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::room);
+            writeParam (state, id::fx::reverbSize, 0.4f);
+            writeParam (state, id::fx::reverbDecay, 1.0f);
+            writeParam (state, id::fx::reverbDamping, 0.5f);
             writeParam (state, id::fx::reverbMix, 0.15f);
             break;
 
@@ -383,7 +401,12 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::oscSlot (1, id::osc::coarse), -12.0f);
             writeParam (state, id::oscSlot (1, id::osc::fine), 8.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -12.0f);
+            // Re-voiced for the Dattorro-plate reverb engine: light Chamber.
             writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::chamber);
+            writeParam (state, id::fx::reverbSize, 0.4f);
+            writeParam (state, id::fx::reverbDecay, 1.2f);
+            writeParam (state, id::fx::reverbDamping, 0.55f);
             writeParam (state, id::fx::reverbMix, 0.13f);
             break;
 
@@ -418,8 +441,13 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::routeParam (0, id::route::dest),
                         routeDestValue (id::oscSlot (0, id::osc::fine)));
             writeParam (state, id::routeParam (0, id::route::depth), 0.5f);
+            // Re-voiced for the Dattorro-plate reverb engine: a bigger Hall
+            // tail to match the pitch-drop's larger character.
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbSize, 0.6f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::hall);
+            writeParam (state, id::fx::reverbSize, 0.7f);
+            writeParam (state, id::fx::reverbDecay, 2.5f);
+            writeParam (state, id::fx::reverbDamping, 0.4f);
             writeParam (state, id::fx::reverbMix, 0.18f);
             break;
 
@@ -428,7 +456,13 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::voiceMode, (float) (int) params::VoiceMode::unison);
             writeParam (state, id::unisonVoices, 4.0f);
             writeParam (state, id::unisonDetune, 18.0f);
+            // Re-voiced for the Dattorro-plate reverb engine: Chamber for a
+            // fuller unison spread.
             writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::chamber);
+            writeParam (state, id::fx::reverbSize, 0.5f);
+            writeParam (state, id::fx::reverbDecay, 1.5f);
+            writeParam (state, id::fx::reverbDamping, 0.5f);
             writeParam (state, id::fx::reverbMix, 0.12f);
             break;
     }
@@ -483,8 +517,14 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
                         routeDestValue (id::oscSlot (0, id::osc::grainPos)));
             writeParam (state, id::routeParam (0, id::route::depth), 0.35f);
             writeParam (state, id::chaos::positionAmount, 0.35f);
+            // Re-voiced for the Dattorro-plate reverb engine: Plate suits
+            // this grain-cloud-plus-chorus wash. Up to ~30% mix (a
+            // drone/wash variant per the linear-law guidance).
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbSize, 0.7f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::plate);
+            writeParam (state, id::fx::reverbSize, 0.6f);
+            writeParam (state, id::fx::reverbDecay, 2.0f);
+            writeParam (state, id::fx::reverbDamping, 0.4f);
             writeParam (state, id::fx::reverbMix, 0.3f);
             writeParam (state, id::fx::chorusEnable, 1.0f);
             break;
@@ -494,8 +534,12 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::oscSlot (0, id::osc::grainSize), 150.0f);
             writeParam (state, id::oscSlot (0, id::osc::grainDensity), 20.0f);
             writeParam (state, id::chaos::positionAmount, 0.4f);
-            writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbSize, 0.85f);
+            // Re-voiced for the Dattorro-plate reverb engine: Hall for the
+            // biggest wash in the set. Up to ~30% mix (drone/wash variant).
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::hall);
+            writeParam (state, id::fx::reverbSize, 0.9f);
+            writeParam (state, id::fx::reverbDecay, 4.0f);
+            writeParam (state, id::fx::reverbDamping, 0.3f);
             writeParam (state, id::fx::reverbMix, 0.3f);
             break;
 
@@ -513,7 +557,13 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::oscSlot (1, id::osc::grainPos), safeGrainPosBase);
             writeParam (state, id::oscSlot (1, id::osc::fine), 15.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -8.0f);
+            // Re-voiced for the Dattorro-plate reverb engine: light Room to
+            // glue the two detuned granular layers without washing them out.
             writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::room);
+            writeParam (state, id::fx::reverbSize, 0.4f);
+            writeParam (state, id::fx::reverbDecay, 1.2f);
+            writeParam (state, id::fx::reverbDamping, 0.5f);
             writeParam (state, id::fx::reverbMix, 0.18f);
             break;
 
@@ -587,6 +637,9 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::ampRelease, 0.2f);
             writeParam (state, id::oscSlot (1, id::osc::enable), 1.0f);
             writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::wavetable);
+            writeParam (state, id::oscSlot (1, id::osc::table),
+                        (float) (int) dsp::WavetableTableChoice::supersaw);
+            writeParam (state, id::oscSlot (1, id::osc::position), 0.35f);
             writeParam (state, id::oscSlot (1, id::osc::level), -8.0f);
             writeParam (state, id::routeParam (0, id::route::source), sfxAAmp);
             writeParam (state, id::routeParam (0, id::route::dest),
@@ -597,6 +650,15 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::tremDepth, 0.75f);
             writeParam (state, id::fx::delayEnable, 1.0f);
             writeParam (state, id::fx::delayMix, 0.25f);
+            // Re-voiced for the Dattorro-plate reverb engine: Plate suits a
+            // gated pulse's short-repeat character. Light mix per the new
+            // linear mix law (was equal-power).
+            writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::plate);
+            writeParam (state, id::fx::reverbSize, 0.4f);
+            writeParam (state, id::fx::reverbDecay, 1.2f);
+            writeParam (state, id::fx::reverbDamping, 0.5f);
+            writeParam (state, id::fx::reverbMix, 0.15f);
             break;
 
         case 1:   // Percussive Pitch Play: sample, fast decay (nonzero sustain
@@ -631,13 +693,24 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::distEnable, 1.0f);
             writeParam (state, id::fx::distType, 3.0f);   // Crush
             writeParam (state, id::fx::distDrive, 0.15f);
+            // Re-voiced for the Dattorro-plate reverb engine: Room suits
+            // this percussive character. Kept light and tight so it doesn't
+            // wash out the fast decay.
+            writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::room);
+            writeParam (state, id::fx::reverbSize, 0.25f);
+            writeParam (state, id::fx::reverbDecay, 0.6f);
+            writeParam (state, id::fx::reverbDamping, 0.6f);
+            writeParam (state, id::fx::reverbMix, 0.12f);
             break;
 
         case 2:   // Drone Bed: granular (largest WAV, NOT keytracked -- the
-                  // drone exception) + a sustained analog pad whose LEVEL is
+                  // drone exception) + a sustained wavetable pad (Unison
+                  // Spread table -- was a plain analog sine) whose LEVEL is
                   // gated by the sample's own amp follower (so the pad only
                   // breathes in while the source is actually speaking up),
                   // chaos -> amp, slow LFO -> LP24 cutoff, ping-pong delay
+                  // + reverb (Hall, wash)
             writeParam (state, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::granular);
             writeSamplePath (state, 0, toPortable (largest, libraryRoot));
             writeParam (state, id::oscSlot (0, id::osc::keytrack), 0.0f);
@@ -657,8 +730,10 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::routeParam (0, id::route::dest), routeDestValue (id::filter1Cutoff));
             writeParam (state, id::routeParam (0, id::route::depth), 0.5f);
             writeParam (state, id::oscSlot (1, id::osc::enable), 1.0f);
-            writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::analog);
-            writeParam (state, id::oscSlot (1, id::osc::analogShape), 4.0f);   // Sine
+            writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::wavetable);
+            writeParam (state, id::oscSlot (1, id::osc::table),
+                        (float) (int) dsp::WavetableTableChoice::unisonSpread);
+            writeParam (state, id::oscSlot (1, id::osc::position), 0.5f);
             writeParam (state, id::oscSlot (1, id::osc::coarse), -12.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -9.0f);
             writeParam (state, id::routeParam (1, id::route::source), sfxAAmp);
@@ -669,11 +744,20 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::delayPingPong, 1.0f);
             writeParam (state, id::fx::delayFeedback, 0.5f);
             writeParam (state, id::fx::delayMix, 0.35f);
+            // Re-voiced for the Dattorro-plate reverb engine: Hall suits the
+            // drone's long sustained wash. Up to ~30% mix per the linear-law
+            // guidance for drone/wash variants (light variants stay 12-20%).
+            writeParam (state, id::fx::reverbEnable, 1.0f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::hall);
+            writeParam (state, id::fx::reverbSize, 0.85f);
+            writeParam (state, id::fx::reverbDecay, 4.0f);
+            writeParam (state, id::fx::reverbDamping, 0.3f);
+            writeParam (state, id::fx::reverbMix, 0.28f);
             break;
 
         case 3:   // Wavetable Scan: sample + a quieter sub wavetable layer an
-                  // octave down whose WAVETABLE POSITION is scanned by the
-                  // sample's own amp follower, chorus
+                  // octave down (PWM table) whose WAVETABLE POSITION is
+                  // scanned by the sample's own amp follower, chorus
             writeParam (state, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
             writeSamplePath (state, 0, toPortable (middle, libraryRoot));
             writeParam (state, id::oscSlot (0, id::osc::keytrack), 1.0f);
@@ -681,6 +765,9 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeSafeSampleLoop (state, 0, middle);
             writeParam (state, id::oscSlot (1, id::osc::enable), 1.0f);
             writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::wavetable);
+            writeParam (state, id::oscSlot (1, id::osc::table),
+                        (float) (int) dsp::WavetableTableChoice::pwm);
+            writeParam (state, id::oscSlot (1, id::osc::position), 0.15f);   // base, before the SFX route scans it
             writeParam (state, id::oscSlot (1, id::osc::coarse), -12.0f);
             writeParam (state, id::oscSlot (1, id::osc::level), -8.0f);
             writeParam (state, id::routeParam (0, id::route::source), sfxAAmp);
@@ -722,27 +809,23 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::distDrive, 0.3f);
             break;
 
-        case 5:   // Bright Pluck Layer: sample (smallest WAV), high-passed,
-                  // short env, own follower panning it, + a plucked layer
-                  // whose DAMPING (excitation brightness) is driven by the
-                  // sample's own amp follower, reverb
+        case 5:   // Bright Metallic Layer (was "Bright Pluck Layer"): sample
+                  // (smallest WAV), high-passed, short env, own follower
+                  // panning it, + a metallic wavetable layer (Bells table)
+                  // whose WAVETABLE POSITION (excitation brightness, in place
+                  // of the old pluck-damp route) is driven by the sample's
+                  // own amp follower, reverb
                   //
-                  // Real-library audibility fix: osc B here is PLUCK, a
-                  // physically-modeled excitation that decays to silence on
-                  // its own regardless of the amp envelope's sustain phase
-                  // (it only fires once per note, unlike a sustaining
-                  // oscillator) -- combined with the old 0.06 sustain floor
-                  // on the WHOLE voice, a held note could ride both layers
-                  // down under the silence threshold well before release,
-                  // even though the sample layer's loop still had audible
-                  // content to give. Found via --real-library on "Budgie
-                  // Parakeet Pulse"/"Paper Pulse" (this is the only Pulse
-                  // recipe using a self-decaying oscillator, so it was the
-                  // one exposed). Raised the sustain floor from 0.06 to
-                  // 0.35 -- the sample layer (a real, looping, NOT self-
-                  // decaying source) then carries the held note clearly
-                  // above the silence threshold on its own, independent of
-                  // whatever the pluck layer has decayed to.
+                  // v7: osc B changed from PLUCK (a physically-modeled,
+                  // self-decaying excitation) to the wavetable engine's
+                  // Bells table, which reads just as bright/metallic but is
+                  // a genuinely sustaining oscillator -- so the historical
+                  // real-library silence risk this variant had (a
+                  // self-decaying layer plus a low sustain floor could ride
+                  // a held note under the silence threshold; fixed by
+                  // raising ampSustain 0.06 -> 0.35, v6) no longer applies
+                  // the same way, though the 0.35 floor is kept as-is since
+                  // it's still the sample layer doing the sustaining work.
             writeParam (state, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
             writeSamplePath (state, 0, toPortable (smallest, libraryRoot));
             writeParam (state, id::oscSlot (0, id::osc::keytrack), 1.0f);
@@ -759,15 +842,22 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
                         routeDestValue (id::oscSlot (0, id::osc::pan)));
             writeParam (state, id::routeParam (0, id::route::depth), 0.8f);
             writeParam (state, id::oscSlot (1, id::osc::enable), 1.0f);
-            writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::pluck);
+            writeParam (state, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::wavetable);
+            writeParam (state, id::oscSlot (1, id::osc::table),
+                        (float) (int) dsp::WavetableTableChoice::bells);
+            writeParam (state, id::oscSlot (1, id::osc::position), 0.2f);
             writeParam (state, id::oscSlot (1, id::osc::level), -9.0f);
-            writeParam (state, id::oscSlot (1, id::osc::pluckDamp), 0.3f);
             writeParam (state, id::routeParam (1, id::route::source), sfxAAmp);
             writeParam (state, id::routeParam (1, id::route::dest),
-                        routeDestValue (id::oscSlot (1, id::osc::pluckDamp)));
+                        routeDestValue (id::oscSlot (1, id::osc::position)));
             writeParam (state, id::routeParam (1, id::route::depth), 0.6f);
+            // Re-voiced for the Dattorro-plate reverb engine: Spring suits a
+            // bright, plucky character.
             writeParam (state, id::fx::reverbEnable, 1.0f);
-            writeParam (state, id::fx::reverbSize, 0.5f);
+            writeParam (state, id::fx::reverbMode, (float) (int) dsp::PlateReverb::Mode::spring);
+            writeParam (state, id::fx::reverbSize, 0.35f);
+            writeParam (state, id::fx::reverbDecay, 1.0f);
+            writeParam (state, id::fx::reverbDamping, 0.4f);
             writeParam (state, id::fx::reverbMix, 0.15f);
             break;
     }

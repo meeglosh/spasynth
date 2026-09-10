@@ -43,6 +43,13 @@ struct SharedState
         int rootNote = 60;
         float grainPitch = 0.0f;
 
+        // Sample SYNC (time-stretch to host BPM). nativeBpm is the resolved
+        // "effective native BPM" (syncBeatsOverride>0 derived, else the
+        // loader's detectedBpm) -- computed once per block by the processor
+        // so voices never touch SampleData's detection fields directly.
+        bool syncToBpm = false;
+        double nativeBpm = 120.0;
+
         int analogShape = 0;
         float fmRatio = 2.0f;
         int noiseColor = 0;
@@ -419,6 +426,10 @@ private:
     // (feeds the follower playhead, same one-chunk-latency trick as chaos).
     std::array<float, params::maxOscSlots> slotPanL {}, slotPanR {};
     std::array<float, params::maxOscSlots> lastGrainPos {};
+
+    // SYNC stretch ratio, smoothed ~20ms per slot to avoid zippering when
+    // the host tempo changes (chunk-rate one-pole, see computeChunk).
+    std::array<double, params::maxOscSlots> smoothedStretchRatio;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthVoice)
 };

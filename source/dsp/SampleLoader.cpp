@@ -121,6 +121,126 @@ namespace
 
         return curve;
     }
+
+    // Onset detection from the (already-computed) amplitude envelope: a
+    // half-wave-rectified flux (frame-to-frame rise only) with an adaptive
+    // local-mean threshold, then a local-max peak pick with a 100 ms
+    // refractory gap (avoids double-triggering on one transient's ringing).
+    std::vector<double> detectOnsetsSeconds (const std::vector<float>& ampCurve, double hopSeconds)
+    {
+        std::vector<float> flux (ampCurve.size(), 0.0f);
+        for (size_t i = 1; i < ampCurve.size(); ++i)
+            flux[i] = juce::jmax (0.0f, ampCurve[i] - ampCurve[i - 1]);
+
+        const int windowHops = juce::jmax (1, (int) (0.2 / hopSeconds));
+        const int refractoryHops = juce::jmax (1, (int) (0.1 / hopSeconds));
+
+        std::vector<double> onsets;
+        int lastOnset = -refractoryHops - 1;
+
+        for (size_t i = 0; i < flux.size(); ++i)
+        {
+            const auto lo = (size_t) juce::jmax (0, (int) i - windowHops);
+            const auto hi = juce::jmin (flux.size(), i + (size_t) windowHops + 1);
+            double sum = 0.0;
+            for (auto j = lo; j < hi; ++j) sum += flux[j];
+            const auto localMean = (float) (sum / (double) (hi - lo));
+            const auto threshold = localMean * 1.6f + 0.02f;
+
+            const bool isPeak = flux[i] > threshold
+                             && (i == 0 || flux[i] >= flux[i - 1])
+                             && (i + 1 >= flux.size() || flux[i] >= flux[i + 1]);
+
+            if (isPeak && (int) i - lastOnset > refractoryHops)
+            {
+                onsets.push_back ((double) i * hopSeconds);
+                lastOnset = (int) i;
+            }
+        }
+        return onsets;
+    }
+
+    // Folds a raw BPM estimate into the 60..180 "musical" range by doubling
+    // or halving, matching how DAWs report detected tempo.
+    double foldBpm (double bpm)
+    {
+        while (bpm < 60.0 && bpm > 0.0) bpm *= 2.0;
+        while (bpm > 180.0) bpm *= 0.5;
+        return bpm;
+    }
+
+    // Tempo from inter-onset intervals: bucket every IOI (and simple
+    // multiples, so half/double-time onsets still vote for the same beat)
+    // into a histogram over 250 ms..2 s, take the strongest bucket as the
+    // beat period, and report a confidence from how sharply it dominates and
+    // how many onsets it actually explains.
+    struct TempoEstimate { double bpm; float confidence; };
+
+    TempoEstimate estimateTempoFromOnsets (const std::vector<double>& onsets, double fileLengthSeconds)
+    {
+        if (onsets.size() < 3)
+            return { 120.0, 0.0f };
+
+        constexpr double minPeriod = 0.25, maxPeriod = 2.0;
+        constexpr int numBins = 200;
+        constexpr double binWidth = (maxPeriod - minPeriod) / (double) numBins;
+
+        // Consecutive-onset IOIs only: each vote is (close to) the true beat
+        // period itself rather than some multiple of it, so the histogram
+        // peaks cleanly at the real tempo. (An earlier version voted every
+        // pairwise gap, folding multiples back into range -- that let odd
+        // multiples like 1.5x the true period collect more folded votes
+        // than the fundamental itself and biased the estimate.)
+        std::vector<double> hist (numBins, 0.0);
+        for (size_t i = 1; i < onsets.size(); ++i)
+        {
+            auto ioi = onsets[i] - onsets[i - 1];
+            while (ioi > maxPeriod) ioi *= 0.5;
+            while (ioi < minPeriod && ioi > 0.0) ioi *= 2.0;
+            if (ioi < minPeriod || ioi > maxPeriod) continue;
+            const auto bin = juce::jlimit (0, numBins - 1, (int) ((ioi - minPeriod) / binWidth));
+            hist[(size_t) bin] += 1.0;
+        }
+
+        int bestBin = 0;
+        double bestVal = 0.0, total = 0.0;
+        for (int b = 0; b < numBins; ++b)
+        {
+            total += hist[(size_t) b];
+            if (hist[(size_t) b] > bestVal) { bestVal = hist[(size_t) b]; bestBin = b; }
+        }
+        if (bestVal <= 0.0)
+            return { 120.0, 0.0f };
+
+        const auto period = minPeriod + (bestBin + 0.5) * binWidth;
+        const auto bpm = foldBpm (60.0 / period);
+
+        const auto sharpness = (float) (bestVal / juce::jmax (1.0, total));
+        const auto expectedOnsets = juce::jmax (1.0, fileLengthSeconds / period);
+        const auto coverage = juce::jlimit (0.0f, 1.0f, (float) ((double) onsets.size() / expectedOnsets));
+        const auto confidence = juce::jlimit (0.0f, 1.0f, sharpness * 2.2f * (0.5f + 0.5f * coverage));
+
+        return { bpm, confidence };
+    }
+
+    // Fallback for one-shots/low-confidence material: assume the file spans
+    // the nearest whole number of beats (1/2/4/8/16) at some tempo in
+    // 60..180, choosing whichever (beats, bpm) pair implies the "most
+    // musical" tempo (needs the least octave-folding to land in range).
+    double lengthBasedBeats (double lengthSeconds, double& outBpm)
+    {
+        static constexpr int candidates[] = { 1, 2, 4, 8, 16 };
+        double bestErr = 1.0e9, bestBeats = 1.0, bestBpm = 120.0;
+        for (auto beats : candidates)
+        {
+            const auto bpm = 60.0 * beats / juce::jmax (1.0e-6, lengthSeconds);
+            const auto folded = foldBpm (bpm);
+            const auto err = std::abs (bpm - folded) + std::abs (folded - juce::jlimit (60.0, 180.0, folded));
+            if (err < bestErr) { bestErr = err; bestBeats = (double) beats; bestBpm = folded; }
+        }
+        outBpm = bestBpm;
+        return bestBeats;
+    }
 }
 
 LoadedSample loadSampleFromFile (const juce::File& file)
@@ -169,6 +289,33 @@ LoadedSample loadSampleFromFile (const juce::File& file)
     data->ampCurve = analyzeAmplitude (mono);
     data->pitchCurve = analyzePitch (mono);
     data->hopSeconds = (double) hopSamples / analysisRate;
+
+    // Tempo sync analysis. Files shorter than ~0.3s, or with fewer than 3
+    // detected onsets, are treated as one-shots (confidence 0) and fall back
+    // to the length-based whole-beat-count guess.
+    const auto onsets = detectOnsetsSeconds (data->ampCurve, data->hopSeconds);
+    data->onsetCurve.assign (data->ampCurve.size(), 0.0f);
+    for (auto t : onsets)
+    {
+        const auto hop = (int) (t / juce::jmax (1.0e-9, data->hopSeconds));
+        if (hop >= 0 && hop < (int) data->onsetCurve.size())
+            data->onsetCurve[(size_t) hop] = 1.0f;
+    }
+    const auto lengthSeconds = data->lengthSeconds();
+    if (lengthSeconds < 0.3 || onsets.size() < 3)
+    {
+        double fallbackBpm = 120.0;
+        data->detectedBeats = (float) lengthBasedBeats (lengthSeconds, fallbackBpm);
+        data->detectedBpm = fallbackBpm;
+        data->bpmConfidence = 0.0f;
+    }
+    else
+    {
+        const auto est = estimateTempoFromOnsets (onsets, lengthSeconds);
+        data->detectedBpm = est.bpm;
+        data->bpmConfidence = est.confidence;
+        data->detectedBeats = (float) (lengthSeconds * est.bpm / 60.0);
+    }
 
     return { std::move (data), {} };
 }

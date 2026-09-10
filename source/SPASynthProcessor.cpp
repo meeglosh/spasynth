@@ -62,6 +62,8 @@ SPASynthProcessor::SPASynthProcessor()
         rs.loopEnd     = apvts.getRawParameterValue (pid (params::id::osc::loopEnd));
         rs.keytrack    = apvts.getRawParameterValue (pid (params::id::osc::keytrack));
         rs.rootNote    = apvts.getRawParameterValue (pid (params::id::osc::rootNote));
+        rs.syncToBpm         = apvts.getRawParameterValue (pid (params::id::osc::syncToBpm));
+        rs.syncBeatsOverride = apvts.getRawParameterValue (pid (params::id::osc::syncBeatsOverride));
         rs.grainPitch  = apvts.getRawParameterValue (pid (params::id::osc::grainPitch));
         rs.analogShape = apvts.getRawParameterValue (pid (params::id::osc::analogShape));
         rs.fmRatio     = apvts.getRawParameterValue (pid (params::id::osc::fmRatio));
@@ -1304,6 +1306,15 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.analogShape = (int) rs.analogShape->load();
         slot.fmRatio     = rs.fmRatio->load();
         slot.noiseColor  = (int) rs.noiseColor->load();
+
+        slot.syncToBpm = rs.syncToBpm->load() >= 0.5f;
+        {
+            const auto beatsOverride = rs.syncBeatsOverride->load();
+            if (beatsOverride > 0.0f && slot.sample != nullptr && slot.sample->lengthSeconds() > 1.0e-6)
+                slot.nativeBpm = 60.0 * (double) beatsOverride / slot.sample->lengthSeconds();
+            else
+                slot.nativeBpm = slot.sample != nullptr ? slot.sample->detectedBpm : 120.0;
+        }
     }
 
     shared.glideMode = (params::GlideMode) (int) raw.glideMode->load();

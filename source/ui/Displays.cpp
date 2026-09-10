@@ -83,6 +83,8 @@ WaveDisplay::WaveDisplay (SPASynthProcessor& p, int slotIndex)
                           params::id::oscSlot (slotIndex, params::id::osc::loop),
                           params::id::oscSlot (slotIndex, params::id::osc::loopStart),
                           params::id::oscSlot (slotIndex, params::id::osc::loopEnd),
+                          params::id::oscSlot (slotIndex, params::id::osc::syncToBpm),
+                          params::id::oscSlot (slotIndex, params::id::osc::syncBeatsOverride),
                           params::id::oscSlot (slotIndex, params::id::osc::analogShape),
                           params::id::oscSlot (slotIndex, params::id::osc::pulseWidth),
                           params::id::oscSlot (slotIndex, params::id::osc::fmRatio),
@@ -431,6 +433,36 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
             g.setColour (t.accentMod.withAlpha (0.85f));
             g.drawLine (lx0, area.getY(), lx0, area.getBottom(), 1.0f);
             g.drawLine (lx1, area.getY(), lx1, area.getBottom(), 1.0f);
+        }
+    }
+
+    // SYNC on: faint beat-grid ticks across the file, spaced at the
+    // effective native BPM (override beats if set, else the loader's
+    // detected tempo) -- lets the user see how the beat grid actually
+    // lines up with the waveform before committing to SYNC.
+    if (mode == params::OscMode::sample
+        && value (params::id::oscSlot (slot, params::id::osc::syncToBpm)) >= 0.5f)
+    {
+        if (auto syncSample = processor.getSample (slot))
+        {
+            const auto beatsOverride = value (params::id::oscSlot (slot, params::id::osc::syncBeatsOverride));
+            const auto lengthSeconds = syncSample->lengthSeconds();
+            const auto nativeBpm = beatsOverride > 0.0f && lengthSeconds > 1.0e-6
+                                  ? 60.0 * beatsOverride / lengthSeconds
+                                  : syncSample->detectedBpm;
+            if (nativeBpm > 1.0 && lengthSeconds > 1.0e-6)
+            {
+                const auto beatNorm = (float) ((60.0 / nativeBpm) / lengthSeconds);
+                if (beatNorm > 0.0005f)
+                {
+                    g.setColour (t.textSecondary.withAlpha (0.35f));
+                    for (float n = 0.0f; n < 1.0f; n += beatNorm)
+                    {
+                        const auto tx = markerX (n);
+                        g.drawLine (tx, area.getY(), tx, area.getY() + 6.0f, 1.0f);
+                    }
+                }
+            }
         }
     }
 

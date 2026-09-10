@@ -4,6 +4,11 @@
 
 A large round of features and fixes from our testers' playtest sessions.
 
+- Sample oscillators gain a SYNC option that time-stretches a loaded sample
+  to your project's tempo while keeping its pitch, using the sample's own
+  detected tempo (which you can edit if we guessed wrong), so you can play
+  drum hits, loops and other transient-rich sounds as rhythmic parts that
+  always land in time.
 - You can now zoom and pan the oscillator waveform display, which makes it
   much easier to work with long samples. Scroll or pinch to zoom in and out
   around your cursor, drag to pan once zoomed, and double-click to snap back
@@ -16,11 +21,16 @@ A large round of features and fixes from our testers' playtest sessions.
   filter. Double-clicking near the left or right edge of the EQ display now
   drops in a low cut or high cut in one gesture.
 - Pulse factory presets now combine the pack's own sound with a real synth
-  oscillator (wavetable, analog, FM or pluck), with the sample's own
-  dynamics, pitch or envelope driving that synth layer in a different way
-  for each of the six variants (its level, its pitch, the shared filter, a
-  wavetable's scan position, an FM amount, or a plucked layer's damping).
-  Every Pulse preset is now a genuine mix rather than sample-only.
+  oscillator (wavetable, analog or FM), with the sample's own dynamics,
+  pitch or envelope driving that synth layer in a different way for each of
+  the six variants (its level, its pitch, the shared filter, a wavetable's
+  scan position, or an FM amount). Every Pulse preset is now a genuine mix
+  rather than sample-only. Every wavetable layer across all our factory
+  presets now picks one of our built-in wavetable shapes to suit its
+  character (Supersaw, Unison Spread, PWM or Bells, among others) instead of
+  defaulting to a plain basic shape, and every preset's reverb has been
+  re-voiced for our newer reverb engine, choosing the reverb character (Room,
+  Plate, Chamber, Hall or Spring) and amount that best suits each sound.
 - Fixed a real cause of totally silent factory presets against long,
   real-world sound-effects files: a held note's sample loop is now a short,
   guaranteed-audible window near the start of the file rather than looping

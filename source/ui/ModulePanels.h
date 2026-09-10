@@ -60,6 +60,15 @@ private:
     std::unique_ptr<Choice> phaseMode, table, analogShape, noiseColor;
     std::unique_ptr<Toggle> loop, keytrackSample, keytrackGranular;
 
+    // Sample SYNC (time-stretch to host BPM). Readout shows the detected/
+    // overridden native tempo + beat count ("~ 96 BPM  4 beats"); double-
+    // click edits the beats override (juce::Label's built-in editor --
+    // TextEditor subtrees are the documented exception to the no-focus-grab
+    // rule). Sample mode only.
+    std::unique_ptr<Toggle> sync;
+    juce::Label syncReadout;
+    void updateSyncReadout();
+
     // Loop start/end only mean anything while looping is on; kept as a
     // separate rule from the mode-driven setVisible() above so the two
     // states (visible-per-mode, enabled-per-loop) don't fight each other.

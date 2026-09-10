@@ -338,6 +338,8 @@ private:
         std::atomic<float>* loopEnd = nullptr;
         std::atomic<float>* keytrack = nullptr;
         std::atomic<float>* rootNote = nullptr;
+        std::atomic<float>* syncToBpm = nullptr;
+        std::atomic<float>* syncBeatsOverride = nullptr;
         std::atomic<float>* grainPitch = nullptr;
         std::atomic<float>* analogShape = nullptr;
         std::atomic<float>* fmRatio = nullptr;

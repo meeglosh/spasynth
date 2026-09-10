@@ -1,6 +1,7 @@
 #include "ModulePanels.h"
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
+#include <juce_audio_utils/juce_audio_utils.h>
 
 namespace spa::ui
 {
@@ -70,6 +71,36 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     sampleKnobs.push_back (knob (pid (id::osc::rootNote), "ROOT"));
     loop = std::make_unique<Toggle> (apvts, pid (id::osc::loop), "LOOP");
     keytrackSample = std::make_unique<Toggle> (apvts, pid (id::osc::keytrack), "KEY");
+    sync = std::make_unique<Toggle> (apvts, pid (id::osc::syncToBpm), "SYNC");
+
+    // Readout: "~ 96 BPM  4 beats" from the loader's detection (dimmed "?"
+    // when confidence is low); double-click edits the beats override
+    // directly (juce::Label's built-in editor -- the documented TextEditor
+    // exception to the no-focus-grab rule).
+    syncReadout.setEditable (false, true, false);
+    syncReadout.setFont (metrics::labelFont());
+    syncReadout.setJustificationType (juce::Justification::centredLeft);
+    syncReadout.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+    syncReadout.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    syncReadout.onEditorShow = [this]
+    {
+        if (auto* ed = syncReadout.getCurrentTextEditor())
+            ed->setInputRestrictions (6, "0123456789.");
+    };
+    syncReadout.onTextChange = [this, pid]
+    {
+        const auto beats = syncReadout.getText().getDoubleValue();
+        if (auto* param = processor.getAPVTS().getParameter (pid (id::osc::syncBeatsOverride)))
+        {
+            const auto norm = param->convertTo0to1 (juce::jlimit (0.0f, 64.0f, (float) beats));
+            param->setValueNotifyingHost (norm);
+        }
+        updateSyncReadout();
+        // Hand focus back to the on-screen keyboard, like the preset
+        // browser's Esc path -- the editor just closed.
+        if (auto* kb = findParentComponentOfClass<juce::MidiKeyboardComponent>())
+            kb->grabKeyboardFocus();
+    };
 
     // LOOP ST/END only matter while looping is on -- independent of the
     // mode-driven visibility switch below, so it survives mode round-trips.
@@ -104,6 +135,8 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     addChildComponent (*loop);
     addChildComponent (*keytrackSample);
     addChildComponent (*keytrackGranular);
+    addChildComponent (*sync);
+    addChildComponent (syncReadout);
     addChildComponent (*analogShape);
     addChildComponent (*noiseColor);
 
@@ -179,6 +212,10 @@ void OscStrip::handleAsyncUpdate()
     loop->setVisible (m == params::OscMode::sample);
     keytrackSample->setVisible (m == params::OscMode::sample);
     keytrackGranular->setVisible (m == params::OscMode::granular);
+    sync->setVisible (m == params::OscMode::sample);
+    syncReadout.setVisible (m == params::OscMode::sample);
+    if (m == params::OscMode::sample)
+        updateSyncReadout();
     analogShape->setVisible (m == params::OscMode::analog);
     noiseColor->setVisible (m == params::OscMode::noise);
     factoryButton.setVisible (m == params::OscMode::wavetable);
@@ -188,6 +225,47 @@ void OscStrip::handleAsyncUpdate()
 
     resized();
     repaint();
+}
+
+void OscStrip::updateSyncReadout()
+{
+    // Skip while the label's own editor is open -- overwriting the text the
+    // user is mid-typing would be a bad time.
+    if (syncReadout.getCurrentTextEditor() != nullptr)
+        return;
+
+    const auto sample = processor.getSample (slot);
+    const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
+    auto* apvts = &processor.getAPVTS();
+    const auto beatsOverride = apvts->getRawParameterValue (pid (id::osc::syncBeatsOverride))->load();
+
+    if (sample == nullptr)
+    {
+        syncReadout.setText ("--", juce::dontSendNotification);
+        return;
+    }
+
+    const auto lengthSeconds = sample->lengthSeconds();
+    if (beatsOverride > 0.0f)
+    {
+        const auto bpm = lengthSeconds > 1.0e-6 ? 60.0 * beatsOverride / lengthSeconds : 0.0;
+        syncReadout.setColour (juce::Label::textColourId, currentTheme().textPrimary);
+        syncReadout.setText (juce::String (juce::roundToInt (bpm)) + " BPM  "
+                              + juce::String (beatsOverride, 2) + " beats",
+                              juce::dontSendNotification);
+        return;
+    }
+
+    // Confidence < 0.5: the detection wasn't sure -- the file is one-shot-
+    // like material, being stretched to its nearest whole beat count rather
+    // than a confidently detected tempo. Say so with a dimmed "~?".
+    const auto lowConfidence = sample->bpmConfidence < 0.5f;
+    juce::String text = (lowConfidence ? juce::String ("~? ") : juce::String ("~ "))
+                       + juce::String (juce::roundToInt (sample->detectedBpm)) + " BPM  "
+                       + juce::String (sample->detectedBeats, 1) + " beats";
+    syncReadout.setText (text, juce::dontSendNotification);
+    syncReadout.setColour (juce::Label::textColourId,
+                           lowConfidence ? currentTheme().textSecondary : currentTheme().textPrimary);
 }
 
 void OscStrip::chooseContent()
@@ -359,6 +437,9 @@ void OscStrip::resized()
     {
         loop->setBounds (extraRow.removeFromLeft (70));
         keytrackSample->setBounds (extraRow.removeFromLeft (70));
+        sync->setBounds (extraRow.removeFromLeft (60));
+        extraRow.removeFromLeft (4);
+        syncReadout.setBounds (extraRow);
     }
     else if (m == params::OscMode::granular)
         keytrackGranular->setBounds (extraRow.removeFromLeft (70));

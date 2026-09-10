@@ -233,6 +233,11 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::rootNote), letter + "Root Note", section,
                    ParamKind::intParam, { 0.0f, 127.0f, 1.0f }, 60.0f, "",
                    false, { .enabled = false } });
+    p.push_back ({ pid (id::osc::syncToBpm), letter + "Sync To BPM", section,
+                   ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = false } });
+    p.push_back ({ pid (id::osc::syncBeatsOverride), letter + "Sync Beats", section,
+                   ParamKind::floatParam, { 0.0f, 64.0f, 0.25f }, 0.0f, "beats",
+                   false, { .enabled = false } });
     p.push_back ({ pid (id::osc::grainSize), letter + "Grain Size", section,
                    ParamKind::floatParam, { 10.0f, 500.0f, 0.0f, 0.4f }, 80.0f, "ms",
                    true, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });

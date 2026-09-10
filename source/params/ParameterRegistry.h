@@ -216,6 +216,12 @@ namespace id
         inline constexpr const char* keytrack     = "keytrack";
         inline constexpr const char* rootNote     = "rootNote";
 
+        // Sample tempo sync (time-stretch to host BPM, pitch preserved).
+        // Not mod destinations. syncBeatsOverride 0 = auto (use detected
+        // tempo); otherwise the file's length in beats, user-entered.
+        inline constexpr const char* syncToBpm         = "syncToBpm";
+        inline constexpr const char* syncBeatsOverride = "syncBeatsOverride";
+
         // Sample/SFX engine (granular)
         inline constexpr const char* grainSize    = "grainSize";
         inline constexpr const char* grainDensity = "grainDensity";

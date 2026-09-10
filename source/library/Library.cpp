@@ -16,12 +16,28 @@ namespace
     //
     // DeletedAtShutdown (not a plain static): PropertiesFile runs a save
     // timer, so it must be destroyed while JUCE's event system still exists.
+    // Test-only override for the settings file location. Empty = use the
+    // real per-user location. Message-thread only; never touched by
+    // shipping product code paths.
+    juce::File& settingsFileOverride()
+    {
+        static juce::File override;
+        return override;
+    }
+
+    // ONE PropertiesFile instance per process. Creating a fresh instance per
+    // access (the previous scheme) meant each writer saved its own stale
+    // snapshot of the file, clobbering keys other writers had set — the
+    // classic "theme preference keeps resetting" bug.
+    //
+    // DeletedAtShutdown (not a plain static): PropertiesFile runs a save
+    // timer, so it must be destroyed while JUCE's event system still exists.
     struct SettingsHolder : private juce::DeletedAtShutdown
     {
-        SettingsHolder() = default;
+        SettingsHolder() : file (buildFile(), buildOptions()) {}
         ~SettingsHolder() override { clearSingletonInstance(); }
 
-        juce::PropertiesFile file { []
+        static juce::PropertiesFile::Options buildOptions()
         {
             juce::PropertiesFile::Options options;
             options.applicationName = "SPASynth";
@@ -29,7 +45,20 @@ namespace
             options.filenameSuffix = "settings";
             options.osxLibrarySubFolder = "Application Support";
             return options;
-        }() };
+        }
+
+        // Real usage: let Options derive the default per-user location.
+        // Test override: use the exact file the test picked, bypassing
+        // Options' special-location logic entirely.
+        static juce::File buildFile()
+        {
+            if (const auto& overrideFile = settingsFileOverride(); overrideFile != juce::File())
+                return overrideFile;
+
+            return buildOptions().getDefaultFile();
+        }
+
+        juce::PropertiesFile file;
 
         JUCE_DECLARE_SINGLETON (SettingsHolder, false)
     };
@@ -40,6 +69,25 @@ namespace
     {
         return SettingsHolder::getInstance()->file;
     }
+}
+
+void setSettingsFileOverride (const juce::File& file)
+{
+    settingsFileOverride() = file;
+
+    // Recreate the singleton so it picks up the new (or cleared) location.
+    // Test-only, message-thread only: production code never calls this
+    // after the singleton is already in use for real settings.
+    if (SettingsHolder::getInstanceWithoutCreating() != nullptr)
+    {
+        SettingsHolder::getInstance()->file.saveIfNeeded();
+        SettingsHolder::deleteInstance();
+    }
+}
+
+juce::File getSettingsFile()
+{
+    return settings().getFile();
 }
 
 namespace

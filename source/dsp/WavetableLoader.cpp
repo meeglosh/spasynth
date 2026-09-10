@@ -19,7 +19,13 @@ LoadedWavetable loadWavetableFromFile (const juce::File& file)
         reader.reset (formats.createReaderFor (file));
     }
     if (reader == nullptr)
+    {
+        if (! file.getParentDirectory().isDirectory())
+            return { nullptr, "Library folder not found: " + file.getFileName() };
+        if (! file.existsAsFile())
+            return { nullptr, "File not found: " + file.getFileName() };
         return { nullptr, "Unrecognized audio format: " + file.getFileName() };
+    }
 
     const auto numSamples = (int) juce::jmin (reader->lengthInSamples,
                                               (juce::int64) Wavetable::tableSize * Wavetable::maxFrames);

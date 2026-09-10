@@ -95,6 +95,9 @@ A large round of features and fixes from our testers' playtest sessions.
   even 50% now gives an exact half-and-half blend of the dry and processed
   signal instead of the more sensitive curve REVERB used before. Factory
   presets have been refreshed for the new REVERB feel.
+- If a preset's sound file can't be found (a moved or renamed library
+  folder, an unplugged drive), the strip now says so clearly instead of
+  reporting an unrecognized audio format.
 
 **Notes for this build**
 

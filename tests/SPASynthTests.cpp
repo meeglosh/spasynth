@@ -8992,6 +8992,43 @@ static void presetsRootIsHermeticTest()
             "test presets root must be inside the hermetic temp dir");
 }
 
+// Guards the bug that shipped in the wild: setLibraryRoot() during a test
+// writing into Mike's REAL ~/Library/Application Support/.../SPASynth.settings
+// (a stale temp dir left behind as his configured libraryRoot, so his
+// installed plugin stopped finding his real library). Runs FIRST, before
+// any test that might call setLibraryRoot.
+static void settingsAreHermeticTest()
+{
+    const auto settingsFile = spa::library::getSettingsFile();
+    const auto realSettingsFile = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Silverplatter Audio").getChildFile ("SPASynth").getChildFile ("SPASynth.settings");
+
+    expect (settingsFile != realSettingsFile,
+            "test settings file must not be the user's real SPASynth.settings");
+    expect (settingsFile.getFullPathName().contains ("SPASynthTests-settings-"),
+            "test settings file must be inside the hermetic temp dir");
+
+    // Exercise the exact call path that leaked: setLibraryRoot() must land
+    // only in the temp settings file, never touch the real one.
+    const auto realBefore = realSettingsFile.existsAsFile() ? realSettingsFile.loadFileAsString() : juce::String();
+
+    const auto probeDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+        .getChildFile ("SPASynthTests-settings-probe-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)));
+    probeDir.createDirectory();
+    const auto savedRoot = spa::library::getLibraryRoot();
+    spa::library::setLibraryRoot (probeDir);
+
+    expect (spa::library::getLibraryRoot() == probeDir, "setLibraryRoot took effect in the hermetic settings file");
+
+    const auto realAfter = realSettingsFile.existsAsFile() ? realSettingsFile.loadFileAsString() : juce::String();
+    expect (realBefore == realAfter, "setLibraryRoot must not modify the user's real settings file");
+    expect (! realAfter.contains (probeDir.getFullPathName()),
+            "the real settings file must never contain a test's temp library root");
+
+    spa::library::setLibraryRoot (savedRoot);
+    probeDir.deleteRecursively();
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -9013,15 +9050,30 @@ int main (int argc, char* argv[])
     spa::library::setPresetsRootOverride (tempPresetsRoot);
     std::cout << "Hermetic test presets root: " << tempPresetsRoot.getFullPathName() << "\n";
 
+    // Same hermetic treatment for the machine-settings PropertiesFile
+    // (libraryRoot, favorites, accent colours, etc.) -- tests must NEVER
+    // touch ~/Library/Application Support/Silverplatter Audio/SPASynth/
+    // SPASynth.settings. Set this before any test runs.
+    const auto tempSettingsDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+        .getChildFile ("SPASynthTests-settings-" + juce::String ((juce::int64) juce::Time::getMillisecondCounterHiRes())
+                        + "-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)));
+    tempSettingsDir.createDirectory();
+    const auto tempSettingsFile = tempSettingsDir.getChildFile ("SPASynth.settings");
+    spa::library::setSettingsFileOverride (tempSettingsFile);
+    std::cout << "Hermetic test settings file: " << tempSettingsFile.getFullPathName() << "\n";
+
     struct PresetsRootCleanup
     {
         juce::File dir;
+        juce::File settingsDir;
         ~PresetsRootCleanup()
         {
             spa::library::setPresetsRootOverride ({});
+            spa::library::setSettingsFileOverride ({});
             dir.deleteRecursively();
+            settingsDir.deleteRecursively();
         }
-    } presetsRootCleanup { tempPresetsRoot };
+    } presetsRootCleanup { tempPresetsRoot, tempSettingsDir };
 
     if (argc >= 3 && juce::String (argv[1]) == "--snapshot")
     {
@@ -9101,6 +9153,7 @@ int main (int argc, char* argv[])
         && juce::String (std::getenv ("SPASYNTH_REAL_LIBRARY_TEST")) == "1")
         g_realLibraryTestOptIn = true;
 
+    settingsAreHermeticTest();
     presetsRootIsHermeticTest();
     renderSmokeTest();
     multiSlotUnisonTest();

@@ -89,6 +89,21 @@ juce::File defaultPresetsRoot();
 // clear the override. Never used by shipping product code paths.
 void setPresetsRootOverride (const juce::File& root);
 
+// Process-wide override for the machine-settings PropertiesFile location
+// (libraryRoot, favorites, accent colours, lastContentFolder/lastIRFolder,
+// darkTheme, MIDI Learn is session-state and NOT here). Message-thread only.
+// Test-only: exclusively used by the test suite to keep tests from ever
+// touching the user's real settings file. Setting this recreates the
+// singleton immediately (flushing any pending real writes first) so the
+// new location takes effect for every subsequent get/set call. Pass an
+// invalid/empty File to restore the real per-user location. Never used by
+// shipping product code paths.
+void setSettingsFileOverride (const juce::File& file);
+
+// The settings file currently in use (real per-user location, or the test
+// override if one is set). Exposed for the hermetic-settings guard test.
+juce::File getSettingsFile();
+
 // Optional ownership stamp ("Licensed to name@example.com — Pro Edition"),
 // shown in the editor footer when present. Purely informational — never
 // gates anything (see EULA: no activation, no phone-home). Looked for as

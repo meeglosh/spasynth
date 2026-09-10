@@ -261,7 +261,13 @@ LoadedSample loadSampleFromFile (const juce::File& file)
         reader.reset (formats.createReaderFor (file));
     }
     if (reader == nullptr)
+    {
+        if (! file.getParentDirectory().isDirectory())
+            return { nullptr, "Library folder not found: " + file.getFileName() };
+        if (! file.existsAsFile())
+            return { nullptr, "File not found: " + file.getFileName() };
         return { nullptr, "Unrecognized audio format: " + file.getFileName() };
+    }
 
     if (reader->lengthInSamples < 64)
         return { nullptr, "File too short: " + file.getFileName() };

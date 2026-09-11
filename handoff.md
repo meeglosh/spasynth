@@ -1,9 +1,31 @@
-# SPASynth handoff (2026-09-07)
+# SPASynth handoff (2026-09-11)
 
 Quick "start here" for the next session. Full detail lives in `CLAUDE.md`; this
 is the short version.
 
 ## Where we are
+
+- **2026-09-11: v1.0.15 built + staged (main `656a8bb`), awaiting Mike's
+  install + gauntlet, then it goes to Paul and Phil.** The largest round
+  since launch prep: 31 commits of tester feedback (Mike + Paul + Phil),
+  all in one customer-voice `## 1.0.15` changelog section. Plate reverb
+  replacing the FDN, % MIX knobs, Crush distortion, SUB osc, wavetable
+  TABLE menu, sample SYNC (beat/transport-locked loops + time signatures),
+  waveform zoom/pan, octave shift, EQ band types/slopes, mod matrix ASSIGN
+  mode, live modulation display on knobs, scrolling chaos trace, bold FX
+  tabs, preset browser beside the synth, fit-to-screen window, opaque
+  editor (Logic flicker), MIDI Learn fixed (menu anchoring + message-thread
+  apply + a diagnostic badge), never-silent RANDOMIZE ALL, factory preset
+  recipes v7. macOS pkg md5 `31ae82e03ac4f84de4acbdf1f2ab3f0e` (from
+  `517557a`; `656a8bb` is a Windows-only test compile fix), Windows exe md5
+  `93dc0fa8b67e49f61a464e4e15f9f1f6` (`ci-windows-656a8bb`), both in
+  `dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.15/`.
+  **Standing rule from Mike: the agent orchestrates Sonnet subagents and
+  only verifies/corrects; it does not code.** Read CLAUDE.md's 2026-09-11
+  section for the agent-management and test-hygiene lessons (tests must
+  never touch Mike's real settings or presets; every popup needs a focus
+  anchor; run agents foreground-only). MiniFreak encoders not reaching
+  Logic at all = controller setting, closed. Repo PUBLIC.
 
 - **2026-09-07: v1.0.14 built, staged, INSTALLED, and CONFIRMED by Mike.**
   1.0.13 got installed and confirmed (the VOICE close-window crash was gone),
@@ -62,11 +84,11 @@ is the short version.
 
 ## What's actually left before launch
 
-1. **v1.0.15 feature round** — tester-feedback improvements from Mike's own
-   playtests with Paul and Phil, starting with bolding enabled FX tab
-   labels. Batch these, don't ship one at a time.
-2. Finish the 1.0.14 gauntlet, then actually send a build to Paul and Phil
-   (1.0.14 has never gone out).
+1. Mike installs 1.0.15 (`sudo installer -pkg
+   /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.15-macOS.pkg
+   -target /`, Reset & Rescan, relaunch Logic), runs the gauntlet.
+2. Send both 1.0.15 installers + the tester note to Paul and Phil (nothing
+   since 1.0.8 has gone out). Bump to 1.0.16 for anything after.
 3. Decide: one more tester round after that, or send the announcement
    directly once Mike's happy.
 4. Shopify build-out per `docs/shopify-setup-guide.md`.
@@ -92,6 +114,7 @@ Signing + notary are set up on Mike's machine (Developer ID certs in the
 login keychain, `SPASYNTH_NOTARY` profile). Per fix:
 
 ```
+export CMAKE_BUILD_PARALLEL_LEVEL=2     # the Mac is memory-starved; 4 jobs gets OOM-killed
 export SPASYNTH_CODESIGN_IDENTITY="Developer ID Application: Kenzora Games (7K9WY5T49S)"
 export SPASYNTH_INSTALLER_IDENTITY="Developer ID Installer: Kenzora Games (7K9WY5T49S)"
 export SPASYNTH_NOTARIZE_PROFILE="SPASYNTH_NOTARY"
@@ -109,8 +132,14 @@ specifically, but still do it by hand after any ad hoc `cmake --build
 rm -rf ~/Library/Audio/Plug-Ins/Components/SPASynth.component ~/Library/Audio/Plug-Ins/VST3/SPASynth.vst3
 ```
 
-Then Windows: push `main` to trigger the Windows-only-on-push CI, `gh run
-download <id> -n spasynth-installer-Windows`, copy the pkg + exe into both
+If the script dies after signing (notary wait killed, credentials gone):
+`scripts/notarize.sh dist/installers/SPASynth-<v>-macOS.pkg` (uses
+`~/.config/spasynth/notary.env`) then `scripts/build_release.sh
+--stage-only <v>`. No rebuild needed.
+
+Then Windows: push `main` to trigger the Windows-only-on-push CI (repo must
+be public; never push again until the exe is fetched, the workflow cancels
+in-progress runs), `scripts/fetch_windows_build.sh <sha7>`, copy the exe into both
 `dist/shopify` folders. Verify: one distinct md5 per installer across all
 locations, `otool -l <standalone> | grep minos` -> `minos 11.0`, `spctl -a -t
 install <pkg>` -> accepted. Ask Mike before rebuilding (he batches findings).
@@ -139,10 +168,18 @@ the installer command just did nothing and looked like it worked.
   snapshot — check `gh api repos/{owner}/{repo}/actions/artifacts` and
   `.../actions/cache/usage` across *all* repos before assuming spasynth is
   the cause.
-- Notary profile has vanished twice; recovery = Mike recreates it
-  interactively, then `xcrun notarytool submit <pkg> --keychain-profile
-  SPASYNTH_NOTARY --wait` + `xcrun stapler staple <pkg>` — the signed pkg
-  does NOT need rebuilding.
+- Notary profile has vanished six times; `scripts/notarize.sh` now reads
+  `~/.config/spasynth/notary.env` (Mike's file, never in the repo, never
+  print it) and only falls back to the keychain profile.
+- **Tests must stay hermetic**: presets root + settings file are overridden
+  to temp dirs in the tests main and a leak guard exits 1 if anything lands
+  in the real Factory folder. Tests polluted Mike's real settings and
+  presets three times this round. macOS-only JUCE calls in tests go under
+  `#if JUCE_MAC` or Windows CI breaks.
+- **Every PopupMenu needs a focus anchor** (`showPopupAnchored`), or it
+  flashes and closes under the QWERTY focus sweep.
+- Subagent briefs: foreground only, never `git stash/checkout/reset`,
+  strict file ownership, verify every claim yourself.
 - Test binary: `build/SPASynthTests_artefacts/SPASynthTests` (no `Debug/`
   subdir — `build/` was reconfigured without `CMAKE_BUILD_TYPE`).
 - Verification ritual for every change: build `SPASynthTests` and run it

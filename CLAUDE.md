@@ -10,6 +10,107 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-11): v1.0.15 (main `656a8bb`) built + staged; the big tester-feedback round
+
+**1.0.14 was installed and CONFIRMED by Mike (recording crash gone) but
+never sent.** Mike then ran playtests with Paul and Phil and opened the
+1.0.15 round. **Working rule from Mike (2026-09-07, standing): the agent is
+senior engineer and orchestrator, does not code, spawns Sonnet subagents,
+and only verifies and corrects them.** 31 commits (`cb6f64c`..`656a8bb`),
+`docs/CHANGELOG.md` has one customer-voice `## 1.0.15` section covering all
+of it. Highlights, with the load-bearing details:
+
+- **UI**: bold + bright engaged FX tabs (`TabEngagementTracker`,
+  `smallFontBold`); live modulation arc + dot on modulated knobs
+  (`ModVizClock`/`pollModViz`, PER-INSTANCE telemetry via
+  `findParentComponentOfClass<AudioProcessorEditor>()`, never a static
+  singleton); scrolling ORGANIC CHAOS trace (`Telemetry::chaosTrace` ring);
+  WaveDisplay zoom/pan (`viewStart/viewLength`, `normToX`); QWERTY octave
+  shift Z/X (`shiftKeyboardOctave`); EQ right-click type/slope menu
+  (`EqEditor.h`); mod matrix ASSIGN mode (`AssignOverlay.h`, knob-ring
+  halos); preset browser widens the window instead of covering the synth
+  (`getContentBaseWidth`, `browserToggled`, `NativeWindowShift.mm` compiled
+  as CXX `-x objective-c++` -- `enable_language(OBJCXX)` bloated the binary
+  14.5 -> 23.6 MB); fit-to-screen default size (`scaleThatFits`); opaque
+  editor shell (fixed Logic's whole-window flicker; `editorIsOpaqueTest`,
+  `paintRegionRegressionTest`); MIDI Learn badge in the brand band
+  (right-justified, opaque, `fitMidiLearnHintLine`, `--snapshot-badge`).
+- **Every context menu must be anchored to a focus target**:
+  `ContentComponent::showPopupAnchored` / free `spa::ui::showPopupAnchored`.
+  Without it the popup flashes and closes (the QWERTY focus sweep leaves
+  nothing focusable, so PopupMenu's focus check fails) -- this is why MIDI
+  Learn "never armed" on 1.0.14. `popupAnchoringTest`.
+- **MIDI Learn** (`MidiLearn.cpp`): the audio thread only calls
+  `RangedAudioParameter::setValue`; an `AsyncUpdater` posts
+  `setValueNotifyingHost` on the message thread (the old code called it
+  from the audio thread). Telemetry counts incoming MIDI per type; the badge
+  shows "CC n · notes n" so a controller that sends no CC is visible. Mike's
+  MiniFreak: Logic's MIDI In readout showed nothing on encoder moves ->
+  controller-side (Knob Send CC), not ours. Decision: move on.
+- **DSP**: Dattorro plate reverb (`PlateReverb.h`, replaces the FDN; MIX law
+  linear, all MIX knobs in %; presets retuned); Crush distortion type;
+  analog SUB osc (`ExtraOscillators.h`); built-in wavetable TABLE menu
+  (`WavetableFactory`, lazy background build, param `osc::table`); sample
+  SYNC = LOOP-gated, transient-detected tempo, 2-stream overlap-add
+  stretch, beat-grid loop snapping anchored at the first onset, transport
+  phase lock, per-slot time signature (`osc::timeSig`, `global.timeSig`,
+  Host/4/4/3/4/6/8/2/4/5/4/7/8/12/8 -- append-only); SamplePlayer
+  whole-file loop fix (clamp loop end to `len-1`); latch-off ends the arp;
+  arp first step always fires (`firstStepPending`); deterministic per-voice
+  RNG; **RANDOMIZE ALL never silent** (audibility floors in `randomizeAll`,
+  `randomizeNeverSilentTest` dumps silent seeds).
+- **Factory presets recipe v7** (`PresetManager.cpp`, `factoryRecipeVersion`
+  bumps regenerate on next scan): 6 Keys / 5 Texture / 6 Pulse, round-robin
+  by sorted pack index, Pulse = pack sample in OSC A + synth layer in OSC B,
+  no arp, `writeSafeSampleLoop` (short guaranteed-audible loop window near
+  the file start -- long SFX files went silent mid-hold otherwise).
+  `--real-library` opt-in test (~9 min) renders every factory preset from
+  the real 88-pack library, 0 silent required.
+- **Test hygiene, after three incidents of tests polluting Mike's real
+  machine** (settings `libraryRoot` pointed at a temp dir -> every preset
+  "Unrecognized audio format"; hallucinated "Audible Pack 00-05" and
+  Alpha/Beta presets written into his real `Presets/`): tests main sets
+  `library::setPresetsRootOverride` + `library::setSettingsFileOverride`
+  to temp dirs (RAII cleanup), `Process::makeForegroundProcess()` (macOS
+  only -- `setDockIconVisible` is `#if JUCE_MAC`, unguarded it broke every
+  Windows CI run of the round), OS-focus assertions gated on
+  `isForegroundProcess`, and a real-Factory-folder listing guard that exits
+  1 with "TEST LEAK". Never bypass these.
+- **Ops**: `scripts/notarize.sh` prefers `~/.config/spasynth/notary.env`
+  (the keychain profile vanished a 6th time); `build_release.sh
+  --stage-only <v>`; `CMAKE_BUILD_PARALLEL_LEVEL=2` because the Mac is
+  memory/disk starved (~97% disk; builds got OOM-killed at 4 jobs, and the
+  final 1.0.15 build was killed by the OS mid-notarize-wait -- recovered
+  with `notarize.sh` + `--stage-only`, no rebuild). Release binary
+  `build-release/SPASynthTests_artefacts/Release/SPASynthTests` catches
+  uninitialised-state bugs Debug misses (`0aae082`).
+- **Agent management lessons** (the round was run entirely through Sonnet
+  subagents): agents stall "waiting for monitor" if allowed to background
+  anything -- briefs say FOREGROUND ONLY; briefs say never `git
+  stash/checkout/reset/commit` (one agent stashed another's files); strict
+  per-agent file ownership; verify claims yourself: tests that pass with
+  the feature reverted, inflated assertion counts (aggregate per-sample
+  loops), static singletons, 60x gain smells, "Unreleased" changelog
+  sections, and renders that "fit" but overlap the wordmark.
+
+Suite **1331 assertions ALL PASS** (Debug, Release, ASan). **macOS 1.0.15
+pkg from `517557a`** (`656a8bb` is test-only): signed + notarized +
+stapled, `spctl` accepted, md5 `31ae82e03ac4f84de4acbdf1f2ab3f0e`. **Windows
+exe from draft release `ci-windows-656a8bb`**, md5
+`93dc0fa8b67e49f61a464e4e15f9f1f6`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.15/`.
+Repo is PUBLIC. Tester note drafted for Mike (in the session; condensed
+from the changelog).
+
+**Pending: Mike installs the final 1.0.15 pkg (absolute path:
+`sudo installer -pkg /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.15-macOS.pkg -target /`,
+then Plug-in Manager -> Reset & Rescan -> relaunch Logic), runs the
+gauntlet, and sends both installers + the note to Paul and Phil. Bump to
+1.0.16 for anything after that.** Open, optional: distinct default hue for
+`accentMod` (mod arc currently same hue as the value arc); ASSIGN glow
+banding at 3x; long-ambience 1.2 s loop-slice taste; `hardening-safe`
+rebase; disk cleanup.
+
 ## Current state (2026-09-07): v1.0.14 (main `81236ad`) built + staged; arp count-in crash, reverb OOB read (the noise bursts), VOICE-panel lifetime
 
 **1.0.13 was confirmed by Mike (close-window crash gone, session clean)

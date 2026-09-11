@@ -621,6 +621,24 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                                                  std::memory_order_relaxed);
             }
 
+            // Modulation-viz: publish every dest's live effective normalized
+            // value straight from `eff[]` (already computed above, routes
+            // applied and clamped), plus whether it's actively modulated
+            // this chunk (any active route into it with non-zero depth).
+            // See Telemetry.h's modDestValue/modDestActive.
+            bool destActive[params::maxModDests] {};
+            for (int r = 0; r < shared.numActiveRoutes; ++r)
+            {
+                const auto& route = shared.routes[(size_t) r];
+                if (route.destIndex >= 0 && route.destIndex < nDests && route.depth != 0.0f)
+                    destActive[route.destIndex] = true;
+            }
+            for (int d = 0; d < nDests; ++d)
+            {
+                tel->modDestValue[(size_t) d].store (eff[d], std::memory_order_relaxed);
+                tel->modDestActive[(size_t) d].store (destActive[d], std::memory_order_relaxed);
+            }
+
             const auto chaosSrc = src[(int) params::ModSource::chaos];
             tel->chaosValue.store (chaosSrc, std::memory_order_relaxed);
 

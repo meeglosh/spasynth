@@ -57,6 +57,30 @@ public:
     void setBrowserOverlayMode (bool shouldOverlay);
     bool isBrowserOverlayMode() const { return browserOverlays; }
 
+    // Every juce::PopupMenu (context menus, right-click MIDI Learn, the
+    // settings menu, Convolve's library browser, ...) must go through this
+    // instead of calling menu.showMenuAsync directly. Reason, traced through
+    // JUCE source the same way the VOICE call-out bug was (see VoicePanel's
+    // ctor comment in the .cpp): a plain PopupMenu, unlike CallOutBox, never
+    // calls enterModalState/grabKeyboardFocus on anything of its own, so if
+    // nothing in the editor already holds real JUCE keyboard focus when it
+    // opens (true everywhere here since the whole-tree QWERTY sweep turns
+    // setMouseClickGrabsKeyboardFocus off on every clickable widget,
+    // including the button that opened the menu), the menu's own dismiss-
+    // on-focus-loss safety net (doesAnyJuceCompHaveFocus) falls through to a
+    // racy native per-peer key-window check instead of the normal "the
+    // clicked control already holds focus" case -- under a real AU/VST3
+    // host (not the standalone) that races and the menu dismisses itself a
+    // frame or two after opening (Mike: "flashes on screen for a split
+    // second then goes away"). Fix: grab real focus onto something in the
+    // editor BEFORE showing the menu -- the on-screen keyboard if it's
+    // visible, otherwise a dedicated always-focusable invisible anchor
+    // (popupFocusAnchor) that exists solely for this -- then hand focus
+    // back to the keyboard afterwards, exactly like the VOICE call-out's
+    // onDismissedCallback does.
+    void showPopupAnchored (juce::PopupMenu& menu, const juce::PopupMenu::Options& options,
+                            std::function<void (int)> callback);
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePresetBrowser();
@@ -191,6 +215,13 @@ private:
     // whole content area but is invisible/non-intercepting outside assign
     // mode (see AssignOverlay).
     std::unique_ptr<AssignOverlay> assignOverlay;
+
+    // Focus anchor for showPopupAnchored() when the on-screen keyboard isn't
+    // visible -- never shown, never clicked, exists only so grabKeyboardFocus()
+    // has a real, always-focusable target (isShowing() is a hard requirement,
+    // hence 1x1 rather than zero-size, and it must be a visible child, not
+    // addChildComponent'd hidden). Intercepts nothing so it can't steal clicks.
+    juce::Component popupFocusAnchor;
 
     // Preset drawer: normally widens the window and sits in a left column of
     // its own, beside (never over) the module grid -- see

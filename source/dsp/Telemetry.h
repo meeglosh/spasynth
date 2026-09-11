@@ -83,6 +83,18 @@ struct Telemetry
     std::array<std::atomic<float>, limiterHistory> limOut {};
     std::array<std::atomic<float>, limiterHistory> limGrDb {};
     std::atomic<int> limWrite { 0 };
+
+    // Live modulation-viz: per mod-destination effective (post-route,
+    // clamped) normalized value 0..1, and whether that destination currently
+    // has any active route with non-zero depth. Written once per mod chunk
+    // by the narrating voice at the same writerSerial-gated site as
+    // chaosValue above, straight from the `eff[]` array it already computed
+    // applying routes in normalized space. When no voice is active/narrating,
+    // these simply stop updating (last values held) -- UI mod-viz indicators
+    // dim rather than blank using Telemetry::activeVoices == 0, per Knob's
+    // pollModViz() in Controls.h.
+    std::array<std::atomic<float>, params::maxModDests> modDestValue {};
+    std::array<std::atomic<bool>, params::maxModDests> modDestActive {};
 };
 
 } // namespace spa::dsp

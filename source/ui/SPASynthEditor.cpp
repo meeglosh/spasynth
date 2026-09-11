@@ -540,7 +540,10 @@ private:
         }
         if (menu.getNumItems() == 0)
             menu.addItem ("(no library found)", false, false, nullptr);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
+        if (auto* content = findParentComponentOfClass<ContentComponent>())
+            content->showPopupAnchored (menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
+        else
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
     }
 
     void chooseLibrarySample (const juce::File& packFolder)
@@ -566,7 +569,10 @@ private:
         }
         if (menu.getNumItems() == 0)
             menu.addItem ("(no samples in this pack)", false, false, nullptr);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
+        if (auto* content = findParentComponentOfClass<ContentComponent>())
+            content->showPopupAnchored (menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
+        else
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
     }
 
     void chooseIR()
@@ -1143,6 +1149,16 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     // behaviour (presetBrowserFocusGrabTest and friends stay unaffected).
     assignOverlay = std::make_unique<AssignOverlay> (processor.getAPVTS());
     addChildComponent (*assignOverlay);
+
+    // See showPopupAnchored()'s declaration comment. Must be an actually-
+    // showing (not hidden) 1x1 child so grabKeyboardFocus()'s isShowing()
+    // check passes; setInterceptsMouseClicks(false,false) keeps it from ever
+    // intercepting a click, and it's never given a paint() so it draws
+    // nothing.
+    popupFocusAnchor.setWantsKeyboardFocus (true);
+    popupFocusAnchor.setInterceptsMouseClicks (false, false);
+    popupFocusAnchor.setBounds (0, 0, 1, 1);
+    addAndMakeVisible (popupFocusAnchor);
     matrixPanel.onAssignToggled = [this] (bool on)
     {
         assignOverlay->setAssignMode (on, *this, matrixPanel.assignButton().getBounds()
@@ -1227,13 +1243,10 @@ void ContentComponent::mouseDown (const juce::MouseEvent& e)
     if (assignedCC >= 0)
         menu.addItem (2, "Remove assignment (CC " + juce::String (assignedCC) + ")");
 
-    juce::Component::SafePointer<ContentComponent> safe (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
-                        [safe, paramID] (int result)
+    showPopupAnchored (menu, juce::PopupMenu::Options().withMousePosition(),
+                       [this, paramID] (int result)
     {
-        if (safe == nullptr)
-            return;
-        auto& midiLearn = safe->processor.getMidiLearn();
+        auto& midiLearn = processor.getMidiLearn();
         if (result == 1)
             midiLearn.armLearn (paramID);
         else if (result == 2)
@@ -1668,6 +1681,26 @@ juce::Component* ContentComponent::callOutParent()
     return getTopLevelComponent();
 }
 
+// See the declaration comment in SPASynthEditor.h for the JUCE-source trace
+// behind why this is needed at all.
+void ContentComponent::showPopupAnchored (juce::PopupMenu& menu, const juce::PopupMenu::Options& options,
+                                          std::function<void (int)> callback)
+{
+    if (keyboardVisible)
+        keyboard.grabKeyboardFocus();
+    else
+        popupFocusAnchor.grabKeyboardFocus();
+
+    juce::Component::SafePointer<ContentComponent> safe (this);
+    menu.showMenuAsync (options, [safe, cb = std::move (callback)] (int result)
+    {
+        if (safe != nullptr && safe->keyboardVisible)
+            safe->keyboard.grabKeyboardFocus();   // resume QWERTY the instant the menu closes
+        if (cb)
+            cb (result);
+    });
+}
+
 void ContentComponent::showAccentPicker()
 {
     juce::Component::SafePointer<ContentComponent> safe (this);
@@ -1718,9 +1751,10 @@ void ContentComponent::showSettingsMenu()
     m.addItem ("Reset to Default", [safe] { if (safe != nullptr) safe->processor.getPresetManager().resetToDefault(); });
     m.addItem ("Clear All MIDI Learn", [safe] { if (safe != nullptr) safe->processor.getMidiLearn().clearAll(); });
 
-    m.showMenuAsync (juce::PopupMenu::Options()
-                         .withTargetComponent (&settingsButton)
-                         .withMinimumWidth (190));
+    showPopupAnchored (m, juce::PopupMenu::Options()
+                            .withTargetComponent (&settingsButton)
+                            .withMinimumWidth (190),
+                       nullptr);
 }
 
 void ContentComponent::setKeyboardVisible (bool shouldShow)

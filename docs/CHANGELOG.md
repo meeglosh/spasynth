@@ -20,6 +20,9 @@ A large round of features and fixes from our testers' playtest sessions.
   around your cursor, drag to pan once zoomed, and double-click to snap back
   to the whole file. Loop points and other markers stay lined up with the
   waveform no matter how far in you zoom.
+- Knobs that are being modulated now show it live, with a moving indicator
+  and a shaded range on the ring, while the knob itself keeps your base
+  setting.
 - EQ bands can now be switched between Bell, Low Shelf, High Shelf, Low Cut,
   High Cut, Notch, Band Pass and Tilt Shelf by right-clicking a node in the
   EQ display. Low Cut and High Cut bands also get a slope choice from 6 to

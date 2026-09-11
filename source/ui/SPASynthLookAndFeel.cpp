@@ -315,6 +315,35 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     g.setColour (enabled ? accent.brighter (0.15f) : t.textSecondary.withAlpha (0.4f));
     g.fillEllipse (dot.x - dotR, dot.y - dotR, dotR * 2.0f, dotR * 2.0f);
 
+    // Modulation-viz overlay (Controls.h's Knob::pollModViz publishes these
+    // slider properties at 30 Hz for mod-destination knobs): a translucent
+    // "modulation range" arc from the base value to the live modulated
+    // value, plus a small bright dot at the modulated position just outside
+    // the ring. The base pointer/arc above are untouched -- they must keep
+    // showing the user's actual base setting, never the modulated one.
+    if (enabled && slider.getProperties().contains ("modActive")
+                && (bool) slider.getProperties()["modActive"])
+    {
+        const auto modNorm = juce::jlimit (0.0f, 1.0f,
+            (float) (double) slider.getProperties()["modValue"]);
+        const auto modAngle = rotaryStartAngle + modNorm * (rotaryEndAngle - rotaryStartAngle);
+        const auto dimmed = (bool) slider.getProperties().getWithDefault ("modDim", false);
+        const auto modAlphaScale = dimmed ? 0.5f : 1.0f;
+
+        juce::Path modRange;
+        modRange.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                                juce::jmin (angle, modAngle), juce::jmax (angle, modAngle), true);
+        g.setColour (t.accentMod.withAlpha (0.35f * modAlphaScale));
+        g.strokePath (modRange, juce::PathStrokeType (lineW * 1.7f,
+                                                       juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+
+        const auto modDotR = lineW * 0.9f;
+        const auto modDot = centre.getPointOnCircumference (arcRadius + lineW * 1.6f, modAngle);
+        g.setColour (t.accentMod.brighter (0.2f).withAlpha (0.95f * modAlphaScale));
+        g.fillEllipse (modDot.x - modDotR, modDot.y - modDotR, modDotR * 2.0f, modDotR * 2.0f);
+    }
+
     // Press state for label-less knobs that opt in: a value chip across the
     // knob (used by the header master volume).
     if (slider.isMouseButtonDown()

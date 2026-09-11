@@ -11530,8 +11530,8 @@ int main (int argc, char* argv[])
     // JUCE's own foreground checks (CallOutBoxCallback::timerCallback,
     // key-window-dependent focus grabs) misbehave whenever the user is doing
     // anything else on the machine. Must run before any UI test.
-    juce::Process::setDockIconVisible (false);
    #if JUCE_MAC
+    juce::Process::setDockIconVisible (false);
     juce::Process::makeForegroundProcess();
    #endif
 

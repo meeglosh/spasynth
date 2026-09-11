@@ -17,7 +17,8 @@ namespace ui
 class OscStrip : public juce::Component,
                  private juce::AudioProcessorValueTreeState::Listener,
                  private juce::AsyncUpdater,
-                 private juce::ChangeListener
+                 private juce::ChangeListener,
+                 private juce::Timer
 {
 public:
     OscStrip (SPASynthProcessor&, int slot);
@@ -31,6 +32,14 @@ private:
     void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { triggerAsyncUpdate(); }
+    // Low-rate poll (10Hz) so the SYNC readout's "native -> host BPM" half
+    // tracks a live host tempo change while playing -- there's no host-
+    // tempo-changed callback to listen for instead. Only does anything in
+    // Sample mode with SYNC on, and only actually touches the label
+    // (setText + repaint) when the resolved host BPM has moved by >= 0.1 --
+    // see updateSyncReadout().
+    void timerCallback() override;
+    double lastPolledHostBpm = -1.0;
     void chooseContent();
     params::OscMode currentMode() const;
     juce::String contentName() const;

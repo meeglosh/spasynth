@@ -1362,6 +1362,140 @@ namespace
         file.deleteFile();
     }
 
+    // Full-processor regression for where the SYNC stretch ratio's host BPM
+    // actually comes from (Mike: "a sample was labelled 137 BPM while Logic
+    // ran at 120" -- turned out to be a labelling confusion, not a sync bug,
+    // but this locks the plumbing down since the 1.0.3 arp lesson is exactly
+    // this shape of bug: a host can report tempo with the transport STOPPED,
+    // and gating BPM on isPlaying (the way the arp's ppq gate legitimately
+    // needs to gate on it) would silently fall back to the wrong tempo.
+    // SPASynthProcessor::processBlock resolves blockBpm from
+    // AudioPlayHead::getPosition()->getBpm() unconditionally (isPlaying only
+    // gates blockPlaying/ppq), falling back to the standalone internal tempo
+    // only when the host provides no BPM at all -- this exercises all three
+    // states end to end (host bpm while stopped, host bpm changes live, no
+    // playhead) through the real processor + APVTS + SamplePlayer chain.
+    static void sampleSyncHostTempoTest()
+    {
+        std::cout << "sampleSyncHostTempoTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 256;
+        constexpr double nativeBpm = 120.0;
+        constexpr double beatPeriod = 60.0 / nativeBpm;
+
+        const auto file = writeClickPattern (sr, beatPeriod, 24, 4);
+
+        struct FakePlayHead : public juce::AudioPlayHead
+        {
+            double bpm = 90.0;
+            bool playing = false;
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo info;
+                info.setBpm (bpm);
+                info.setIsPlaying (playing);
+                // Deliberately no ppq -- mirrors a host that reports tempo
+                // with the transport stopped (Logic does this).
+                return info;
+            }
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "host-tempo test sample loads");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::keytrack), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::sampleStart), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 1.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+        const auto renderSeconds = [&] (double seconds)
+        {
+            std::vector<float> out;
+            const auto numBlocks = (int) ((seconds * sr) / blockSize) + 1;
+            out.reserve ((size_t) numBlocks * (size_t) blockSize);
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                for (int i = 0; i < blockSize; ++i)
+                    out.push_back (buffer.getSample (0, i));
+            }
+            // Normalize to peak 1.0 -- the full synth's gain staging (osc
+            // level, pan law, master) puts this well under the raw
+            // SamplePlayer-level test's amplitude, and detectOnsetsInBuffer's
+            // flux threshold is tuned in absolute terms.
+            float peak = 0.0f;
+            for (auto v : out) peak = juce::jmax (peak, std::abs (v));
+            if (peak > 1.0e-6f)
+                for (auto& v : out) v /= peak;
+            return out;
+        };
+
+        const auto meanSpacingNear = [] (const std::vector<double>& onsets, double targetPeriod)
+        {
+            if (onsets.size() < 3) return false;
+            double sumAbsErrMs = 0.0;
+            int n = 0;
+            for (size_t i = 1; i < onsets.size(); ++i)
+            {
+                const auto spacing = onsets[i] - onsets[i - 1];
+                const auto multiple = std::round (spacing / targetPeriod);
+                if (multiple < 1.0 || multiple > 2.0) continue;
+                sumAbsErrMs += std::abs (spacing - multiple * targetPeriod) * 1000.0;
+                ++n;
+            }
+            return n > 0 && (sumAbsErrMs / n) < 10.0;
+        };
+
+        // (1) Host reports 90 BPM, transport STOPPED, no ppq. blockBpm must
+        // still come from the host's 90, not the 120 internal default.
+        FakePlayHead fake;
+        fake.bpm = 90.0;
+        fake.playing = false;
+        proc.setPlayHead (&fake);
+
+        const auto stoppedRender = renderSeconds (2.5);
+        const auto stoppedOnsets = detectOnsetsInBuffer (stoppedRender, sr);
+        expect (meanSpacingNear (stoppedOnsets, 60.0 / 90.0),
+                "SYNC follows the host's 90 BPM even though the host transport is stopped");
+
+        // (2) Host tempo changes live (still stopped) -- the ratio must
+        // follow within about a block, not stick to the old value.
+        fake.bpm = 140.0;
+        // Flush the block the change lands in, then measure fresh.
+        renderSeconds (0.05);
+        const auto changedRender = renderSeconds (2.5);
+        const auto changedOnsets = detectOnsetsInBuffer (changedRender, sr);
+        expect (meanSpacingNear (changedOnsets, 60.0 / 140.0),
+                "SYNC follows a live host tempo change (stopped, 90 -> 140 BPM)");
+
+        // (3) No playhead at all -- falls back to the standalone internal
+        // tempo, whose default is 120 (== the sample's own native tempo, so
+        // the stretch ratio should be ~1:1 and onsets land on the original
+        // beat grid).
+        proc.setPlayHead (nullptr);
+        renderSeconds (0.05);
+        const auto fallbackRender = renderSeconds (2.5);
+        const auto fallbackOnsets = detectOnsetsInBuffer (fallbackRender, sr);
+        expect (meanSpacingNear (fallbackOnsets, beatPeriod),
+                "SYNC falls back to the internal 120 BPM tempo with no host playhead");
+
+        proc.setPlayHead (nullptr);
+        file.deleteFile();
+    }
+
     // Editor-level checks: the SYNC toggle exists only in sample mode, shows
     // a readout, doesn't grab keyboard focus, and the beats field writes the
     // override param.
@@ -5514,6 +5648,117 @@ namespace
         }
     }
 
+    // Logic (AUHostingService's out-of-process view) flickered the whole
+    // window on every note -- JUCE's NSViewComponentPeer clears the dirty
+    // rect to transparent before painting a non-opaque root, and the 24Hz
+    // display timers repaint constantly. Fix: SPASynthEditor and
+    // ContentComponent are both setOpaque(true), and each paint()s its full
+    // bounds unconditionally. This regresses (1) the opacity flags and (2)
+    // FULL pixel coverage -- fill the target image with a garish colour no
+    // real paint path uses, paint the whole editor over it, and assert none
+    // of that colour survives, at base size, with the keyboard strip shown,
+    // and with the preset drawer open (the three layout states the CLAUDE.md
+    // brief calls out as needing checking).
+    static void editorIsOpaqueTest()
+    {
+        std::cout << "editorIsOpaqueTest\n";
+
+        const auto magenta = juce::Colour (0xffff00ff);
+
+        const auto noMagentaSurvives = [&] (juce::AudioProcessorEditor& editor,
+                                            const juce::String& label)
+        {
+            expect (editor.isOpaque(), label + ": SPASynthEditor is opaque");
+
+            spa::ui::ContentComponent* content = nullptr;
+            std::function<void (juce::Component&)> findContent = [&] (juce::Component& c)
+            {
+                if (content != nullptr) return;
+                if (auto* cc = dynamic_cast<spa::ui::ContentComponent*> (&c))
+                    { content = cc; return; }
+                for (auto* child : c.getChildren())
+                    findContent (*child);
+            };
+            findContent (editor);
+            expect (content != nullptr, label + ": found ContentComponent");
+            if (content != nullptr)
+                expect (content->isOpaque(), label + ": ContentComponent is opaque");
+
+            const auto w = editor.getWidth(), h = editor.getHeight();
+            juce::Image img (juce::Image::ARGB, w, h, true);
+            {
+                juce::Graphics g (img);
+                g.fillAll (magenta);
+                editor.paintEntireComponent (g, false);
+            }
+
+            int magentaPixels = 0;
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                    if (img.getPixelAt (x, y) == magenta)
+                        ++magentaPixels;
+
+            expect (magentaPixels == 0, label + ": no magenta pre-fill pixels survive full paint (found "
+                                       + juce::String (magentaPixels) + ")");
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        // (1) Base size, keyboard hidden, drawer closed.
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+            noMagentaSurvives (*editor, "base size");
+        }
+
+        // (2) Keyboard strip shown -- taller base height.
+        {
+            proc.getAPVTS().state.setProperty ("uiKeyboardVisible", true, nullptr);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth,
+                             spa::ui::metrics::baseHeight + spa::ui::metrics::keyboardStripHeight);
+            noMagentaSurvives (*editor, "keyboard shown");
+            proc.getAPVTS().state.setProperty ("uiKeyboardVisible", false, nullptr);
+        }
+
+        // (3) Preset drawer open -- widened window, drawer in its own column
+        // (see renderEditorSnapshots for the same click-through-the-real-
+        // path reasoning: the drawer eases into place and the window/grid
+        // resize needs pumping through the message loop).
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            juce::TextButton* browseButton = nullptr;
+            std::function<void (juce::Component&)> findBrowse = [&] (juce::Component& c)
+            {
+                if (browseButton != nullptr) return;
+                if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                    if (b->getTooltip() == "Browse presets")
+                        { browseButton = b; return; }
+                for (auto* child : c.getChildren())
+                    findBrowse (*child);
+            };
+            findBrowse (*editor);
+            expect (browseButton != nullptr, "drawer test found the preset-browse button");
+            if (browseButton != nullptr)
+            {
+                browseButton->triggerClick();
+                const auto deadline = juce::Time::getMillisecondCounter() + 1000u;
+                while (editor->getWidth() == spa::ui::metrics::baseWidth
+                       && juce::Time::getMillisecondCounter() < deadline)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+                const auto easeDeadline = juce::Time::getMillisecondCounter() + 400u;
+                while (juce::Time::getMillisecondCounter() < easeDeadline)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+                noMagentaSurvives (*editor, "preset drawer open");
+            }
+        }
+    }
+
     // The preset-name button must be clickable the moment the editor opens —
     // regression probe for the "Init unclickable until a knob moves" bug.
     static void editorHitTestProbe()
@@ -9524,6 +9769,7 @@ int main (int argc, char* argv[])
     samplePlayerWholeFileLoopTest();
     tempoDetectionTest();
     sampleSyncStretchTest();
+    sampleSyncHostTempoTest();
     sampleSyncUiTest();
     granularTest();
     quickSwapTest();
@@ -9552,6 +9798,7 @@ int main (int argc, char* argv[])
     randomizeNeverSilentTest();
     voiceDeterminismTest();
     randomizeArpFastRetriggerAttackTest();
+    editorIsOpaqueTest();
     editorHitTestProbe();
     midiLearnTest();
     arpeggiatorTest();

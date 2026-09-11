@@ -242,6 +242,7 @@ public:
     explicit SPASynthEditor (SPASynthProcessor&);
     ~SPASynthEditor() override;
 
+    void paint (juce::Graphics&) override;
     void resized() override;
     void parentHierarchyChanged() override;
 

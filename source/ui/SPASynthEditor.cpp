@@ -765,6 +765,16 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                                                      SPAAssets::SPAudio_logo_white_svgSize);
     noiseTexture = makeFaceplateNoiseTexture();   // faceplate grain: generated once, message thread
 
+    // Opaque: paint() below always fillAll's the full bounds first (whatever
+    // the drawer/keyboard-strip layout state), so this is safe -- and it
+    // matters in Logic's out-of-process AU view (AUHostingService /
+    // NSRemoteView), where JUCE's NSViewComponentPeer clears the dirty rect
+    // to transparent before painting a non-opaque root; with the 24Hz
+    // display timers repainting small regions constantly (scopes/meters),
+    // that clear-then-paint was visible as whole-window flicker on every
+    // note. Standalone (its own real NSWindow) never showed this.
+    setOpaque (true);
+
     // Logo (top-left) opens the SPASynth settings menu. Works in the plugin too,
     // unlike the standalone wrapper's audio-device "Options" menu.
     settingsButton.setTooltip ("Settings: library folder, accent colors, keyboard, MIDI Learn");
@@ -2100,6 +2110,14 @@ SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
 {
     setLookAndFeel (&lookAndFeel);
 
+    // Same opacity reasoning as ContentComponent (see its constructor) --
+    // this component is the actual peer root under the AU host view, and
+    // its own paint() below covers the full bounds unconditionally (the
+    // scaled content sits on top, but letterboxing during an aspect-
+    // constrained resize, or the moment before content's transform catches
+    // up, must never show a transparent strip through to the host).
+    setOpaque (true);
+
     content = std::make_unique<ui::ContentComponent> (p, [this] { applyTheme(); });
     content->onKeyboardToggled = [this] { keyboardToggled(); };
     content->onBrowserToggled = [this] { browserToggled(); };
@@ -2300,6 +2318,15 @@ void SPASynthEditor::applyTheme()
     sendLookAndFeelChange();
     content->refreshAll();
     repaint();
+}
+
+void SPASynthEditor::paint (juce::Graphics& g)
+{
+    // Cheap fill: content's scaled bounds normally cover this exactly, but
+    // this guards the letterboxing gap during an aspect-constrained resize
+    // (and the instant before the first transform is applied) so opacity
+    // (see the constructor) never lets a transparent strip show through.
+    g.fillAll (ui::currentTheme().background);
 }
 
 void SPASynthEditor::resized()

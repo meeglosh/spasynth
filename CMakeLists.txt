@@ -158,6 +158,23 @@ target_compile_definitions(SPASynth PRIVATE
     JUCE_DISPLAY_SPLASH_SCREEN=0
     SPASYNTH_VERSION="${PROJECT_VERSION}")
 
+# Diagnostic-only, default OFF: when ON, JUCE flashes every actually-
+# repainted screen region in a random colour on top of the real paint (see
+# juce_gui_basics' Component::paintEntireComponent /
+# JUCE_ENABLE_REPAINT_DEBUGGING). Not for shipping builds -- it's here so
+# Mike can turn it on for one dev build and look at Logic's out-of-process
+# AU view directly, in case the ContentComponent/SPASynthEditor opacity fix
+# above doesn't fully cure the compositor flicker he reported (it should:
+# a non-opaque root's dirty rect gets cleared to transparent by
+# NSViewComponentPeer before each repaint, which reads as whole-window
+# flicker under AUHostingService/NSRemoteView at the 24Hz display-timer
+# rate; if flashing regions are still small/localized with this on, the
+# opacity fix worked and something else is repainting too much/too often).
+option(SPASYNTH_REPAINT_DEBUG "Flash repainted regions (diagnostic, not for release builds)" OFF)
+if(SPASYNTH_REPAINT_DEBUG)
+    target_compile_definitions(SPASynth PRIVATE JUCE_ENABLE_REPAINT_DEBUGGING=1)
+endif()
+
 target_link_libraries(SPASynth
     PRIVATE
         SPAAssets

@@ -8,7 +8,10 @@ A large round of features and fixes from our testers' playtest sessions.
   to your project's tempo while keeping its pitch, using the sample's own
   detected tempo (which you can edit if we guessed wrong), so you can play
   drum hits, loops and other transient-rich sounds as rhythmic parts that
-  always land in time.
+  always land in time. The readout always shows the SAMPLE's own tempo (e.g.
+  "Sample ~137 BPM"); switch SYNC on and it becomes "137 -> 120 BPM" to make
+  clear that's the sample's native tempo being stretched to your project's
+  120, not a mismatch.
 - You can now zoom and pan the oscillator waveform display, which makes it
   much easier to work with long samples. Scroll or pinch to zoom in and out
   around your cursor, drag to pan once zoomed, and double-click to snap back

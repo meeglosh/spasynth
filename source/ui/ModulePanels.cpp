@@ -82,6 +82,8 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     syncReadout.setJustificationType (juce::Justification::centredLeft);
     syncReadout.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     syncReadout.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    syncReadout.setTooltip ("Sample tempo detected from its transients; SYNC stretches it to "
+                            "the project tempo. Double-click to set the sample's length in beats.");
     syncReadout.onEditorShow = [this]
     {
         if (auto* ed = syncReadout.getCurrentTextEditor())
@@ -143,6 +145,8 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     apvts.addParameterListener (pid (id::osc::mode), this);
     processor.addChangeListener (this);
     handleAsyncUpdate();
+
+    startTimerHz (10);   // see timerCallback()
 }
 
 OscStrip::~OscStrip()
@@ -238,6 +242,7 @@ void OscStrip::updateSyncReadout()
     const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
     auto* apvts = &processor.getAPVTS();
     const auto beatsOverride = apvts->getRawParameterValue (pid (id::osc::syncBeatsOverride))->load();
+    const auto syncOn = apvts->getRawParameterValue (pid (id::osc::syncToBpm))->load() >= 0.5f;
 
     if (sample == nullptr)
     {
@@ -245,27 +250,71 @@ void OscStrip::updateSyncReadout()
         return;
     }
 
+    // The readout used to show only the SAMPLE's own detected/overridden
+    // tempo with no indication that's what it was -- Mike saw "137 BPM"
+    // while Logic ran at 120 and couldn't tell if that was a labelling
+    // mistake or an actual sync problem (it was neither -- SYNC just
+    // stretches the sample's own native tempo to the project's). Now the
+    // readout always names whose tempo it's showing, and SYNC-on makes the
+    // stretch itself visible as "native -> host".
     const auto lengthSeconds = sample->lengthSeconds();
+    const auto lowConfidence = beatsOverride <= 0.0f && sample->bpmConfidence < 0.5f;
+
+    juce::String nativeBpmStr;
+    juce::String beatsStr;
     if (beatsOverride > 0.0f)
     {
+        // User-entered beat count is exact, not a detection -- no "~".
         const auto bpm = lengthSeconds > 1.0e-6 ? 60.0 * beatsOverride / lengthSeconds : 0.0;
-        syncReadout.setColour (juce::Label::textColourId, currentTheme().textPrimary);
-        syncReadout.setText (juce::String (juce::roundToInt (bpm)) + " BPM  "
-                              + juce::String (beatsOverride, 2) + " beats",
-                              juce::dontSendNotification);
-        return;
+        nativeBpmStr = juce::String (juce::roundToInt (bpm));
+        beatsStr = juce::String (beatsOverride, 2);
+    }
+    else
+    {
+        nativeBpmStr = (lowConfidence ? juce::String ("~? ") : juce::String ("~"))
+                     + juce::String (juce::roundToInt (sample->detectedBpm));
+        beatsStr = juce::String (sample->detectedBeats, 1);
     }
 
-    // Confidence < 0.5: the detection wasn't sure -- the file is one-shot-
-    // like material, being stretched to its nearest whole beat count rather
-    // than a confidently detected tempo. Say so with a dimmed "~?".
-    const auto lowConfidence = sample->bpmConfidence < 0.5f;
-    juce::String text = (lowConfidence ? juce::String ("~? ") : juce::String ("~ "))
-                       + juce::String (juce::roundToInt (sample->detectedBpm)) + " BPM  "
-                       + juce::String (sample->detectedBeats, 1) + " beats";
-    syncReadout.setText (text, juce::dontSendNotification);
+    juce::String text;
+    if (syncOn)
+    {
+        const auto hostBpm = processor.getCurrentBpm();
+        text = nativeBpmStr + " \xe2\x86\x92 " + juce::String (juce::roundToInt (hostBpm))
+             + " BPM \xc2\xb7 " + beatsStr + " beats";
+    }
+    else
+    {
+        text = "Sample " + nativeBpmStr + " BPM \xc2\xb7 " + beatsStr + " beats";
+    }
+
     syncReadout.setColour (juce::Label::textColourId,
                            lowConfidence ? currentTheme().textSecondary : currentTheme().textPrimary);
+    // Only setText/repaint when the text actually changed -- this is called
+    // from a 10Hz poll (see the Timer in the header) whenever SYNC is on and
+    // playing, so it must be cheap on every tick where the host tempo hasn't
+    // moved.
+    if (syncReadout.getText() != text)
+        syncReadout.setText (text, juce::dontSendNotification);
+}
+
+void OscStrip::timerCallback()
+{
+    if (! syncReadout.isVisible())   // Sample mode only (see handleAsyncUpdate)
+        return;
+
+    const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
+    const auto syncOn = processor.getAPVTS().getRawParameterValue (pid (id::osc::syncToBpm))
+                             ->load() >= 0.5f;
+    if (! syncOn)
+        return;
+
+    const auto hostBpm = processor.getCurrentBpm();
+    if (std::abs (hostBpm - lastPolledHostBpm) < 0.1)
+        return;
+
+    lastPolledHostBpm = hostBpm;
+    updateSyncReadout();
 }
 
 void OscStrip::chooseContent()

@@ -137,6 +137,12 @@ public:
     double getInternalBpm() const { return internalBpm.load (std::memory_order_relaxed); }
     int getTempoSyncMode() const { return tempoSyncMode.load (std::memory_order_relaxed); }
     double getCurrentBpm() const { return currentBpm.load (std::memory_order_relaxed); }
+    // Resolved beats-per-bar (host time signature if it reports one, else the
+    // global.timeSig setting) and whether the host is the source -- the
+    // standalone tempo bar / settings menu dims its own time-sig control when
+    // the host wins.
+    float getCurrentBeatsPerBar() const { return currentBeatsPerBar.load (std::memory_order_relaxed); }
+    bool getHostReportsTimeSig() const { return hostReportsTimeSig.load (std::memory_order_relaxed); }
 
     // FX chain order (drag-reorderable, saved per preset): FXChain module ids in
     // processing order. RT-safe hand-off via a single packed atomic.
@@ -310,10 +316,15 @@ private:
     std::atomic<double> internalBpm { 120.0 };
     std::atomic<int> tempoSyncMode { 0 };       // 0 = internal, 1 = external MIDI clock
     std::atomic<double> currentBpm { 120.0 };   // resolved live tempo (UI display)
+    std::atomic<float> currentBeatsPerBar { 4.0f };
+    std::atomic<bool> hostReportsTimeSig { false };
     dsp::MidiClockSync midiClock;
     double blockBpm = 120.0;
     bool blockPlaying = true;
     double blockPpq = 0.0;
+    bool blockGotHostPpq = false;
+    float blockBeatsPerBar = 4.0f;
+    bool blockGotHostTimeSig = false;
 
     // Packed FX chain order (4 bits/module); set by the UI, read each block.
     std::atomic<juce::uint64> fxOrderPacked { dsp::FXChain::defaultOrderPacked() };
@@ -414,6 +425,7 @@ private:
         std::atomic<float>* ampSustain = nullptr;
         std::atomic<float>* ampRelease = nullptr;
         std::atomic<float>* oversampling = nullptr;
+        std::atomic<float>* timeSig = nullptr;
         std::atomic<float>* filter1Enable = nullptr;
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* filterKeytrack = nullptr;

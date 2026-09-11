@@ -1437,6 +1437,86 @@ namespace
         file.deleteFile();
     }
 
+    // Mike's redesign: LOOP+SYNC quantises the loop to the sample's beat
+    // grid -- a whole number of beats (minimum 1), anchored at the file's
+    // first detected onset, not t=0 -- applied at read time
+    // (SamplePlayer::computeLoopBounds) so raw knob values are untouched.
+    static void sampleSyncLoopSnapTest()
+    {
+        std::cout << "sampleSyncLoopSnapTest\n";
+        constexpr double sr = 48000.0;
+        constexpr double nativeBpm = 120.0;
+        constexpr double beatPeriod = 60.0 / nativeBpm;
+
+        const auto file = writeClickPattern (sr, beatPeriod, 16, 4);
+        const auto loaded = spa::dsp::loadSampleFromFile (file);
+        expect (loaded.sample != nullptr, "loop-snap test click file loads");
+        if (loaded.sample == nullptr) { file.deleteFile(); return; }
+        const auto& sample = *loaded.sample;
+
+        expect (sample.firstOnsetSeconds >= 0.0 && sample.firstOnsetSeconds < beatPeriod,
+                "first onset lands near the file's first click (got "
+                    + juce::String (sample.firstOnsetSeconds) + "s)");
+
+        const auto len = (double) sample.lengthSamples();
+        const auto beatSamples = beatPeriod * sr;
+        const auto offsetSamples = sample.firstOnsetSeconds * sr;
+
+        const auto snap = [&] (double startNorm, double endNorm)
+        {
+            spa::dsp::SamplePlayer::Params p;
+            p.sample = &sample;
+            p.loopStartNorm = startNorm;
+            p.loopEndNorm = endNorm;
+            p.snapToGrid = true;
+            p.gridBeatSeconds = beatPeriod;
+            p.gridOffsetSeconds = sample.firstOnsetSeconds;
+            double outStart = 0.0, outEnd = 0.0;
+            spa::dsp::SamplePlayer::effectiveLoopBoundsSamples (p, len, outStart, outEnd);
+            return std::make_pair (outStart, outEnd);
+        };
+
+        // Off-grid loop points snap to whole beats anchored at the onset.
+        {
+            const auto [outStart, outEnd] = snap (0.13, 0.87);
+            const auto beatsFromOnsetStart = (outStart - offsetSamples) / beatSamples;
+            const auto lenBeats = (outEnd - outStart) / beatSamples;
+            expect (std::abs (beatsFromOnsetStart - std::round (beatsFromOnsetStart)) < 1.0e-6,
+                    "snapped loop start lands on a grid line anchored to the first onset (got "
+                        + juce::String (beatsFromOnsetStart) + " beats from onset)");
+            expect (std::abs (lenBeats - std::round (lenBeats)) < 1.0e-6 && lenBeats >= 1.0 - 1.0e-6,
+                    "snapped loop length is a whole number of beats >= 1 (got "
+                        + juce::String (lenBeats) + ")");
+        }
+
+        // A sub-beat request is extended to exactly 1 beat.
+        {
+            const auto [outStart, outEnd] = snap (0.0, 0.001);
+            const auto lenBeats = (outEnd - outStart) / beatSamples;
+            expect (std::abs (lenBeats - 1.0) < 1.0e-6,
+                    "sub-beat loop length is extended to 1 beat (got " + juce::String (lenBeats) + ")");
+        }
+
+        // SYNC off -- raw (unsnapped, only end-of-file-clamped) values used.
+        {
+            spa::dsp::SamplePlayer::Params p;
+            p.sample = &sample;
+            p.loopStartNorm = 0.13;
+            p.loopEndNorm = 0.87;
+            p.snapToGrid = false;
+            double outStart = 0.0, outEnd = 0.0;
+            spa::dsp::SamplePlayer::effectiveLoopBoundsSamples (p, len, outStart, outEnd);
+            expect (std::abs (outStart - 0.13 * len) < 1.0,
+                    "SYNC off leaves loop start at the raw knob value (got " + juce::String (outStart)
+                        + ", expected ~" + juce::String (0.13 * len) + ")");
+            expect (std::abs (outEnd - 0.87 * len) < 1.0,
+                    "SYNC off leaves loop end at the raw knob value (got " + juce::String (outEnd)
+                        + ", expected ~" + juce::String (0.87 * len) + ")");
+        }
+
+        file.deleteFile();
+    }
+
     // Full-processor regression for where the SYNC stretch ratio's host BPM
     // actually comes from (Mike: "a sample was labelled 137 BPM while Logic
     // ran at 120" -- turned out to be a labelling confusion, not a sync bug,
@@ -1571,6 +1651,342 @@ namespace
         file.deleteFile();
     }
 
+    // Mike's redesign: LOOP+SYNC while the host transport is playing locks the
+    // loop's phase to the project's bar/beat grid (like a Live clip) -- a
+    // note-on joins in at the current beat position, and playback stays
+    // aligned to the transport (drift-corrected) rather than free-running
+    // from the key press. Full-processor: a fake playhead with an advancing
+    // ppq, matching sampleSyncHostTempoTest's approach.
+    static void sampleSyncTransportLockTest()
+    {
+        std::cout << "sampleSyncTransportLockTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 128;
+        constexpr double hostBpm = 90.0;
+        constexpr double beatPeriod = 60.0 / hostBpm;
+
+        // A click file whose own detected tempo is near hostBpm, so the
+        // stretcher runs close to 1:1 (keeps onset timing precise for the
+        // test's 5ms tolerance) -- the phase-lock math itself is tempo-
+        // invariant (see SPASynthVoice::computeChunk), so this isn't load-
+        // bearing for correctness, just precision.
+        const auto file = writeClickPattern (sr, beatPeriod, 32, 4);
+
+        struct FakePlayHead : public juce::AudioPlayHead
+        {
+            double bpm = 90.0;
+            bool playing = true;
+            double ppq = 0.0;
+            int tsNum = 4, tsDen = 4;
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo info;
+                info.setBpm (bpm);
+                info.setIsPlaying (playing);
+                info.setPpqPosition (ppq);
+                juce::AudioPlayHead::TimeSignature ts;
+                ts.numerator = tsNum; ts.denominator = tsDen;
+                info.setTimeSignature (ts);
+                return info;
+            }
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "transport-lock test sample loads");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::keytrack), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::sampleStart), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
+        // Pin the sample's native tempo EXACTLY via syncBeatsOverride (one
+        // beat per click, 32 clicks) instead of relying on the loader's
+        // detection (which is only accurate to a couple of percent, per
+        // tempoDetectionTest) -- the phase-lock math is exact in BEATS
+        // (tempo-invariant, see SPASynthVoice::computeChunk), so the loop
+        // length below (as a fraction of the file) must itself be an exact
+        // whole number of native beats for this test's tight tolerances,
+        // not an approximation via the host's beat period.
+        constexpr float beatsOverride = 32.0f;
+        setParam (proc, id::oscSlot (0, id::osc::syncBeatsOverride), beatsOverride);
+        // A 2-beat loop (well inside the file): 2 of the 32 native beats.
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 2.0f / beatsOverride);
+
+        FakePlayHead fake;
+        fake.bpm = hostBpm;
+        fake.playing = true;
+        fake.tsNum = 4; fake.tsDen = 4;
+        proc.setPlayHead (&fake);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+
+        // Render `seconds` of audio, advancing the fake ppq each block by the
+        // real elapsed time at hostBpm (a real host's ppq is exactly this).
+        // If noteOnPpq is set, a note-on lands in the very first block.
+        const auto render = [&] (double seconds, double* noteOnPpq) -> std::vector<float>
+        {
+            std::vector<float> out;
+            const auto numBlocks = (int) ((seconds * sr) / blockSize) + 1;
+            out.reserve ((size_t) numBlocks * (size_t) blockSize);
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0 && noteOnPpq != nullptr)
+                {
+                    fake.ppq = *noteOnPpq;
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                }
+                proc.processBlock (buffer, midi);
+                for (int i = 0; i < blockSize; ++i)
+                    out.push_back (buffer.getSample (0, i));
+                fake.ppq += (double) blockSize / sr * (fake.bpm / 60.0);
+            }
+            float peak = 0.0f;
+            for (auto v : out) peak = juce::jmax (peak, std::abs (v));
+            if (peak > 1.0e-6f)
+                for (auto& v : out) v /= peak;
+            return out;
+        };
+
+        // Note-on at ppq 1.5 into a 2-beat loop: phase = fmod(1.5, 2) = 1.5
+        // beats in -- the first rendered onset should land ~0.5 beats (one
+        // click period before the loop's own beat-2 click) later, i.e. at
+        // real time (2 - 1.5) * beatPeriod from note-on, NOT at time 0 (which
+        // is what a free-running/sampleStart-based note-on would do).
+        double startPpq = 1.5;
+        const auto joinRender = render (2.0, &startPpq);
+        const auto joinOnsets = detectOnsetsInBuffer (joinRender, sr);
+        expect (joinOnsets.size() >= 1, "transport-locked note-on produces at least one onset");
+        if (! joinOnsets.empty())
+        {
+            const auto expectedFirstOnset = (2.0 - 1.5) * beatPeriod;   // 0.5 beats to the next click
+            const auto err = std::abs (joinOnsets.front() - expectedFirstOnset) * 1000.0;
+            // Generous tolerance: the simple flux-based onset probe (see
+            // detectOnsetsInBuffer) has some edge bias detecting the very
+            // FIRST onset of a render that starts from silence (the Hann-
+            // windowed grain ramping in shifts its apparent peak slightly);
+            // the sustained-render check below measures many onsets by
+            // AVERAGE spacing (immune to that single-onset bias) and holds
+            // to <5ms, which is the more meaningful precision claim -- this
+            // check is really about landing at the right BEAT, not the right
+            // sample.
+            expect (err < 25.0,
+                    "note-on joins the transport-locked loop at the current beat position (expected ~"
+                        + juce::String (expectedFirstOnset) + "s, got " + juce::String (joinOnsets.front())
+                        + "s, err " + juce::String (err) + "ms)");
+        }
+
+        // Sustained playback over several bars: onsets keep landing on the
+        // hostBpm grid (no drift) -- reuses sampleSyncHostTempoTest's
+        // averaged-spacing check, extended to ~8 bars (32 beats) of material.
+        startPpq = 0.0;
+        const auto sustainedRender = render (32.0 * beatPeriod, &startPpq);
+        const auto sustainedOnsets = detectOnsetsInBuffer (sustainedRender, sr);
+        expect (sustainedOnsets.size() >= 8, "sustained transport-locked render produces many onsets");
+        if (sustainedOnsets.size() >= 8)
+        {
+            double sumAbsErrMs = 0.0;
+            int n = 0;
+            for (size_t i = 1; i < sustainedOnsets.size(); ++i)
+            {
+                const auto spacing = sustainedOnsets[i] - sustainedOnsets[i - 1];
+                const auto multiple = std::round (spacing / beatPeriod);
+                if (multiple < 1.0 || multiple > 2.0) continue;
+                sumAbsErrMs += std::abs (spacing - multiple * beatPeriod) * 1000.0;
+                ++n;
+            }
+            expect (n > 0, "enough measurable spacings over the sustained render");
+            if (n > 0)
+                expect (sumAbsErrMs / n < 5.0,
+                        "transport-locked loop doesn't drift off the host grid over 8 bars (got "
+                            + juce::String (sumAbsErrMs / n) + "ms average error)");
+        }
+
+        // A host ppq jump (loop point in the host) re-aligns within one
+        // block: render normally for a bit, then jump ppq far away and check
+        // that playback resumes on the NEW ppq's grid, not a continuation of
+        // the old timeline -- measured the same robust way as the sustained-
+        // render check above (averaged onset spacing), over several beats of
+        // post-jump material so there's enough to measure.
+        {
+            startPpq = 0.0;
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                fake.ppq = 0.0;
+                proc.processBlock (buffer, midi);
+            }
+            // Jump the transport forward by an odd (non-loop-multiple) amount.
+            fake.ppq = 10.75;   // phase = fmod(10.75, 2) = 0.75 beats into the loop
+            std::vector<float> postJump;
+            const auto postJumpBlocks = (int) ((6.0 * beatPeriod * sr) / blockSize) + 1;
+            for (int b = 0; b < postJumpBlocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                proc.processBlock (buffer, midi);
+                for (int i = 0; i < blockSize; ++i) postJump.push_back (buffer.getSample (0, i));
+                fake.ppq += (double) blockSize / sr * (fake.bpm / 60.0);
+            }
+            float peak = 0.0f;
+            for (auto v : postJump) peak = juce::jmax (peak, std::abs (v));
+            if (peak > 1.0e-6f) for (auto& v : postJump) v /= peak;
+            const auto postOnsets = detectOnsetsInBuffer (postJump, sr);
+            expect (postOnsets.size() >= 3, "post-jump render produces several onsets");
+            if (postOnsets.size() >= 3)
+            {
+                double sumAbsErrMs = 0.0;
+                int n = 0;
+                for (size_t i = 1; i < postOnsets.size(); ++i)
+                {
+                    const auto spacing = postOnsets[i] - postOnsets[i - 1];
+                    const auto multiple = std::round (spacing / beatPeriod);
+                    if (multiple < 1.0 || multiple > 2.0) continue;
+                    sumAbsErrMs += std::abs (spacing - multiple * beatPeriod) * 1000.0;
+                    ++n;
+                }
+                expect (n > 0, "enough measurable post-jump spacings");
+                if (n > 0)
+                    expect (sumAbsErrMs / n < 5.0,
+                            "a host ppq jump re-aligns the loop to the new transport grid (got "
+                                + juce::String (sumAbsErrMs / n) + "ms average error)");
+            }
+        }
+
+        // Transport stopped: free-runs from the key press at the synced
+        // tempo (today's behaviour, unaffected by the phase-lock addition).
+        {
+            fake.playing = false;
+            fake.ppq = 5.0;   // irrelevant while stopped
+            std::vector<float> stoppedOut;
+            const auto numBlocks = (int) ((2.0 * sr) / blockSize) + 1;
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                proc.processBlock (buffer, midi);
+                for (int i = 0; i < blockSize; ++i) stoppedOut.push_back (buffer.getSample (0, i));
+            }
+            float peak = 0.0f;
+            for (auto v : stoppedOut) peak = juce::jmax (peak, std::abs (v));
+            if (peak > 1.0e-6f) for (auto& v : stoppedOut) v /= peak;
+            const auto stoppedOnsets = detectOnsetsInBuffer (stoppedOut, sr);
+            expect (stoppedOnsets.size() >= 2, "stopped-transport free-run produces onsets");
+            if (stoppedOnsets.size() >= 2)
+            {
+                // Onsets land at whole beatPeriod multiples of each other,
+                // starting from the key press (position 0, sampleStart ==
+                // loop start) -- NOT the arbitrary transport phase (5.0 ppq)
+                // the stopped playhead reports, proving playback free-ran
+                // from the note-on rather than joining a transport phase.
+                // (The very first click, right at t=0, is right at the
+                // probe's blind spot -- its onset can fall inside the first
+                // envelope hop with no preceding low value to flux against,
+                // see detectOnsetsInBuffer -- so this checks spacing between
+                // the onsets that DO land squarely on the grid, not the
+                // absolute position of the first one.)
+                const auto spacing = stoppedOnsets[1] - stoppedOnsets[0];
+                const auto multiple = std::round (spacing / beatPeriod);
+                expect (multiple >= 1.0
+                            && std::abs (spacing - multiple * beatPeriod) < beatPeriod * 0.1,
+                        "stopped transport free-runs from the key press at the synced tempo (spacing "
+                            + juce::String (spacing) + "s, expected a multiple of " + juce::String (beatPeriod) + "s)");
+            }
+        }
+        fake.playing = true;
+
+        // 3/4 time signature: a 3-beat loop's bar-line origin repeats every
+        // 3 beats (not 4) -- note-on at ppq 3.5 (one bar + 0.5 beats in a 3/4
+        // bar) should phase-join the same way ppq 0.5 would.
+        {
+            setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::loopEnd), 3.0f / beatsOverride);
+            fake.tsNum = 3; fake.tsDen = 4;
+
+            double ppqA = 0.5;
+            const auto renderA = render (1.5, &ppqA);
+            double ppqB = 3.5;   // one 3/4 bar later, same phase
+            const auto renderB = render (1.5, &ppqB);
+            const auto onsetsA = detectOnsetsInBuffer (renderA, sr);
+            const auto onsetsB = detectOnsetsInBuffer (renderB, sr);
+            expect (! onsetsA.empty() && ! onsetsB.empty(),
+                    "3/4 bar-line-aligned note-ons both produce onsets");
+            if (! onsetsA.empty() && ! onsetsB.empty())
+                expect (std::abs (onsetsA.front() - onsetsB.front()) * 1000.0 < 5.0,
+                        "3/4 time signature repeats the loop's bar-line origin every 3 beats (ppq 0.5 vs "
+                            "3.5 join at the same phase: " + juce::String (onsetsA.front()) + "s vs "
+                            + juce::String (onsetsB.front()) + "s)");
+            fake.tsNum = 4; fake.tsDen = 4;
+        }
+
+        proc.setPlayHead (nullptr);
+        file.deleteFile();
+    }
+
+    // global.timeSig: choices, resolved beats-per-bar, and the host's own
+    // time signature winning over the setting when it reports one.
+    static void timeSignatureParamTest()
+    {
+        std::cout << "timeSignatureParamTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        // Choice order is append-only: 4/4, 3/4, 6/8, 2/4, 5/4, 7/8, 12/8.
+        const struct { int index; float beatsPerBar; } cases[] = {
+            { 0, 4.0f }, { 1, 3.0f }, { 2, 3.0f }, { 3, 2.0f }, { 4, 5.0f }, { 5, 3.5f }, { 6, 6.0f },
+        };
+        for (const auto& c : cases)
+            expect (std::abs (id::timeSigBeatsPerBar (c.index) - c.beatsPerBar) < 1.0e-3f,
+                    "timeSigBeatsPerBar(" + juce::String (c.index) + ") == "
+                        + juce::String (c.beatsPerBar) + " (got "
+                        + juce::String (id::timeSigBeatsPerBar (c.index)) + ")");
+
+        // Host reporting its own signature wins over the global.timeSig
+        // setting -- exercised through the real processor.
+        struct FakePlayHead : public juce::AudioPlayHead
+        {
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo info;
+                info.setBpm (100.0);
+                info.setIsPlaying (true);
+                info.setPpqPosition (0.0);
+                juce::AudioPlayHead::TimeSignature ts;
+                ts.numerator = 7; ts.denominator = 8;   // beatsPerBar = 3.5
+                info.setTimeSignature (ts);
+                return info;
+            }
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 256);
+        setParam (proc, id::timeSig, 0.0f);   // 4/4 setting -- should be overridden by the host
+
+        FakePlayHead fake;
+        proc.setPlayHead (&fake);
+        juce::AudioBuffer<float> buffer (2, 256);
+        juce::MidiBuffer midi;
+        proc.processBlock (buffer, midi);
+
+        expect (proc.getHostReportsTimeSig(), "processor reports the host supplied a time signature");
+        expect (std::abs (proc.getCurrentBeatsPerBar() - 3.5f) < 1.0e-3f,
+                "host's 7/8 signature wins over the global.timeSig setting (got "
+                    + juce::String (proc.getCurrentBeatsPerBar()) + ")");
+
+        proc.setPlayHead (nullptr);
+        proc.processBlock (buffer, midi);
+        expect (! proc.getHostReportsTimeSig(), "no playhead -> falls back to global.timeSig");
+        expect (std::abs (proc.getCurrentBeatsPerBar() - 4.0f) < 1.0e-3f,
+                "no host signature -> global.timeSig (4/4 default) resolves beatsPerBar (got "
+                    + juce::String (proc.getCurrentBeatsPerBar()) + ")");
+    }
+
     // Editor-level checks: the SYNC toggle exists only in sample mode, shows
     // a readout, doesn't grab keyboard focus, and the beats field writes the
     // override param.
@@ -1647,6 +2063,84 @@ namespace
             .getRawParameterValue (id::oscSlot (0, id::osc::syncBeatsOverride))->load();
         expect (std::abs (overrideValue - 8.0f) < 0.26f,
                 "beats field commit writes syncBeatsOverride (got " + juce::String (overrideValue) + ")");
+
+        // Mike's redesign: SYNC (and its readout) only exist while LOOP is on
+        // -- turning LOOP off hides both immediately, turning it back on
+        // restores them.
+        setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);
+        for (int i = 0; i < 20 && isVisibleInChain (toggleBtn); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (! isVisibleInChain (toggleBtn), "SYNC toggle hidden when LOOP is off");
+        expect (! isVisibleInChain (readout), "SYNC readout hidden when LOOP is off");
+
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        for (int i = 0; i < 20 && ! isVisibleInChain (toggleBtn); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (isVisibleInChain (toggleBtn), "SYNC toggle shown again once LOOP is back on");
+        expect (isVisibleInChain (readout), "SYNC readout shown again once LOOP is back on");
+
+        // Readout format, with a real loaded sample (mode/loop already on
+        // from above; the beats field commit above left syncBeatsOverride at
+        // 8, giving an exact, non-detection-noise native tempo to check
+        // against):
+        //   SYNC off -> "Sample ~137 BPM . N beats" naming the SAMPLE's own
+        //     total length (unchanged).
+        //   SYNC on  -> "137 -> 120 BPM . N bars/beats . num/den" naming the
+        //     EFFECTIVE (snapped) LOOP length, not the sample's total length
+        //     -- loopStart/loopEnd are set below to make that difference
+        //     concrete: an 8-beat-override file with a half-file loop should
+        //     read as "1 bar" (4 beats, the default 4/4), not "8 beats".
+        const auto file = writeClickPattern (48000.0, 60.0 / 120.0, 16, 4);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sampleSyncUiTest sample loads");
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.5f);
+
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 0.0f);
+        for (int i = 0; i < 20; ++i)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+            if (readout->getText().startsWith ("Sample ")) break;
+        }
+        // The 8-beat override file divides evenly into whole bars at the
+        // default 4/4 (8 / 4 = 2), so this reads as "2 bars", not "8 beats"
+        // -- the bars-or-beats formatting applies here too, same as SYNC on.
+        expect (readout->getText().startsWith ("Sample ") && readout->getText().contains ("2 bars"),
+                "SYNC-off readout names the sample's own total length, override beats (got "
+                    + readout->getText() + ")");
+
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        for (int i = 0; i < 20; ++i)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+            if (! readout->getText().startsWith ("Sample ")) break;
+        }
+        const auto syncOnText = readout->getText();
+        expect (syncOnText.contains ("\xe2\x86\x92") && syncOnText.contains ("/")
+                    && syncOnText.contains ("BPM"),
+                "SYNC-on readout shows native->host BPM and a time signature (got " + syncOnText + ")");
+        expect (syncOnText.contains ("1 bar") && ! syncOnText.contains ("8 beats"),
+                "SYNC-on readout names the EFFECTIVE (snapped) LOOP length (half the 8-beat file "
+                "-> 1 bar at 4/4), not the sample's total length (got " + syncOnText + ")");
+
+        // LOOP END moved out to change the effective loop length -> the
+        // readout updates without needing SYNC to be re-toggled (the new
+        // loopStart/loopEnd parameter listeners refresh it directly). 0.75
+        // (not 1.0 -- the full file edge snaps against the onset-anchored
+        // grid overshooting past the last sample, which clamps to a
+        // fractional beat count, an edge-clamp artifact unrelated to what
+        // this checks) -> 6 of the 8 native beats, not a whole number of
+        // bars at 4/4, so it reads as "6 beats".
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.75f);
+        for (int i = 0; i < 20 && syncOnText == readout->getText(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (syncOnText != readout->getText(),
+                "SYNC-on readout refreshes when LOOP END moves (still \"" + readout->getText() + "\")");
+        expect (readout->getText().contains ("6.0 beats"),
+                "widening the loop to 6 of the 8 native beats reads as 6.0 beats, not a whole bar count (got "
+                    + readout->getText() + ")");
+
+        file.deleteFile();
     }
 
     static void granularTest()
@@ -6170,6 +6664,220 @@ namespace
         expect (learn.getAssignedCC (id::filter1Cutoff) == -1, "Clear All MIDI Learn clears the binding");
     }
 
+    // Every remaining juce::PopupMenu::showMenuAsync call site outside
+    // ContentComponent itself -- EqEditor's right-click band type/slope menu
+    // and AssignOverlay's SFX Amp/Pitch pick popup -- now routes through the
+    // shared spa::ui::showPopupAnchored() free function (AssignOverlay.h),
+    // which walks up to the real ContentComponent and calls its
+    // showPopupAnchored() (same focus-grab-before-show / hand-back-after
+    // fix as midiLearnEndToEndTest exercises for the built-in menus). Same
+    // "MenuWindow" detection technique as that test (getCurrentlyModalComponent),
+    // and the same isForegroundProcess() gate for the persistence half.
+    static void popupAnchoringTest()
+    {
+        std::cout << "popupAnchoringTest\n";
+        namespace id = spa::params::id;
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pumpFor (200);
+
+        auto* content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0));
+        expect (content != nullptr, "editor's ContentComponent found");
+        if (content == nullptr) { editor->removeFromDesktop(); return; }
+
+        const bool foreground = juce::Process::isForegroundProcess();
+        if (! foreground)
+            std::cout << "  ..   not a real foreground/interactive process in this environment "
+                         "(Process::isForegroundProcess() == false) -- doesAnyJuceCompHaveFocus() "
+                         "can't reach real focus checking here, so the persistence checks below are "
+                         "skipped; the menu-appears + callback-path assertions still run\n";
+
+        // --- (1) EQ: right-click a band node -----------------------------
+        juce::TabbedComponent* fxTabs = nullptr;
+        std::function<void (juce::Component&)> findTabs = [&] (juce::Component& c)
+        {
+            if (fxTabs == nullptr)
+                if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c))
+                    if (t->getTabNames().contains ("EQ"))
+                        fxTabs = t;
+            for (auto* child : c.getChildren())
+                findTabs (*child);
+        };
+        findTabs (*editor);
+        expect (fxTabs != nullptr, "FX tab bar found");
+        if (fxTabs != nullptr)
+        {
+            fxTabs->setCurrentTabIndex (fxTabs->getTabNames().indexOf ("EQ"));
+
+            spa::ui::EqEditor* eq = nullptr;
+            std::function<void (juce::Component&)> findEq = [&] (juce::Component& c)
+            {
+                if (eq == nullptr)
+                    eq = dynamic_cast<spa::ui::EqEditor*> (&c);
+                for (auto* child : c.getChildren())
+                    findEq (*child);
+            };
+            findEq (*editor);
+            expect (eq != nullptr, "EqEditor found in the editor tree");
+
+            if (eq != nullptr)
+            {
+                eq->resized();
+                setParam (proc, id::eqBand (0, id::fx::eqband::enable), 1.0f);
+                setParam (proc, id::eqBand (0, id::fx::eqband::type), 0.0f /* Bell */);
+
+                const auto nodeCentre = eq->nodeCentreForTest (0);
+                juce::MouseEvent rightClick (juce::Desktop::getInstance().getMainMouseSource(),
+                                             nodeCentre,
+                                             juce::ModifierKeys::rightButtonModifier,
+                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                             eq, eq,
+                                             juce::Time::getCurrentTime(),
+                                             nodeCentre, juce::Time::getCurrentTime(),
+                                             1, false);
+                eq->mouseDown (rightClick);
+
+                {
+                    const auto deadline = juce::Time::getMillisecondCounter() + 500u;
+                    while (juce::Component::getCurrentlyModalComponent (0) == nullptr
+                           && juce::Time::getMillisecondCounter() < deadline)
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+                }
+
+                expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                        "EQ band type/slope popup appeared (right-click routed through "
+                        "showPopupAnchored)");
+                if (juce::Component::getCurrentlyModalComponent (0) != nullptr)
+                {
+                    if (foreground)
+                    {
+                        pumpFor (300);
+                        expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                                "EQ band type/slope popup is STILL open 300ms later (no flash-dismiss)");
+                    }
+                    else
+                    {
+                        std::cout << "  ..   not foreground -- skipping the 300ms persistence check\n";
+                    }
+                    juce::PopupMenu::dismissAllActiveMenus();
+                    pumpFor (100);
+                }
+
+                // Drive the exact callback path the menu wires up (same
+                // pattern as eqEditorTypeMenuTest -- no item-id lookup API
+                // exists on a live PopupMenu), proving the routed call site's
+                // callback still fires correctly.
+                eq->setTypeAndSlope (0, (int) spa::dsp::ParametricEQ::Type::lowCut,
+                                     (int) spa::dsp::ParametricEQ::Slope::db24);
+                expect ((int) proc.getAPVTS().getRawParameterValue (id::eqBand (0, id::fx::eqband::type))->load()
+                            == (int) spa::dsp::ParametricEQ::Type::lowCut,
+                        "EQ menu callback path (setTypeAndSlope) still changes the type param");
+            }
+        }
+
+        // --- (2) ASSIGN: click an osc strip target ------------------------
+        spa::ui::AssignOverlay* overlay = nullptr;
+        juce::Component* oscStripA = nullptr;
+        std::function<void (juce::Component&)> findAssign = [&] (juce::Component& c)
+        {
+            if (overlay == nullptr)
+                overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+            if (oscStripA == nullptr)
+            {
+                const auto slot = c.getProperties()["oscSlot"];
+                if (! slot.isVoid() && (int) slot == 0)
+                    oscStripA = &c;
+            }
+            for (auto* child : c.getChildren())
+                findAssign (*child);
+        };
+        findAssign (*editor);
+        expect (overlay != nullptr, "AssignOverlay found in the editor tree");
+        expect (oscStripA != nullptr, "osc strip A (tagged oscSlot=0) found");
+
+        if (overlay != nullptr && oscStripA != nullptr)
+        {
+            overlay->setAssignMode (true, *content, juce::Rectangle<int>());
+            pumpFor (20);
+
+            // AssignOverlay shares content's local coordinate space (its
+            // bounds are set to getLocalBounds() -- see ContentComponent's
+            // resized()), so a target's centre in content-space is directly
+            // usable as handleClickAt()'s overlay-local point.
+            const auto centreInContent = content->getLocalArea (oscStripA, oscStripA->getLocalBounds())
+                                              .getCentre();
+            overlay->handleClickAt (centreInContent);
+
+            {
+                const auto deadline = juce::Time::getMillisecondCounter() + 500u;
+                while (juce::Component::getCurrentlyModalComponent (0) == nullptr
+                       && juce::Time::getMillisecondCounter() < deadline)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+            }
+
+            expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                    "ASSIGN's SFX Amp/Pitch popup appeared (osc strip click routed through "
+                    "showPopupAnchored)");
+            if (juce::Component::getCurrentlyModalComponent (0) != nullptr)
+            {
+                if (foreground)
+                {
+                    pumpFor (300);
+                    expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                            "ASSIGN popup is STILL open 300ms later (no flash-dismiss, assign mode "
+                            "not exited)");
+                    expect (overlay->isAssignActive(),
+                            "assign mode still active while its own popup is open");
+
+                    // Pick "Amp" (item id 1, first entry) via the real menu,
+                    // through the peer, exactly as a user would -- proving
+                    // focus wasn't stolen from the menu by our own anchor
+                    // grab, and that closing it hands focus back correctly
+                    // afterwards rather than exiting assign mode.
+                    if (auto* peer = editor->getPeer())
+                    {
+                        peer->handleKeyPress (juce::KeyPress::downKey, 0);
+                        pumpFor (30);
+                        peer->handleKeyPress (juce::KeyPress::returnKey, 0);
+                        pumpFor (150);
+                    }
+                    else
+                    {
+                        juce::PopupMenu::dismissAllActiveMenus();
+                        pumpFor (100);
+                    }
+
+                    expect (overlay->isSelected (oscStripA),
+                            "picking Amp selected the osc strip as the ASSIGN source");
+                    expect (overlay->isAssignActive(),
+                            "picking a menu item did not exit assign mode");
+                }
+                else
+                {
+                    juce::PopupMenu::dismissAllActiveMenus();
+                    pumpFor (100);
+                }
+            }
+
+            overlay->setAssignMode (false, *content, juce::Rectangle<int>());
+        }
+
+        editor->removeFromDesktop();
+    }
+
     static void arpeggiatorTest()
     {
         std::cout << "arpeggiatorTest\n";
@@ -10625,7 +11333,10 @@ int main (int argc, char* argv[])
     samplePlayerWholeFileLoopTest();
     tempoDetectionTest();
     sampleSyncStretchTest();
+    sampleSyncLoopSnapTest();
     sampleSyncHostTempoTest();
+    sampleSyncTransportLockTest();
+    timeSignatureParamTest();
     sampleSyncUiTest();
     granularTest();
     quickSwapTest();
@@ -10658,6 +11369,7 @@ int main (int argc, char* argv[])
     editorHitTestProbe();
     midiLearnTest();
     midiLearnEndToEndTest();
+    popupAnchoringTest();
     arpeggiatorTest();
     arpLatchOffTest();
     arpStuckNoteTest();

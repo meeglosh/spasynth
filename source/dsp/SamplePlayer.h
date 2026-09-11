@@ -32,6 +32,15 @@ public:
         bool loop = true;
         double loopStartNorm = 0.0;
         double loopEndNorm = 1.0;
+
+        // Beat-grid snap (LOOP + SYNC): loop points are quantised to the
+        // sample's detected beat grid -- a whole number of beats (minimum 1),
+        // anchored at the first detected onset -- before use. Applied here at
+        // read time, not by rewriting loopStartNorm/loopEndNorm, so turning
+        // SYNC off instantly restores the raw knob values.
+        bool snapToGrid = false;
+        double gridBeatSeconds = 0.5;     // source-time seconds per beat, native tempo
+        double gridOffsetSeconds = 0.0;   // source-time anchor (first onset)
     };
 
     void noteOn (const SampleData* sample, double startNorm) noexcept
@@ -50,6 +59,30 @@ public:
         return sample != nullptr ? position / sample->sourceSampleRate : 0.0;
     }
 
+    // Hard-aligns the playhead (both the classic-playback position and the
+    // stretcher's read pointer) to an absolute source-sample position, for
+    // LOOP+SYNC transport phase lock. Any grain already ringing finishes
+    // under its own window and the next spawned grain reads from the new
+    // position -- a natural one-grain crossfade rather than a click.
+    void alignPlayhead (double sourceSamplePos) noexcept
+    {
+        position = sourceSamplePos;
+        stretch.playheadSource = sourceSamplePos;
+    }
+
+    // Current stretcher read pointer, source samples (for transport drift
+    // correction -- compare against the transport-derived target).
+    double stretchPlayheadSamples() const noexcept { return stretch.playheadSource; }
+
+    // Effective (post-snap) loop bounds in source samples, for callers that
+    // need to reason about the loop (transport phase-lock math). Mirrors the
+    // snap logic getNextSample/getNextStretchedSample apply internally.
+    static void effectiveLoopBoundsSamples (const Params& p, double lengthSamples,
+                                             double& loopStartOut, double& loopEndOut) noexcept
+    {
+        computeLoopBounds (p, lengthSamples, loopStartOut, loopEndOut);
+    }
+
     struct StereoSample { float left = 0.0f, right = 0.0f; };
 
     StereoSample getNextSample (const Params& p) noexcept
@@ -61,24 +94,9 @@ public:
             return getNextStretchedSample (p);
 
         const auto len = (double) p.sample->lengthSamples();
-        // The interpolator reads [i0, i0+1], so the last sample we can ever
-        // legally start an interpolation from is len - 1. A loopEndNorm of
-        // 1.0 (the default -- "loop the whole file") maps to exactly `len`,
-        // which is one sample past that limit: the old code let the
-        // unconditional end-of-buffer cutoff below fire at len - 1 BEFORE
-        // position ever reached loopEnd (== len), so the wrap-to-loopStart
-        // branch never ran and whole-file loops played once and stopped.
-        // Clamping loopEnd (and loopStart, symmetrically) to the last legal
-        // sample makes the wrap always win the race, for loop and reverse
-        // playback alike -- the boundary is direction-agnostic since it's
-        // expressed purely in source-sample position.
         const auto lastSample = juce::jmax (0.0, len - 1.0);
-        auto loopStart = juce::jmin (p.loopStartNorm * len, lastSample);
-        auto loopEnd = juce::jmin (p.loopEndNorm * len, lastSample);
-        if (loopEnd < loopStart + 64.0)  // degenerate/zero-length loop -> clamp to a safe minimum span
-            loopEnd = juce::jmin (loopStart + 64.0, lastSample);
-        if (loopEnd <= loopStart)        // still degenerate (loopStart itself at/near EOF) -> single-sample loop, never hangs
-            loopStart = juce::jmax (0.0, loopEnd - 1.0);
+        double loopStart, loopEnd;
+        computeLoopBounds (p, len, loopStart, loopEnd);
 
         if (p.loop && position >= loopEnd)
             position = loopStart + std::fmod (position - loopEnd, juce::jmax (1.0, loopEnd - loopStart));
@@ -108,6 +126,57 @@ public:
     }
 
 private:
+    // Effective loop bounds in source samples: raw loopStartNorm/loopEndNorm
+    // * length, optionally quantised to the beat grid (see snapToGrid), then
+    // clamped/degenerate-guarded exactly as before snapping was added. The
+    // interpolator reads [i0, i0+1], so the last sample we can ever legally
+    // start an interpolation from is len - 1; a loopEndNorm of 1.0 (loop the
+    // whole file) maps to exactly `len`, one sample past that limit, so both
+    // bounds are clamped to lastSample -- otherwise the unconditional
+    // end-of-buffer cutoff fires before position ever reaches loopEnd and
+    // whole-file loops play once and stop. Direction-agnostic (loop or
+    // reverse playback both read this the same way).
+    static void computeLoopBounds (const Params& p, double len, double& loopStartOut, double& loopEndOut) noexcept
+    {
+        const auto lastSample = juce::jmax (0.0, len - 1.0);
+        auto rawStart = p.loopStartNorm * len;
+        auto rawEnd = p.loopEndNorm * len;
+
+        if (p.snapToGrid && p.gridBeatSeconds > 1.0e-6 && p.sample != nullptr)
+        {
+            const auto beatSamples = p.gridBeatSeconds * p.sample->sourceSampleRate;
+            const auto offsetSamples = p.gridOffsetSeconds * p.sample->sourceSampleRate;
+            auto snap = [&] (double pos)
+            {
+                const auto k = std::round ((pos - offsetSamples) / beatSamples);
+                return offsetSamples + k * beatSamples;
+            };
+            rawStart = snap (rawStart);
+            rawEnd = snap (rawEnd);
+            if (rawEnd < rawStart + beatSamples)
+                rawEnd = rawStart + beatSamples;   // whole-beat length, minimum 1 beat
+            // A near-file-start loopStart can snap to a NEGATIVE grid line
+            // (the nearest one may be before t=0, e.g. if the first onset
+            // sits more than half a beat in). Shift BOTH bounds by the same
+            // whole-beat amount to land non-negative -- shifting rawStart
+            // alone would silently collide it back into rawEnd above,
+            // corrupting the just-computed whole-beat length.
+            if (rawStart < 0.0)
+            {
+                const auto shift = std::ceil (-rawStart / beatSamples) * beatSamples;
+                rawStart += shift;
+                rawEnd += shift;
+            }
+        }
+
+        loopStartOut = juce::jmin (rawStart, lastSample);
+        loopEndOut = juce::jmin (rawEnd, lastSample);
+        if (loopEndOut < loopStartOut + 64.0)
+            loopEndOut = juce::jmin (loopStartOut + 64.0, lastSample);
+        if (loopEndOut <= loopStartOut)
+            loopStartOut = juce::jmax (0.0, loopEndOut - 1.0);
+    }
+
     // --- SYNC time-stretch: 2-stream overlap-add granular stretcher -------
     // Fixed-capacity, no allocation. ~40 ms Hann grains at 50% overlap;
     // spawn cadence (hop) runs on the OUTPUT timeline so overlap stays 50%
@@ -153,10 +222,8 @@ private:
         const auto& audio = p.sample->audio;
         const auto len = (double) p.sample->lengthSamples();
         const auto lastSample = juce::jmax (0.0, len - 1.0);
-        auto loopStart = juce::jmin (p.loopStartNorm * len, lastSample);
-        auto loopEnd = juce::jmin (p.loopEndNorm * len, lastSample);
-        if (loopEnd < loopStart + 64.0) loopEnd = juce::jmin (loopStart + 64.0, lastSample);
-        if (loopEnd <= loopStart) loopStart = juce::jmax (0.0, loopEnd - 1.0);
+        double loopStart, loopEnd;
+        computeLoopBounds (p, len, loopStart, loopEnd);
         const auto loopSpan = juce::jmax (1.0, loopEnd - loopStart);
 
         // ~40 ms grains, halved to ~20 ms right at a detected onset.

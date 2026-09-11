@@ -39,6 +39,7 @@ SPASynthProcessor::SPASynthProcessor()
     raw.ampSustain = apvts.getRawParameterValue (params::id::ampSustain);
     raw.ampRelease = apvts.getRawParameterValue (params::id::ampRelease);
     raw.oversampling = apvts.getRawParameterValue (params::id::oversampling);
+    raw.timeSig = apvts.getRawParameterValue (params::id::timeSig);
     raw.filter1Enable = apvts.getRawParameterValue (params::id::filter1Enable);
     raw.filterType = apvts.getRawParameterValue (params::id::filter1Type);
     raw.filterKeytrack = apvts.getRawParameterValue (params::id::filter1Keytrack);
@@ -1309,15 +1310,26 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.fmRatio     = rs.fmRatio->load();
         slot.noiseColor  = (int) rs.noiseColor->load();
 
-        slot.syncToBpm = rs.syncToBpm->load() >= 0.5f;
+        // SYNC has no effect while LOOP is off -- keep the raw param value
+        // (rs.syncToBpm) but gate what actually reaches the engine so nothing
+        // keeps stretching silently once LOOP is switched off.
+        slot.syncToBpm = slot.loop && rs.syncToBpm->load() >= 0.5f;
         {
             const auto beatsOverride = rs.syncBeatsOverride->load();
             if (beatsOverride > 0.0f && slot.sample != nullptr && slot.sample->lengthSeconds() > 1.0e-6)
                 slot.nativeBpm = 60.0 * (double) beatsOverride / slot.sample->lengthSeconds();
             else
                 slot.nativeBpm = slot.sample != nullptr ? slot.sample->detectedBpm : 120.0;
+
+            slot.gridBeatSeconds = slot.nativeBpm > 1.0e-6 ? 60.0 / slot.nativeBpm : 0.5;
+            slot.gridOffsetSeconds = slot.sample != nullptr ? slot.sample->firstOnsetSeconds : 0.0;
         }
     }
+
+    shared.hostPlaying = blockPlaying;
+    shared.hostTransportValid = blockGotHostPpq;
+    shared.hostPpqBeats = blockPpq;
+    shared.beatsPerBar = blockBeatsPerBar;
 
     shared.glideMode = (params::GlideMode) (int) raw.glideMode->load();
     shared.glideTimeMs = raw.glideTime->load();
@@ -1435,6 +1447,8 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     midiClock.process (midi, buffer.getNumSamples());
     blockBpm = 120.0; blockPlaying = true; blockPpq = 0.0;
     bool gotHostTempo = false, gotHostPpq = false;
+    blockGotHostTimeSig = false;
+    int hostTimeSigNum = 4, hostTimeSigDen = 4;
     if (auto* playHead = getPlayHead())
         if (const auto position = playHead->getPosition())
             if (const auto bpm = position->getBpm())
@@ -1443,6 +1457,12 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 blockPlaying = position->getIsPlaying();
                 if (const auto ppq = position->getPpqPosition())
                     { blockPpq = *ppq; gotHostPpq = true; }
+                if (const auto ts = position->getTimeSignature())
+                {
+                    hostTimeSigNum = ts->numerator;
+                    hostTimeSigDen = juce::jmax (1, ts->denominator);
+                    blockGotHostTimeSig = true;
+                }
                 gotHostTempo = true;
             }
     if (! gotHostTempo)   // standalone / host without tempo
@@ -1459,6 +1479,24 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
     currentBpm.store (blockBpm, std::memory_order_relaxed);
+    blockGotHostPpq = gotHostPpq;
+
+    // Time signature: the host's own value wins when it reports one; otherwise
+    // the global.timeSig setting (standalone tempo bar / settings menu for
+    // hosts that don't report a signature). Feeds sample LOOP+SYNC's bar-line
+    // phase-lock origin (beatsPerBar) and the standalone tempo bar readout.
+    if (blockGotHostTimeSig)
+    {
+        blockBeatsPerBar = (float) hostTimeSigNum * (4.0f / (float) hostTimeSigDen);
+    }
+    else
+    {
+        blockBeatsPerBar = raw.timeSig != nullptr
+                          ? params::id::timeSigBeatsPerBar ((int) raw.timeSig->load())
+                          : 4.0f;
+    }
+    currentBeatsPerBar.store (blockBeatsPerBar, std::memory_order_relaxed);
+    hostReportsTimeSig.store (blockGotHostTimeSig, std::memory_order_relaxed);
 
     scanMidiControllers (midi);
     midiLearn->processMidi (midi);

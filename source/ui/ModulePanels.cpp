@@ -1,6 +1,7 @@
 #include "ModulePanels.h"
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
+#include "../dsp/SamplePlayer.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace spa::ui
@@ -144,6 +145,12 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     addChildComponent (*noiseColor);
 
     apvts.addParameterListener (pid (id::osc::mode), this);
+    // LOOP gates SYNC's visibility (SYNC only makes sense as a loop feature).
+    apvts.addParameterListener (pid (id::osc::loop), this);
+    // LOOP ST/END feed the SYNC readout's EFFECTIVE (snapped) loop length --
+    // refresh it whenever they move.
+    apvts.addParameterListener (pid (id::osc::loopStart), this);
+    apvts.addParameterListener (pid (id::osc::loopEnd), this);
     processor.addChangeListener (this);
     handleAsyncUpdate();
 
@@ -154,6 +161,9 @@ OscStrip::~OscStrip()
 {
     processor.removeChangeListener (this);
     processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::mode), this);
+    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loop), this);
+    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loopStart), this);
+    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loopEnd), this);
 }
 
 params::OscMode OscStrip::currentMode() const
@@ -217,9 +227,17 @@ void OscStrip::handleAsyncUpdate()
     loop->setVisible (m == params::OscMode::sample);
     keytrackSample->setVisible (m == params::OscMode::sample);
     keytrackGranular->setVisible (m == params::OscMode::granular);
-    sync->setVisible (m == params::OscMode::sample);
-    syncReadout.setVisible (m == params::OscMode::sample);
-    if (m == params::OscMode::sample)
+
+    // SYNC (and its readout) only exist as a LOOP feature -- Mike's call:
+    // "SYNC should only be available ... when LOOP is on". Turning LOOP off
+    // hides both immediately; the underlying param value is untouched (the
+    // engine itself is gated on loop&&sync, see SPASynthProcessor).
+    const auto loopOn = processor.getAPVTS()
+                            .getRawParameterValue (id::oscSlot (slot, id::osc::loop))->load() >= 0.5f;
+    const auto showSync = m == params::OscMode::sample && loopOn;
+    sync->setVisible (showSync);
+    syncReadout.setVisible (showSync);
+    if (showSync)
         updateSyncReadout();
     analogShape->setVisible (m == params::OscMode::analog);
     noiseColor->setVisible (m == params::OscMode::noise);
@@ -262,31 +280,86 @@ void OscStrip::updateSyncReadout()
     const auto lowConfidence = beatsOverride <= 0.0f && sample->bpmConfidence < 0.5f;
 
     juce::String nativeBpmStr;
-    juce::String beatsStr;
+    float beats = 0.0f;
     if (beatsOverride > 0.0f)
     {
         // User-entered beat count is exact, not a detection -- no "~".
         const auto bpm = lengthSeconds > 1.0e-6 ? 60.0 * beatsOverride / lengthSeconds : 0.0;
         nativeBpmStr = juce::String (juce::roundToInt (bpm));
-        beatsStr = juce::String (beatsOverride, 2);
+        beats = beatsOverride;
     }
     else
     {
         nativeBpmStr = (lowConfidence ? juce::String ("~? ") : juce::String ("~"))
                      + juce::String (juce::roundToInt (sample->detectedBpm));
-        beatsStr = juce::String (sample->detectedBeats, 1);
+        beats = sample->detectedBeats;
     }
+
+    // "2 bars" when the beat count divides evenly into whole bars at the
+    // current time signature, else "6 beats" -- matches how a clip launcher
+    // (Live) names loop lengths. SYNC off: the beat count is the SAMPLE's
+    // own total length (as before). SYNC on: LOOP+SYNC plays a beat-locked
+    // LOOP, not the whole sample, so what matters is the EFFECTIVE (snapped)
+    // loop length, not the file's total beat count -- computed the same way
+    // the engine snaps it (SamplePlayer::computeLoopBounds), via loopStart/
+    // loopEnd and the resolved native tempo.
+    const auto beatsPerBar = juce::jmax (1.0f, processor.getCurrentBeatsPerBar());
+
+    auto barsOrBeats = [&] (float beatCount)
+    {
+        const auto bars = beatCount / beatsPerBar;
+        const auto wholeBars = std::abs (bars - std::round (bars)) < 0.02f;
+        return wholeBars
+            ? juce::String (juce::roundToInt (bars)) + (juce::roundToInt (bars) == 1 ? " bar" : " bars")
+            : juce::String (beatCount, 1) + " beats";
+    };
 
     juce::String text;
     if (syncOn)
     {
         const auto hostBpm = processor.getCurrentBpm();
+
+        float loopBeats = beats;
+        const auto nativeBpm = lengthSeconds > 1.0e-6 ? 60.0 * beats / lengthSeconds : 0.0;
+        if (nativeBpm > 1.0e-6)
+        {
+            dsp::SamplePlayer::Params p;
+            p.sample = sample.get();
+            p.loopStartNorm = apvts->getRawParameterValue (pid (id::osc::loopStart))->load();
+            p.loopEndNorm = apvts->getRawParameterValue (pid (id::osc::loopEnd))->load();
+            p.snapToGrid = true;
+            p.gridBeatSeconds = 60.0 / nativeBpm;
+            p.gridOffsetSeconds = sample->firstOnsetSeconds;
+            double loopStartSmp = 0.0, loopEndSmp = 0.0;
+            dsp::SamplePlayer::effectiveLoopBoundsSamples (p, (double) sample->lengthSamples(),
+                                                            loopStartSmp, loopEndSmp);
+            loopBeats = (float) ((loopEndSmp - loopStartSmp) / (p.gridBeatSeconds * sample->sourceSampleRate));
+        }
+        const auto barsOrBeatsStr = barsOrBeats (loopBeats);
+        // Time signature string: from the global.timeSig choice when it's the
+        // active source, else approximated from the host's resolved
+        // beats-per-bar (assumes a quarter-note denominator -- correct for
+        // the common 4/4, 3/4, 2/4, 5/4 cases; a host reporting an eighth-
+        // based signature like 6/8 shows as its beats-per-bar equivalent,
+        // e.g. "3/4", which is musically the same loop length).
+        juce::String timeSigStr;
+        if (! processor.getHostReportsTimeSig())
+        {
+            int num = 4, den = 4;
+            params::id::timeSigNumDen ((int) processor.getAPVTS()
+                                            .getRawParameterValue (params::id::timeSig)->load(), num, den);
+            timeSigStr = juce::String (num) + "/" + juce::String (den);
+        }
+        else
+        {
+            timeSigStr = juce::String (juce::roundToInt (beatsPerBar)) + "/4";
+        }
         text = nativeBpmStr + " \xe2\x86\x92 " + juce::String (juce::roundToInt (hostBpm))
-             + " BPM \xc2\xb7 " + beatsStr + " beats";
+             + " BPM \xc2\xb7 " + barsOrBeatsStr + " \xc2\xb7 " + timeSigStr;
     }
     else
     {
-        text = "Sample " + nativeBpmStr + " BPM \xc2\xb7 " + beatsStr + " beats";
+        text = "Sample " + nativeBpmStr + " BPM \xc2\xb7 " + barsOrBeats (beats);
     }
 
     syncReadout.setColour (juce::Label::textColourId,
@@ -485,11 +558,21 @@ void OscStrip::resized()
     }
     else if (m == params::OscMode::sample)
     {
-        loop->setBounds (extraRow.removeFromLeft (70));
-        keytrackSample->setBounds (extraRow.removeFromLeft (70));
-        sync->setBounds (extraRow.removeFromLeft (60));
-        extraRow.removeFromLeft (4);
-        syncReadout.setBounds (extraRow);
+        // SYNC/readout only show while LOOP is on -- when it's off, give
+        // LOOP/KEY the row instead of leaving dead space where SYNC was.
+        if (sync->isVisible())
+        {
+            loop->setBounds (extraRow.removeFromLeft (70));
+            keytrackSample->setBounds (extraRow.removeFromLeft (70));
+            sync->setBounds (extraRow.removeFromLeft (60));
+            extraRow.removeFromLeft (4);
+            syncReadout.setBounds (extraRow);
+        }
+        else
+        {
+            loop->setBounds (extraRow.removeFromLeft (extraRow.getWidth() / 2));
+            keytrackSample->setBounds (extraRow);
+        }
     }
     else if (m == params::OscMode::granular)
         keytrackGranular->setBounds (extraRow.removeFromLeft (70));

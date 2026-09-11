@@ -105,6 +105,22 @@ namespace id
         return "osc" + oscSlotLetter (slotIndex) + "." + key;
     }
 
+    void timeSigNumDen (int choiceIndex, int& numerator, int& denominator)
+    {
+        static constexpr int table[7][2] = { { 4, 4 }, { 3, 4 }, { 6, 8 }, { 2, 4 },
+                                              { 5, 4 }, { 7, 8 }, { 12, 8 } };
+        const auto i = juce::jlimit (0, 6, choiceIndex);
+        numerator = table[i][0];
+        denominator = table[i][1];
+    }
+
+    float timeSigBeatsPerBar (int choiceIndex)
+    {
+        int num = 4, den = 4;
+        timeSigNumDen (choiceIndex, num, den);
+        return (float) num * (4.0f / (float) den);
+    }
+
     juce::String envParam (int envNumber, const char* key)
     {
         jassert (envNumber == 2 || envNumber == 3);
@@ -387,6 +403,10 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = false },
                    { "Off", "2x", "4x", "8x" } });
+    p.push_back ({ id::timeSig, "Time Signature", Section::global,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "4/4", "3/4", "6/8", "2/4", "5/4", "7/8", "12/8" } });
 
     for (int slot = 0; slot < numOscSlots; ++slot)
         addOscSlotParams (p, slot);

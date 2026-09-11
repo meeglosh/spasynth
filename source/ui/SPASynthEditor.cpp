@@ -313,6 +313,14 @@ public:
         sync.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
         addAndMakeVisible (sync);
 
+        // Time signature (for sample LOOP+SYNC's bar/beat phase lock, and the
+        // readout). A host that reports its own signature always wins -- this
+        // control just shows that value, dimmed, in a plugin; in the
+        // standalone (no host signature ever) it's the live source.
+        timeSig = std::make_unique<Choice> (processor.getAPVTS(), params::id::timeSig);
+        timeSig->setMouseClickGrabsKeyboardFocus (false);
+        addAndMakeVisible (*timeSig);
+
         applyMode();
         startTimerHz (8);
     }
@@ -322,6 +330,7 @@ public:
         auto r = getLocalBounds();
         sync.setBounds (r.removeFromLeft (34).reduced (1));
         tap.setBounds (r.removeFromRight (34).reduced (1));
+        timeSig->setBounds (r.removeFromRight (56).reduced (1));
         tempo.setBounds (r.reduced (2, 1));
     }
 
@@ -358,11 +367,17 @@ private:
         if (processor.getTempoSyncMode() == 1)
             tempo.setValue (juce::roundToInt (processor.getCurrentBpm()),
                             juce::dontSendNotification);
+        // Dim (and stop offering) the control when the host is the active
+        // signature source -- it still shows the host's own value.
+        const auto hostWins = processor.getHostReportsTimeSig();
+        timeSig->setEnabled (! hostWins);
+        timeSig->setAlpha (hostWins ? 0.5f : 1.0f);
     }
 
     SPASynthProcessor& processor;
     juce::Slider tempo;
     juce::TextButton tap, sync;
+    std::unique_ptr<Choice> timeSig;
     double lastTap = 0.0, tapBpm = 0.0;
 };
 
@@ -1699,6 +1714,20 @@ void ContentComponent::showPopupAnchored (juce::PopupMenu& menu, const juce::Pop
         if (cb)
             cb (result);
     });
+}
+
+// See the declaration comment in AssignOverlay.h. Just forwards to the
+// ContentComponent found above `anchor` -- these callers (EqEditor,
+// AssignOverlay) can't see the full ContentComponent type themselves without
+// creating an #include cycle.
+void showPopupAnchored (juce::Component& anchor, juce::PopupMenu& menu,
+                        const juce::PopupMenu::Options& options,
+                        std::function<void (int)> callback)
+{
+    if (auto* content = anchor.findParentComponentOfClass<ContentComponent>())
+        content->showPopupAnchored (menu, options, std::move (callback));
+    else
+        menu.showMenuAsync (options, std::move (callback));
 }
 
 void ContentComponent::showAccentPicker()

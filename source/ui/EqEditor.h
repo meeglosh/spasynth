@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "Theme.h"
 #include "Controls.h"
+#include "AssignOverlay.h"   // for the shared showPopupAnchored() free function
 #include "../dsp/ParametricEQ.h"
 #include "../dsp/Telemetry.h"
 #include "../params/ParameterRegistry.h"
@@ -382,7 +383,7 @@ public:
             }
         }
 
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+        showPopupAnchored (*this, menu, juce::PopupMenu::Options().withTargetComponent (this),
             [this, b] (int result)
             {
                 if (result <= 0) return;
@@ -407,6 +408,12 @@ public:
             setBand (b, params::id::fx::eqband::slope, (float) slope);
         repaint();
     }
+
+    // Test-only: real screen-space centre of band b's node, so a test can
+    // synthesize a right-click through the real peer at the exact spot
+    // mouseDown()/bandAt() would hit (nodeCentre() itself stays private --
+    // production code never needs a node's position from outside).
+    juce::Point<float> nodeCentreForTest (int b) const { return nodeCentre (b); }
 
 private:
     juce::Point<float> nodeCentre (int b) const

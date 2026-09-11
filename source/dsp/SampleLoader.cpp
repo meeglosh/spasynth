@@ -307,6 +307,8 @@ LoadedSample loadSampleFromFile (const juce::File& file)
         if (hop >= 0 && hop < (int) data->onsetCurve.size())
             data->onsetCurve[(size_t) hop] = 1.0f;
     }
+    data->firstOnsetSeconds = onsets.empty() ? 0.0 : onsets.front();
+
     const auto lengthSeconds = data->lengthSeconds();
     if (lengthSeconds < 0.3 || onsets.size() < 3)
     {

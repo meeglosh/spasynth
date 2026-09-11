@@ -7,6 +7,22 @@
 namespace spa::ui
 {
 
+// Every juce::PopupMenu shown from a component that can't see the full
+// ContentComponent type (its .h is included FROM here, so this header can't
+// include it back without a cycle) must go through this instead of calling
+// menu.showMenuAsync directly -- see ContentComponent::showPopupAnchored's
+// declaration comment in SPASynthEditor.h for why a plain PopupMenu flashes
+// and vanishes under a real AU/VST3 host once the QWERTY focus sweep leaves
+// nothing holding real keyboard focus. Walks up from `anchor` to find the
+// ContentComponent and forwards to its showPopupAnchored (which grabs focus
+// before showing and hands it back to the on-screen keyboard afterwards);
+// falls back to a plain showMenuAsync if `anchor` isn't parented under one
+// (defensive only -- shouldn't happen in the real editor). Implemented in
+// SPASynthEditor.cpp, which has the complete ContentComponent type.
+void showPopupAnchored (juce::Component& anchor, juce::PopupMenu& menu,
+                        const juce::PopupMenu::Options& options,
+                        std::function<void (int)> callback);
+
 // ASSIGN mode overlay: a single transparent full-bounds child, added last to
 // ContentComponent, that owns every click while assign mode is active.
 //
@@ -404,7 +420,7 @@ private:
         // overlay itself still exists.
         juce::Component::SafePointer<AssignOverlay> safe (this);
         auto* targetPtr = &oscTarget;
-        menu.showMenuAsync (juce::PopupMenu::Options(),
+        showPopupAnchored (*this, menu, juce::PopupMenu::Options(),
             [safe, targetPtr, slot] (int result)
             {
                 if (safe == nullptr || result == 0)

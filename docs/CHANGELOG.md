@@ -7,14 +7,20 @@ A large round of features and fixes from our testers' playtest sessions.
 - Analog oscillators gain a SUB knob: a square wave one octave below the
   main waveform, phase-locked so it never drifts, just like the classic
   sub-oscillator slider on a vintage analog synth.
-- Sample oscillators gain a SYNC option that time-stretches a loaded sample
-  to your project's tempo while keeping its pitch, using the sample's own
-  detected tempo (which you can edit if we guessed wrong), so you can play
-  drum hits, loops and other transient-rich sounds as rhythmic parts that
-  always land in time. The readout always shows the SAMPLE's own tempo (e.g.
-  "Sample ~137 BPM"); switch SYNC on and it becomes "137 -> 120 BPM" to make
-  clear that's the sample's native tempo being stretched to your project's
-  120, not a mismatch.
+- With LOOP on, sample oscillators gain a SYNC option that turns the loop
+  into a beat-locked, tempo-matched part of your project. SYNC snaps the
+  loop's start and end to the sample's own beat grid, stretches it to your
+  project's tempo while keeping its pitch (using the sample's own detected
+  tempo, which you can edit if we guessed wrong), and follows your project's
+  tempo and time signature, locking to the transport while it plays, like a
+  clip launcher: press a key and the loop joins in on the beat, right where
+  the transport currently is. The readout shows the sample's own tempo when
+  SYNC is off (e.g. "Sample ~137 BPM · 2 bars") and, once SYNC is on, the
+  stretch and your project's time signature too ("137 -> 120 BPM · 2 bars ·
+  4/4"). Turning LOOP off hides SYNC, since it's a loop feature.
+- A time signature setting is available for the standalone's tempo bar and,
+  for hosts that don't tell us their own signature, from the settings menu
+  as well, so synced sample loops always land on the right beat.
 - You can now zoom and pan the oscillator waveform display, which makes it
   much easier to work with long samples. Scroll or pinch to zoom in and out
   around your cursor, drag to pan once zoomed, and double-click to snap back

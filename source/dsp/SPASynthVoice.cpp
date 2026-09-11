@@ -212,6 +212,7 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
         const auto& stat = shared.slots[(size_t) s];
         oscs[(size_t) s].noteOn (stat.phaseMode, stat.phase, &random);
         samplePlayers[(size_t) s].noteOn (stat.sample, stat.sampleStart);
+        slotJustStarted[(size_t) s] = true;
         granularPlayers[(size_t) s].noteOn();
         analogOscs[(size_t) s].noteOn();
         fmOscs[(size_t) s].noteOn();
@@ -461,6 +462,11 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                     smoothed = pitchRatio;
                 }
 
+                // syncToBpm is already loop-gated by the processor (SYNC has
+                // no effect while LOOP is off). When active, snap the loop to
+                // the sample's beat grid (see SamplePlayer::computeLoopBounds)
+                // and lock its phase to the host transport's bar/beat grid
+                // like a clip launcher.
                 sampleParams[(size_t) s] = {
                     stat.sample,
                     pitchRatio,
@@ -471,7 +477,56 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                     stat.loop,
                     (double) stat.loopStart,
                     (double) stat.loopEnd,
+                    stat.syncToBpm,
+                    stat.gridBeatSeconds,
+                    stat.gridOffsetSeconds,
                 };
+
+                if (stat.syncToBpm && stat.sample != nullptr
+                    && shared.hostPlaying && shared.hostTransportValid
+                    && stat.gridBeatSeconds > 1.0e-6)
+                {
+                    double loopStartSmp = 0.0, loopEndSmp = 0.0;
+                    SamplePlayer::effectiveLoopBoundsSamples (sampleParams[(size_t) s],
+                        (double) stat.sample->lengthSamples(), loopStartSmp, loopEndSmp);
+
+                    const auto srcRate = stat.sample->sourceSampleRate;
+                    const auto loopLenBeats = juce::jmax (1.0,
+                        (loopEndSmp - loopStartSmp) / (stat.gridBeatSeconds * srcRate));
+
+                    // Absolute host beat position at this chunk's exact sample
+                    // offset (block-start ppq + elapsed chunk-domain samples).
+                    const auto hostBeatsNow = shared.hostPpqBeats
+                        + (double) blockOffset * (shared.bpm / 60.0) / juce::jmax (1.0, sampleRate);
+                    const auto bar = juce::jmax (1.0, (double) shared.beatsPerBar);
+                    const auto barOrigin = std::floor (hostBeatsNow / bar) * bar;
+                    const auto phaseBeats = std::fmod (
+                        std::fmod (hostBeatsNow - barOrigin, loopLenBeats) + loopLenBeats, loopLenBeats);
+
+                    const auto targetSourceSample = loopStartSmp + phaseBeats * stat.gridBeatSeconds * srcRate;
+
+                    if (slotJustStarted[(size_t) s])
+                    {
+                        samplePlayers[(size_t) s].alignPlayhead (targetSourceSample);
+                    }
+                    else
+                    {
+                        // Drift correction: re-align if the stretcher's read
+                        // pointer has wandered more than ~2ms (source time)
+                        // from the transport-derived target -- covers both
+                        // slow drift and a host ppq discontinuity (loop/jump).
+                        const auto current = samplePlayers[(size_t) s].stretchPlayheadSamples();
+                        auto diffSamples = targetSourceSample - current;
+                        // Fold across the loop wrap so a same-phase read near
+                        // the boundary doesn't look like a huge jump.
+                        const auto loopSpanSmp = juce::jmax (1.0, loopEndSmp - loopStartSmp);
+                        diffSamples = std::fmod (diffSamples + loopSpanSmp * 0.5, loopSpanSmp) - loopSpanSmp * 0.5;
+                        const auto toleranceSamples = 0.002 * srcRate;   // ~2 ms
+                        if (std::abs (diffSamples) > toleranceSamples)
+                            samplePlayers[(size_t) s].alignPlayhead (current + diffSamples);
+                    }
+                }
+                slotJustStarted[(size_t) s] = false;
             }
             else if (stat.mode == params::OscMode::analog
                   || stat.mode == params::OscMode::fm

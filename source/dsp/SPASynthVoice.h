@@ -47,8 +47,12 @@ struct SharedState
         // "effective native BPM" (syncBeatsOverride>0 derived, else the
         // loader's detectedBpm) -- computed once per block by the processor
         // so voices never touch SampleData's detection fields directly.
+        // Only meaningful (and only gates the engine) when loop is also on --
+        // SYNC has no effect while LOOP is off.
         bool syncToBpm = false;
         double nativeBpm = 120.0;
+        double gridBeatSeconds = 0.5;      // 60/nativeBpm, native source-time seconds
+        double gridOffsetSeconds = 0.0;    // sample->firstOnsetSeconds
 
         int analogShape = 0;
         float subLevel = 0.0f;
@@ -120,6 +124,16 @@ struct SharedState
     float modWheel = 0.0f;
     float aftertouch = 0.0f;
     double bpm = 120.0;
+
+    // Transport, for sample LOOP+SYNC phase lock (a Live-clip-launcher style
+    // beat lock while the host transport runs). hostPpqBeats is the absolute
+    // quarter-note beat position at block start; hostTransportValid mirrors
+    // the arp's gotHostPpq (host reports a real, advancing ppq) -- without it
+    // the loop free-runs from the key press at the synced tempo instead.
+    bool hostPlaying = false;
+    bool hostTransportValid = false;
+    double hostPpqBeats = 0.0;
+    float beatsPerBar = 4.0f;
 
     Telemetry* telemetry = nullptr;   // audio -> UI channel, set once at startup
 
@@ -383,6 +397,11 @@ private:
     std::array<PluckString, params::maxOscSlots> plucks;
     std::array<float, params::maxOscSlots> slotPulseWidth {}, slotFMIndex {}, slotPluckDamp {};
     std::array<SamplePlayer::Params, params::maxOscSlots> sampleParams {};
+    // Set true for every slot in startNote(); computeChunk consumes it on the
+    // first chunk it processes for this note (the first point the true
+    // sample-accurate block offset is known) to phase-align LOOP+SYNC's
+    // transport lock, then clears it.
+    std::array<bool, params::maxOscSlots> slotJustStarted {};
     std::array<GranularPlayer::Params, params::maxOscSlots> granularParams {};
     MultiModeFilter filter, filter2;
     juce::ADSR ampEnv, env2, env3;

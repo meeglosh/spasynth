@@ -2,6 +2,7 @@
 #include "../SPASynthProcessor.h"
 #include "../dsp/FXChain.h"
 #include "../dsp/ParametricEQ.h"
+#include "../dsp/SamplePlayer.h"
 
 namespace spa::ui
 {
@@ -417,51 +418,91 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     // mapping is needed. Granular has its own grain-viz below and is left
     // untouched. Drawn under the tick/playhead lines below so those stay
     // crisp on top.
-    if (mode == params::OscMode::sample)
+    const auto loopOn = mode == params::OscMode::sample
+                      && value (params::id::oscSlot (slot, params::id::osc::loop)) >= 0.5f;
+    // SYNC only exists (and only applies) while LOOP is on (see OscStrip) --
+    // gate the beat grid the same way.
+    const auto syncOn = loopOn
+                      && value (params::id::oscSlot (slot, params::id::osc::syncToBpm)) >= 0.5f;
+
+    double nativeBpm = 0.0, gridOffsetSeconds = 0.0, lengthSeconds = 0.0;
+    std::shared_ptr<const dsp::SampleData> syncSample;
+    if (mode == params::OscMode::sample && (loopOn || syncOn))
     {
-        const auto loopOn = value (params::id::oscSlot (slot, params::id::osc::loop)) >= 0.5f;
-        if (loopOn)
+        syncSample = processor.getSample (slot);
+        if (syncSample != nullptr)
         {
-            const auto lx0 = markerX (value (params::id::oscSlot (slot, params::id::osc::loopStart)));
-            const auto lx1 = markerX (value (params::id::oscSlot (slot, params::id::osc::loopEnd)));
-            const auto bandX = juce::jmin (lx0, lx1);
-            const auto bandW = std::abs (lx1 - lx0);
-
-            g.setColour (t.accentMod.withAlpha (0.14f));
-            g.fillRect (juce::Rectangle<float> (bandX, area.getY(), bandW, area.getHeight()));
-
-            g.setColour (t.accentMod.withAlpha (0.85f));
-            g.drawLine (lx0, area.getY(), lx0, area.getBottom(), 1.0f);
-            g.drawLine (lx1, area.getY(), lx1, area.getBottom(), 1.0f);
+            const auto beatsOverride = value (params::id::oscSlot (slot, params::id::osc::syncBeatsOverride));
+            lengthSeconds = syncSample->lengthSeconds();
+            nativeBpm = beatsOverride > 0.0f && lengthSeconds > 1.0e-6
+                      ? 60.0 * beatsOverride / lengthSeconds
+                      : syncSample->detectedBpm;
+            gridOffsetSeconds = syncSample->firstOnsetSeconds;
         }
     }
 
-    // SYNC on: faint beat-grid ticks across the file, spaced at the
-    // effective native BPM (override beats if set, else the loader's
-    // detected tempo) -- lets the user see how the beat grid actually
-    // lines up with the waveform before committing to SYNC.
-    if (mode == params::OscMode::sample
-        && value (params::id::oscSlot (slot, params::id::osc::syncToBpm)) >= 0.5f)
+    if (loopOn)
     {
-        if (auto syncSample = processor.getSample (slot))
+        // With SYNC on, show the EFFECTIVE (snapped) loop -- the whole-beat,
+        // grid-anchored span the engine actually plays -- not the raw knob
+        // values, so the display always matches what's heard.
+        auto loopStartNorm = value (params::id::oscSlot (slot, params::id::osc::loopStart));
+        auto loopEndNorm = value (params::id::oscSlot (slot, params::id::osc::loopEnd));
+        if (syncOn && syncSample != nullptr && nativeBpm > 1.0 && lengthSeconds > 1.0e-6)
         {
-            const auto beatsOverride = value (params::id::oscSlot (slot, params::id::osc::syncBeatsOverride));
-            const auto lengthSeconds = syncSample->lengthSeconds();
-            const auto nativeBpm = beatsOverride > 0.0f && lengthSeconds > 1.0e-6
-                                  ? 60.0 * beatsOverride / lengthSeconds
-                                  : syncSample->detectedBpm;
-            if (nativeBpm > 1.0 && lengthSeconds > 1.0e-6)
+            dsp::SamplePlayer::Params snapP;
+            snapP.sample = syncSample.get();
+            snapP.loopStartNorm = loopStartNorm;
+            snapP.loopEndNorm = loopEndNorm;
+            snapP.snapToGrid = true;
+            snapP.gridBeatSeconds = 60.0 / nativeBpm;
+            snapP.gridOffsetSeconds = gridOffsetSeconds;
+            double snappedStart = 0.0, snappedEnd = 0.0;
+            dsp::SamplePlayer::effectiveLoopBoundsSamples (snapP, (double) syncSample->lengthSamples(),
+                                                            snappedStart, snappedEnd);
+            const auto len = juce::jmax (1.0, (double) syncSample->lengthSamples());
+            loopStartNorm = (float) (snappedStart / len);
+            loopEndNorm = (float) (snappedEnd / len);
+        }
+
+        const auto lx0 = markerX (loopStartNorm);
+        const auto lx1 = markerX (loopEndNorm);
+        const auto bandX = juce::jmin (lx0, lx1);
+        const auto bandW = std::abs (lx1 - lx0);
+
+        g.setColour (t.accentMod.withAlpha (0.14f));
+        g.fillRect (juce::Rectangle<float> (bandX, area.getY(), bandW, area.getHeight()));
+
+        g.setColour (t.accentMod.withAlpha (0.85f));
+        g.drawLine (lx0, area.getY(), lx0, area.getBottom(), 1.0f);
+        g.drawLine (lx1, area.getY(), lx1, area.getBottom(), 1.0f);
+    }
+
+    // LOOP + SYNC on: beat-grid ticks across the file, spaced at the
+    // effective native BPM (override beats if set, else the loader's
+    // detected tempo), anchored at the sample's first detected onset (not
+    // t=0) so the grid lines up with the hits -- lets the user see how the
+    // beat grid actually lines up with the waveform. Bar lines (every
+    // beatsPerBar-th tick) draw heavier/brighter than plain beat ticks.
+    if (syncOn && syncSample != nullptr && nativeBpm > 1.0 && lengthSeconds > 1.0e-6)
+    {
+        const auto beatSeconds = 60.0 / nativeBpm;
+        const auto beatNorm = (float) (beatSeconds / lengthSeconds);
+        if (beatNorm > 0.0005f)
+        {
+            const auto beatsPerBar = juce::jmax (1, juce::roundToInt (processor.getCurrentBeatsPerBar()));
+            const auto offsetNorm = (float) (std::fmod (gridOffsetSeconds, beatSeconds) / lengthSeconds);
+            // Walk both directions from the anchored offset so ticks cover
+            // the whole file even when the first onset isn't near t=0.
+            int beatIndex = (int) std::floor ((0.0f - offsetNorm) / beatNorm) - 1;
+            for (float n = offsetNorm + (float) beatIndex * beatNorm; n < 1.0f; n += beatNorm, ++beatIndex)
             {
-                const auto beatNorm = (float) ((60.0 / nativeBpm) / lengthSeconds);
-                if (beatNorm > 0.0005f)
-                {
-                    g.setColour (t.textSecondary.withAlpha (0.35f));
-                    for (float n = 0.0f; n < 1.0f; n += beatNorm)
-                    {
-                        const auto tx = markerX (n);
-                        g.drawLine (tx, area.getY(), tx, area.getY() + 6.0f, 1.0f);
-                    }
-                }
+                if (n < 0.0f) continue;
+                const auto isBar = beatIndex % beatsPerBar == 0;
+                g.setColour (isBar ? t.textPrimary.withAlpha (0.5f) : t.textSecondary.withAlpha (0.3f));
+                const auto tickH = isBar ? 10.0f : 6.0f;
+                const auto tx = markerX (n);
+                g.drawLine (tx, area.getY(), tx, area.getY() + tickH, isBar ? 1.5f : 1.0f);
             }
         }
     }

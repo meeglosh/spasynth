@@ -166,6 +166,12 @@ namespace id
     inline constexpr const char* unisonWidth   = "global.unisonWidth";
     inline constexpr const char* oversampling  = "global.oversampling";  // Off/2x/4x/8x
 
+    // Time signature for sample-loop beat sync (LOOP+SYNC) and the standalone
+    // tempo bar. Choices are append-only (serialized). Used only when the host
+    // doesn't report its own time signature -- when it does, the host wins and
+    // this is shown dimmed (see ContentComponent).
+    inline constexpr const char* timeSig = "global.timeSig";   // 4/4, 3/4, 6/8, 2/4, 5/4, 7/8, 12/8
+
     inline constexpr const char* filter1Enable    = "filter1.enable";
     inline constexpr const char* filter1Type      = "filter1.type";
     inline constexpr const char* filter1Cutoff    = "filter1.cutoff";
@@ -243,6 +249,13 @@ namespace id
 
     juce::String oscSlot (int slotIndex, const char* key);
     juce::String oscSlotLetter (int slotIndex);
+
+    // Beats-per-bar (quarter-note beats) for a global.timeSig choice index,
+    // matching its append-only choice order (4/4, 3/4, 6/8, 2/4, 5/4, 7/8, 12/8).
+    float timeSigBeatsPerBar (int choiceIndex);
+    // Numerator/denominator pair for the same choice index (denominator wins
+    // the beatsPerBar math: numerator * 4/denominator).
+    void timeSigNumDen (int choiceIndex, int& numerator, int& denominator);
 
     // Envelope 2/3 parameter IDs: envParam(2, "attack") -> "env2.attack"
     juce::String envParam (int envNumber, const char* key);

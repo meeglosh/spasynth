@@ -34,6 +34,11 @@ struct SampleData
     float bpmConfidence = 0.0f;
     float detectedBeats = 1.0f;
 
+    // Source-file-seconds position of the first detected onset (0.0 if none
+    // detected/one-shot fallback). Anchors the beat grid used by LOOP+SYNC so
+    // grid lines line up with the hits rather than with t = 0.
+    double firstOnsetSeconds = 0.0;
+
     // 1.0 at hops where an onset was detected, else 0.0 -- same hop grid as
     // ampCurve/pitchCurve. Lets the SYNC time-stretch engine shorten grains
     // right at transients (audio-thread read, no allocation) without

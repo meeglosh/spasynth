@@ -6975,6 +6975,73 @@ namespace
         }
     }
 
+    // Regression for Mike's screenshot: the long "No CC received..." hint
+    // line drew below the brand band and over the preset/SAVE/RANDOMIZE row.
+    // Arm learn, feed notes with no CC, force the >3s-no-CC condition via the
+    // test-settable threshold, and confirm the badge's own bounds never
+    // exceed the brand band, and that the text it's showing actually fits
+    // the badge's width at its font (no silent horizontal overflow either).
+    static void midiLearnBadgeFitsTest()
+    {
+        std::cout << "midiLearnBadgeFitsTest\n";
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        auto* content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0));
+        expect (content != nullptr, "editor's ContentComponent found");
+        if (content == nullptr)
+            return;
+
+        content->setMidiLearnBadgeNoCcHintThresholdMsForTest (0);   // don't wait 3 real seconds
+        content->applyMidiLearnMenuResult (1, id::filter1Cutoff);
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 20; ++i)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), i);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+
+        // Threshold is 0, but the hint also requires armedForMs > threshold;
+        // give the clock a tick so a 0ms-armed poll doesn't race it.
+        juce::Thread::sleep (5);
+        content->pollMidiLearnBadgeNow();
+
+        const auto badgeText = content->getMidiLearnBadgeText();
+        expect (badgeText.contains ("\n"), "badge shows the no-CC hint as a second line: " + badgeText);
+
+        const auto bandBounds = juce::Rectangle<int> (0, 0, spa::ui::metrics::baseWidth,
+                                                       spa::ui::metrics::brandBandHeight);
+        const auto badgeBounds = content->getMidiLearnBadgeBounds();
+        expect (bandBounds.contains (badgeBounds),
+               "badge bounds " + badgeBounds.toString() + " stay inside the brand band "
+                   + bandBounds.toString());
+
+        // The text itself must fit the badge's own width at its font -- no
+        // line, once GlyphArrangement lays it out, may exceed badgeBounds's
+        // width by more than the label's own minimumHorizontalScale allows
+        // it to squeeze (checked per line, since drawFittedText wraps/
+        // breaks on \n). 0.7 mirrors the scale set on midiLearnBadge.
+        const auto font = content->getMidiLearnBadgeFont();
+        constexpr float minHorizontalScale = 0.7f;
+        for (const auto& line : juce::StringArray::fromLines (badgeText))
+        {
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText (font, line, 0.0f, 0.0f);
+            const auto lineWidth = glyphs.getBoundingBox (0, -1, true).getWidth();
+            const auto maxAllowed = (float) badgeBounds.getWidth() / minHorizontalScale;
+            expect (lineWidth <= maxAllowed,
+                   "badge line fits its own width within the allowed horizontal squeeze: \""
+                       + line + "\" (" + juce::String (lineWidth) + " vs " + juce::String (maxAllowed) + ")");
+        }
+
+        proc.getMidiLearn().cancelLearn();
+    }
+
     // Every remaining juce::PopupMenu::showMenuAsync call site outside
     // ContentComponent itself -- EqEditor's right-click band type/slope menu
     // and AssignOverlay's SFX Amp/Pitch pick popup -- now routes through the
@@ -11564,6 +11631,52 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Temporary visual-review render for the MIDI Learn badge / brand-band
+    // wordmark overlap fix -- arms a learn, feeds notes with no CC (same
+    // recipe as midiLearnBadgeFitsTest) so the two-line "no CC" hint is
+    // showing, then snapshots just the header crop for a quick look.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-badge")
+    {
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        auto* content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0));
+
+        if (content != nullptr)
+        {
+            content->setMidiLearnBadgeNoCcHintThresholdMsForTest (0);
+            content->applyMidiLearnMenuResult (1, id::filter1Cutoff);
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 20; ++i)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), i);
+            proc.processBlock (buffer, midi);
+
+            juce::Thread::sleep (5);
+            content->pollMidiLearnBadgeNow();
+        }
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const auto headerCrop = image.getClippedImage (
+            juce::Rectangle<int> (0, 0, image.getWidth(), spa::ui::metrics::brandBandHeight + 20));
+
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+        const auto file = outDir.getChildFile ("spasynth-badge-header-crop.png");
+        file.deleteFile();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream stream (file);
+        if (stream.openedOk())
+            png.writeImageToStream (headerCrop, stream);
+        std::cout << "snapshot: " << file.getFullPathName() << "\n";
+        return 0;
+    }
+
     // Temporary visual-review render for the ASSIGN mode feature: assign
     // mode on, filter 1 cutoff selected (destination, yellow), LFO 2
     // selected (source, yellow), everything else pulsing blue. Writes into
@@ -11746,6 +11859,7 @@ int main (int argc, char* argv[])
     midiLearnTest();
     midiLearnEndToEndTest();
     midiTelemetryTypesTest();
+    midiLearnBadgeFitsTest();
     popupAnchoringTest();
     arpeggiatorTest();
     arpLatchOffTest();

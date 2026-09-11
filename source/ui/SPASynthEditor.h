@@ -90,10 +90,15 @@ public:
 
     // Test-only accessors for the MIDI Learn diagnostics badge: pollNow()
     // runs the same logic as the 10 Hz timerCallback synchronously (so a
-    // test doesn't have to race the real timer), and getText() reads what
-    // it currently shows.
+    // test doesn't have to race the real timer), getText() reads what it
+    // currently shows, getBounds()/getFont() are for the fits-inside-the-
+    // band assertion, and the threshold setter lets a test collapse the
+    // real 3s no-CC wait to something instant.
     void pollMidiLearnBadgeNow() { timerCallback(); }
     juce::String getMidiLearnBadgeText() const { return midiLearnBadge.getText(); }
+    juce::Rectangle<int> getMidiLearnBadgeBounds() const { return midiLearnBadge.getBounds(); }
+    juce::Font getMidiLearnBadgeFont() const { return midiLearnBadge.getFont(); }
+    void setMidiLearnBadgeNoCcHintThresholdMsForTest (juce::uint32 ms) { midiLearnBadgeNoCcHintThresholdMs = ms; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -252,7 +257,8 @@ private:
     juce::uint32 midiLearnBadgeNoteOnAtCapture = 0;      // Telemetry::midiNoteOnSeen snapshot at arm time
     juce::uint32 midiLearnBadgePitchWheelAtCapture = 0;  // Telemetry::midiPitchWheelSeen snapshot at arm time
     juce::uint32 midiLearnBadgeAftertouchAtCapture = 0;  // Telemetry::midiChannelPressureSeen + midiAftertouchSeen snapshot at arm time
-    juce::uint32 midiLearnBadgeArmedAtMs = 0;            // arm time, for the >3s-no-CC hint
+    juce::uint32 midiLearnBadgeArmedAtMs = 0;            // arm time, for the no-CC hint
+    juce::uint32 midiLearnBadgeNoCcHintThresholdMs = 3000;  // real threshold; test-settable, see setter above
     juce::uint32 midiLearnBadgeHideAtMs = 0;             // 0 = not counting down
 
     // Preset drawer: normally widens the window and sits in a left column of

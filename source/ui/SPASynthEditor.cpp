@@ -1188,9 +1188,14 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addMouseListener (this, true);
 
     // MIDI Learn diagnostics badge -- see the header comment. Hidden until a
-    // learn is armed; positioned over the header strip in resized().
-    midiLearnBadge.setJustificationType (juce::Justification::centred);
+    // learn is armed; positioned inside the brand band in resized() (must
+    // stay fully inside metrics::brandBandHeight -- see the comment there
+    // about the overflow bug this was fixed from). Small font + a minimum
+    // horizontal scale so a longer breakdown line still fits the band width.
+    midiLearnBadge.setJustificationType (juce::Justification::centredRight);
     midiLearnBadge.setInterceptsMouseClicks (false, false);
+    midiLearnBadge.setFont (metrics::smallFont());
+    midiLearnBadge.setMinimumHorizontalScale (0.7f);
     addChildComponent (midiLearnBadge);
     startTimerHz (10);   // event-driven diagnostics poll, well under the
                           // 60 Hz learn-apply timer the 1.0.13 audit rejected
@@ -1346,6 +1351,29 @@ static juce::String formatMidiLearnListeningText (uint32_t ccSince, uint32_t ben
     return text;
 }
 
+// The full, one-sentence explanation always goes in the badge's tooltip.
+// On screen the badge must instead fit inside the brand band
+// (metrics::brandBandHeight), so the second line is a much shorter
+// paraphrase -- and if even THAT would overflow the band's width at the
+// badge's font (a narrower host window, say), fall back to a one-liner that
+// just points at the tooltip. Mike's screenshot showed the original long
+// sentence overflowing the band and drawing over the preset/SAVE/RANDOMIZE
+// row underneath.
+static const juce::String midiLearnNoCcTooltip =
+    "No CC received. Logic: check Control Surfaces > Setup; "
+    "on the controller, enable CC sending for its knobs.";
+
+static juce::String fitMidiLearnHintLine (const juce::Font& font, int availableWidth)
+{
+    static const juce::String medium = "No CC yet: check the controller's CC send and Logic's Control Surfaces setup";
+    static const juce::String shortest = "No CC yet (hover for help)";
+    juce::GlyphArrangement glyphs;
+    glyphs.addLineOfText (font, medium, 0.0f, 0.0f);
+    if (glyphs.getBoundingBox (0, -1, true).getWidth() <= (float) availableWidth)
+        return medium;
+    return shortest;
+}
+
 // MIDI Learn diagnostics badge. Cheap poll (10 Hz, well under the 60 Hz
 // learn-apply timer the 1.0.13 audit rejected -- this never touches a
 // parameter, it only reads MidiLearnManager/Telemetry state and, on change,
@@ -1375,20 +1403,27 @@ void ContentComponent::timerCallback()
         const auto atSince = atSeen - midiLearnBadgeAftertouchAtCapture;
 
         auto text = formatMidiLearnListeningText (ccSince, bendSince, atSince, noteSince);
+        juce::String tooltip = text;
 
         // Something is clearly arriving (notes, at minimum -- most players
         // will hit a key while arming) but no CC in 3+ seconds: the
         // controller's knobs most likely aren't reaching processBlock at
         // all. Name the two most common causes rather than leaving Mike to
-        // guess.
+        // guess -- but keep the on-screen line short (see fitMidiLearnHintLine);
+        // the full sentence lives in the tooltip.
         const auto armedForMs = juce::Time::getMillisecondCounter() - midiLearnBadgeArmedAtMs;
-        if (ccSince == 0 && (noteSince > 0 || bendSince > 0 || atSince > 0) && armedForMs > 3000)
-            text << "\nNo CC received. Logic: check Control Surfaces > Setup; "
-                    "on the controller, enable CC sending for its knobs.";
+        if (ccSince == 0 && (noteSince > 0 || bendSince > 0 || atSince > 0)
+            && armedForMs > midiLearnBadgeNoCcHintThresholdMs)
+        {
+            const auto hintFont = midiLearnBadge.getFont();
+            const auto availableWidth = juce::jmax (0, midiLearnBadge.getWidth() - 8);
+            text << "\n" << fitMidiLearnHintLine (hintFont, availableWidth);
+            tooltip = midiLearnNoCcTooltip;
+        }
 
         midiLearnBadge.setVisible (true);
         midiLearnBadge.setColour (juce::Label::textColourId, currentTheme().textSecondary);
-        midiLearnBadge.setTooltip (text);
+        midiLearnBadge.setTooltip (tooltip);
         midiLearnBadge.setText (text, juce::dontSendNotification);
         midiLearnBadgeHideAtMs = 0;
         return;
@@ -1429,6 +1464,12 @@ void ContentComponent::refreshAll()
     fxTabs.applyOrder (processor.getFxOrder());
 
     const auto& t = currentTheme();
+
+    // MIDI Learn badge lives inside the brand band, over the wordmark --
+    // give it the band's own fill colour as an opaque background (same
+    // recipe paint() uses for the band itself) so its text never has to
+    // fight the wordmark's ink underneath while armed.
+    midiLearnBadge.setColour (juce::Label::backgroundColourId, t.header.darker (0.25f));
 
     wildnessLabel.setColour (juce::Label::textColourId, t.textSecondary);
     glideLabel.setColour (juce::Label::textColourId, t.textSecondary);
@@ -1809,10 +1850,21 @@ void ContentComponent::resized()
     if (assignOverlay != nullptr)
         assignOverlay->setBounds (getLocalBounds());
 
-    // MIDI Learn diagnostics badge: a thin strip across the header's preset
-    // name area, topmost, shown only while relevant (see timerCallback).
-    midiLearnBadge.setBounds (moduleOriginX, metrics::brandBandHeight,
-                              metrics::baseWidth, 16);
+    // MIDI Learn diagnostics badge: sits inside the brand band, topmost.
+    // Bug fix (round 1): this used to sit BELOW the band at a fixed 16px
+    // height, so the second "no CC" hint line pushed past that height and
+    // drew over the preset/SAVE/RANDOMIZE row underneath. Bounding it by
+    // metrics::brandBandHeight fixed that, but the badge still spanned the
+    // FULL band width, centred -- and since it's transparent, its centred
+    // text drew straight through the centred SPASYNTH wordmark underneath.
+    // Bug fix (round 2): give it an opaque background matching the band's
+    // own fill (see refreshAll()) so it cleanly covers whatever's behind it
+    // while armed, AND confine it to the right portion of the band (right-
+    // justified) so it doesn't sit over the wordmark's ink at all in the
+    // common case where the band is wide enough to show both untouched.
+    const auto rightWidth = juce::jmin (metrics::baseWidth / 2, 260);
+    midiLearnBadge.setBounds (moduleOriginX + metrics::baseWidth - rightWidth, 0,
+                              rightWidth, metrics::brandBandHeight);
     midiLearnBadge.toFront (false);
 }
 

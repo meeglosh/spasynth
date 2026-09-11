@@ -1243,11 +1243,18 @@ void ContentComponent::applyMidiLearnMenuResult (int result, const juce::String&
     {
         midiLearn.armLearn (paramID);
         // Snapshot the badge's tracking state at arm time: which param, and
-        // how many CCs the plugin has seen so far (so the badge can tell
-        // "listening" from "capturing" without racing processMidi).
+        // how many messages of each kind the plugin has seen so far (so the
+        // badge can show a breakdown of what's arrived SINCE arming, without
+        // racing processMidi).
+        auto& telemetry = processor.getTelemetry();
         midiLearnBadgeParamID = paramID;
         midiLearnBadgeAssignedCC = midiLearn.getAssignedCC (paramID);
-        midiLearnBadgeSeenAtCapture = processor.getTelemetry().midiCcSeen.load (std::memory_order_relaxed);
+        midiLearnBadgeSeenAtCapture = telemetry.midiCcSeen.load (std::memory_order_relaxed);
+        midiLearnBadgeNoteOnAtCapture = telemetry.midiNoteOnSeen.load (std::memory_order_relaxed);
+        midiLearnBadgePitchWheelAtCapture = telemetry.midiPitchWheelSeen.load (std::memory_order_relaxed);
+        midiLearnBadgeAftertouchAtCapture = telemetry.midiChannelPressureSeen.load (std::memory_order_relaxed)
+                                           + telemetry.midiAftertouchSeen.load (std::memory_order_relaxed);
+        midiLearnBadgeArmedAtMs = juce::Time::getMillisecondCounter();
         midiLearnBadgeHideAtMs = 0;
     }
     else if (result == 2)
@@ -1323,14 +1330,32 @@ void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster*)
     refreshAll();
 }
 
+// Builds the "while armed" badge text: a breakdown of what's arrived since
+// arming, by type, so Mike can tell not just THAT MIDI is reaching the
+// plugin but WHAT KIND. CC is always shown (it's the thing being learned);
+// the other types only appear once they've seen at least one message, to
+// keep the common case short. No em dashes -- "*" separates fields per the
+// house style for this badge.
+static juce::String formatMidiLearnListeningText (uint32_t ccSince, uint32_t bendSince,
+                                                    uint32_t atSince, uint32_t noteSince)
+{
+    juce::String text = "MIDI Learn: listening -- CC " + juce::String (ccSince);
+    if (bendSince > 0) text << " \xc2\xb7 bend " << (int) bendSince;
+    if (atSince > 0)   text << " \xc2\xb7 AT " << (int) atSince;
+    if (noteSince > 0) text << " \xc2\xb7 notes " << (int) noteSince;
+    return text;
+}
+
 // MIDI Learn diagnostics badge. Cheap poll (10 Hz, well under the 60 Hz
 // learn-apply timer the 1.0.13 audit rejected -- this never touches a
 // parameter, it only reads MidiLearnManager/Telemetry state and, on change,
-// updates one Label's text): while a learn is armed, shows that it's
-// listening and how many CC messages the plugin has seen in total (so Mike
-// can tell, live in Logic or the standalone, whether hardware CCs are
-// reaching the plugin at all); once the armed learn captures a CC, shows
-// which one for a couple of seconds, then hides.
+// updates one Label's text): while a learn is armed, shows a breakdown of
+// what kinds of MIDI messages have arrived since arming (so Mike can tell,
+// live in Logic or the standalone, not just whether MIDI is reaching the
+// plugin but whether the controller is sending CC at all -- e.g. notes
+// incrementing while CC stays 0 for a few seconds means it isn't, and the
+// badge says so); once the armed learn captures a CC, shows which one for a
+// couple of seconds, then hides.
 void ContentComponent::timerCallback()
 {
     auto& learn = processor.getMidiLearn();
@@ -1339,14 +1364,32 @@ void ContentComponent::timerCallback()
 
     if (learn.isArmed() && learn.getArmedParamID() == midiLearnBadgeParamID)
     {
+        const auto noteSeen = telemetry.midiNoteOnSeen.load (std::memory_order_relaxed);
+        const auto bendSeen = telemetry.midiPitchWheelSeen.load (std::memory_order_relaxed);
+        const auto atSeen = telemetry.midiChannelPressureSeen.load (std::memory_order_relaxed)
+                           + telemetry.midiAftertouchSeen.load (std::memory_order_relaxed);
+
+        const auto ccSince = ccSeen - midiLearnBadgeSeenAtCapture;
+        const auto noteSince = noteSeen - midiLearnBadgeNoteOnAtCapture;
+        const auto bendSince = bendSeen - midiLearnBadgePitchWheelAtCapture;
+        const auto atSince = atSeen - midiLearnBadgeAftertouchAtCapture;
+
+        auto text = formatMidiLearnListeningText (ccSince, bendSince, atSince, noteSince);
+
+        // Something is clearly arriving (notes, at minimum -- most players
+        // will hit a key while arming) but no CC in 3+ seconds: the
+        // controller's knobs most likely aren't reaching processBlock at
+        // all. Name the two most common causes rather than leaving Mike to
+        // guess.
+        const auto armedForMs = juce::Time::getMillisecondCounter() - midiLearnBadgeArmedAtMs;
+        if (ccSince == 0 && (noteSince > 0 || bendSince > 0 || atSince > 0) && armedForMs > 3000)
+            text << "\nNo CC received. Logic: check Control Surfaces > Setup; "
+                    "on the controller, enable CC sending for its knobs.";
+
         midiLearnBadge.setVisible (true);
         midiLearnBadge.setColour (juce::Label::textColourId, currentTheme().textSecondary);
-        const auto seenSinceArm = ccSeen - midiLearnBadgeSeenAtCapture;
-        midiLearnBadge.setText (seenSinceArm > 0
-            ? "MIDI Learn: listening... (" + juce::String (seenSinceArm) + " CC msg"
-                + (seenSinceArm == 1 ? juce::String() : juce::String ("s")) + " seen)"
-            : "MIDI Learn: move a control",
-            juce::dontSendNotification);
+        midiLearnBadge.setTooltip (text);
+        midiLearnBadge.setText (text, juce::dontSendNotification);
         midiLearnBadgeHideAtMs = 0;
         return;
     }

@@ -6905,6 +6905,76 @@ namespace
         }
     }
 
+    // Telemetry now breaks incoming MIDI down by type (not just CC), and the
+    // MIDI Learn badge surfaces that breakdown while armed -- this is the
+    // actual fix Mike needs: a controller whose knob CCs are being consumed
+    // upstream (Logic's Control Surfaces, or a device that needs "send CC"
+    // enabled) shows up as notes/bend/AT counting up while CC stays at 0,
+    // instead of the badge sitting silently at 0 with no way to tell why.
+    static void midiTelemetryTypesTest()
+    {
+        std::cout << "midiTelemetryTypesTest\n";
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto& telemetry = proc.getTelemetry();
+
+        const auto noteOnBefore = telemetry.midiNoteOnSeen.load();
+        const auto ccBefore = telemetry.midiCcSeen.load();
+        const auto bendBefore = telemetry.midiPitchWheelSeen.load();
+        const auto chanPressureBefore = telemetry.midiChannelPressureSeen.load();
+        const auto polyAtBefore = telemetry.midiAftertouchSeen.load();
+        const auto pcBefore = telemetry.midiProgramChangeSeen.load();
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 1);
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 90), 2);
+        midi.addEvent (juce::MidiMessage::pitchWheel (2, 9000), 3);
+        midi.addEvent (juce::MidiMessage::channelPressureChange (3, 80), 4);
+        midi.addEvent (juce::MidiMessage::aftertouchChange (4, 60, 50), 5);
+        midi.addEvent (juce::MidiMessage::programChange (1, 5), 6);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+
+        expect (telemetry.midiNoteOnSeen.load() == noteOnBefore + 2, "two note-ons counted");
+        expect (telemetry.midiCcSeen.load() == ccBefore + 1, "one CC counted");
+        expect (telemetry.midiPitchWheelSeen.load() == bendBefore + 1, "pitch wheel counted");
+        expect (telemetry.lastPitchBendChannel.load() == 2, "pitch wheel channel recorded");
+        expect (telemetry.midiChannelPressureSeen.load() == chanPressureBefore + 1, "channel pressure counted");
+        expect (telemetry.midiAftertouchSeen.load() == polyAtBefore + 1, "poly aftertouch counted");
+        expect (telemetry.lastAftertouchChannel.load() == 4, "aftertouch channel recorded (last-write-wins, poly here)");
+        expect (telemetry.midiProgramChangeSeen.load() == pcBefore + 1, "program change counted");
+
+        // Badge text while armed: feed notes + bend but no CC, poll the
+        // badge synchronously, and confirm it breaks the message types down
+        // rather than sitting mute at "0 CC msgs".
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        auto* content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0));
+        expect (content != nullptr, "editor's ContentComponent found");
+        if (content != nullptr)
+        {
+            content->applyMidiLearnMenuResult (1, id::filter1Cutoff);
+
+            juce::MidiBuffer armedMidi;
+            armedMidi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            armedMidi.addEvent (juce::MidiMessage::pitchWheel (1, 9000), 1);
+            proc.processBlock (buffer, armedMidi);
+            armedMidi.clear();
+
+            content->pollMidiLearnBadgeNow();
+            const auto badgeText = content->getMidiLearnBadgeText();
+            expect (badgeText.contains ("CC 0"), "badge always shows the CC count: " + badgeText);
+            expect (badgeText.contains ("bend"), "badge shows bend count once pitch wheel arrives: " + badgeText);
+            expect (badgeText.contains ("notes"), "badge shows note count once notes arrive: " + badgeText);
+
+            proc.getMidiLearn().cancelLearn();
+        }
+    }
+
     // Every remaining juce::PopupMenu::showMenuAsync call site outside
     // ContentComponent itself -- EqEditor's right-click band type/slope menu
     // and AssignOverlay's SFX Amp/Pitch pick popup -- now routes through the
@@ -11675,6 +11745,7 @@ int main (int argc, char* argv[])
     editorHitTestProbe();
     midiLearnTest();
     midiLearnEndToEndTest();
+    midiTelemetryTypesTest();
     popupAnchoringTest();
     arpeggiatorTest();
     arpLatchOffTest();

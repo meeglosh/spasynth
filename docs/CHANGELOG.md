@@ -116,8 +116,12 @@ A large round of features and fixes from our testers' playtest sessions.
   and remembers the size you resize it to.
 - Fixed MIDI Learn not actually learning: moving a hardware control while a
   learn was armed could leave it waiting indefinitely. While a learn is
-  armed, the control now shows that it's listening for a hardware control,
-  and confirms exactly which controller it learned once one arrives.
+  armed, the control now shows what kinds of MIDI messages are arriving from
+  your controller (notes, pitch bend, aftertouch, and CC) so you can tell at
+  a glance whether it's sending anything at all, or sending everything
+  except the CC needed for MIDI Learn (a common controller/DAW setting
+  issue) -- and confirms exactly which controller it learned once a CC
+  arrives.
 
 **Notes for this build**
 

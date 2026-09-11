@@ -88,6 +88,13 @@ public:
     // it into MidiLearnManager directly.
     void applyMidiLearnMenuResult (int result, const juce::String& paramID);
 
+    // Test-only accessors for the MIDI Learn diagnostics badge: pollNow()
+    // runs the same logic as the 10 Hz timerCallback synchronously (so a
+    // test doesn't have to race the real timer), and getText() reads what
+    // it currently shows.
+    void pollMidiLearnBadgeNow() { timerCallback(); }
+    juce::String getMidiLearnBadgeText() const { return midiLearnBadge.getText(); }
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;   // MIDI Learn badge diagnostics, see .cpp
@@ -231,16 +238,22 @@ private:
     // addChildComponent'd hidden). Intercepts nothing so it can't steal clicks.
     juce::Component popupFocusAnchor;
 
-    // MIDI Learn diagnostics badge: while a learn is armed, shows "MIDI
-    // Learn: move a control"; once the manager captures a CC, switches to
-    // "CC n (ch c) learned" for a couple of seconds. Also surfaces
-    // Telemetry::midiCcSeen so Mike can tell, live in the host, whether any
-    // controller messages are reaching the plugin at all (see timerCallback).
+    // MIDI Learn diagnostics badge: while a learn is armed, shows a
+    // breakdown of what's arrived since arming ("listening -- CC 0 - bend 3
+    // - AT 0 - notes 12"), so Mike can tell not just THAT MIDI is reaching
+    // the plugin but WHAT KIND -- notes incrementing while CC stays 0 means
+    // the controller's knobs aren't sending CC at all. Once the manager
+    // captures a CC, switches to "CC n (ch c) learned" for a couple of
+    // seconds. See timerCallback.
     juce::Label midiLearnBadge;
     juce::String midiLearnBadgeParamID;   // which param the badge is tracking
     int midiLearnBadgeAssignedCC = -1;    // assignment seen last poll, to detect a fresh capture
-    juce::uint32 midiLearnBadgeSeenAtCapture = 0;   // Telemetry::midiCcSeen snapshot at arm time
-    juce::uint32 midiLearnBadgeHideAtMs = 0;        // 0 = not counting down
+    juce::uint32 midiLearnBadgeSeenAtCapture = 0;        // Telemetry::midiCcSeen snapshot at arm time
+    juce::uint32 midiLearnBadgeNoteOnAtCapture = 0;      // Telemetry::midiNoteOnSeen snapshot at arm time
+    juce::uint32 midiLearnBadgePitchWheelAtCapture = 0;  // Telemetry::midiPitchWheelSeen snapshot at arm time
+    juce::uint32 midiLearnBadgeAftertouchAtCapture = 0;  // Telemetry::midiChannelPressureSeen + midiAftertouchSeen snapshot at arm time
+    juce::uint32 midiLearnBadgeArmedAtMs = 0;            // arm time, for the >3s-no-CC hint
+    juce::uint32 midiLearnBadgeHideAtMs = 0;             // 0 = not counting down
 
     // Preset drawer: normally widens the window and sits in a left column of
     // its own, beside (never over) the module grid -- see

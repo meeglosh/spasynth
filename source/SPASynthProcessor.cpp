@@ -1431,11 +1431,12 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    // MIDI Learn diagnostics: count controller messages exactly as they
-    // arrive from the host, before anything (keyboard-state merge,
+    // MIDI Learn diagnostics: count every incoming message by type exactly as
+    // it arrives from the host, before anything (keyboard-state merge,
     // oversampling scale, arp rewrite) can touch the buffer. This is what
-    // lets the UI badge tell Mike whether CCs are reaching the plugin at all
-    // in Logic, independent of whether a learn is armed or bound.
+    // lets the UI badge tell Mike not just whether MIDI is reaching the
+    // plugin in Logic, but WHAT KIND -- e.g. notes arriving while CC stays at
+    // 0 means the controller's knobs never reach processBlock at all.
     for (const auto md : midi)
     {
         const auto m = md.getMessage();
@@ -1445,6 +1446,29 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             telemetry.lastCcNumber.store (m.getControllerNumber(), std::memory_order_relaxed);
             telemetry.lastCcChannel.store (m.getChannel(), std::memory_order_relaxed);
         }
+        else if (m.isNoteOn())
+            telemetry.midiNoteOnSeen.fetch_add (1, std::memory_order_relaxed);
+        else if (m.isPitchWheel())
+        {
+            telemetry.midiPitchWheelSeen.fetch_add (1, std::memory_order_relaxed);
+            telemetry.lastPitchBendChannel.store (m.getChannel(), std::memory_order_relaxed);
+        }
+        else if (m.isChannelPressure())
+        {
+            telemetry.midiChannelPressureSeen.fetch_add (1, std::memory_order_relaxed);
+            telemetry.lastAftertouchChannel.store (m.getChannel(), std::memory_order_relaxed);
+        }
+        else if (m.isAftertouch())
+        {
+            telemetry.midiAftertouchSeen.fetch_add (1, std::memory_order_relaxed);
+            telemetry.lastAftertouchChannel.store (m.getChannel(), std::memory_order_relaxed);
+        }
+        else if (m.isProgramChange())
+            telemetry.midiProgramChangeSeen.fetch_add (1, std::memory_order_relaxed);
+        else if (m.isSysEx())
+            telemetry.midiSysExSeen.fetch_add (1, std::memory_order_relaxed);
+        else
+            telemetry.midiOtherSeen.fetch_add (1, std::memory_order_relaxed);
     }
 
     // Merge the on-screen / computer keyboard's notes into the host MIDI stream

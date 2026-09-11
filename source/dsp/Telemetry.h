@@ -96,15 +96,27 @@ struct Telemetry
     std::array<std::atomic<float>, params::maxModDests> modDestValue {};
     std::array<std::atomic<bool>, params::maxModDests> modDestActive {};
 
-    // MIDI Learn diagnostics: counts every controller message seen at the
-    // very top of processBlock, before any transformation (keyboard-state
-    // merge, oversampling scale, arp rewrite). Lets the UI show Mike whether
-    // CC messages are reaching the plugin at all in his host, independent of
-    // whether a learn is currently armed or a binding exists. lastCcNumber/
-    // lastCcChannel are cosmetic (last-write-wins is fine).
+    // MIDI Learn diagnostics: counts every incoming message, broken down by
+    // type, seen at the very top of processBlock, before any transformation
+    // (keyboard-state merge, oversampling scale, arp rewrite). Lets the UI
+    // show Mike not just THAT MIDI is arriving but WHAT KIND -- a controller
+    // whose knobs never reach processBlock (e.g. consumed upstream by Logic's
+    // Control Surfaces, or a device that needs "send CC" enabled) shows notes
+    // incrementing while midiCcSeen stays at 0, which is the actual signal
+    // Mike needs. One switch per message keeps this cheap. last*Number/
+    // *Channel are cosmetic (last-write-wins is fine).
+    std::atomic<uint32_t> midiNoteOnSeen { 0 };
     std::atomic<uint32_t> midiCcSeen { 0 };
+    std::atomic<uint32_t> midiPitchWheelSeen { 0 };
+    std::atomic<uint32_t> midiChannelPressureSeen { 0 };   // channel (mono) aftertouch
+    std::atomic<uint32_t> midiAftertouchSeen { 0 };        // poly (per-note) aftertouch
+    std::atomic<uint32_t> midiProgramChangeSeen { 0 };
+    std::atomic<uint32_t> midiSysExSeen { 0 };
+    std::atomic<uint32_t> midiOtherSeen { 0 };
     std::atomic<int> lastCcNumber { -1 };
     std::atomic<int> lastCcChannel { -1 };
+    std::atomic<int> lastPitchBendChannel { -1 };
+    std::atomic<int> lastAftertouchChannel { -1 };
 };
 
 } // namespace spa::dsp

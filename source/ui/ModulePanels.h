@@ -17,8 +17,7 @@ namespace ui
 class OscStrip : public juce::Component,
                  private juce::AudioProcessorValueTreeState::Listener,
                  private juce::AsyncUpdater,
-                 private juce::ChangeListener,
-                 private juce::Timer
+                 private juce::ChangeListener
 {
 public:
     OscStrip (SPASynthProcessor&, int slot);
@@ -32,14 +31,6 @@ private:
     void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { triggerAsyncUpdate(); }
-    // Low-rate poll (10Hz) so the SYNC readout's "native -> host BPM" half
-    // tracks a live host tempo change while playing -- there's no host-
-    // tempo-changed callback to listen for instead. Only does anything in
-    // Sample mode with SYNC on, and only actually touches the label
-    // (setText + repaint) when the resolved host BPM has moved by >= 0.1 --
-    // see updateSyncReadout().
-    void timerCallback() override;
-    double lastPolledHostBpm = -1.0;
     void chooseContent();
     params::OscMode currentMode() const;
     juce::String contentName() const;
@@ -69,16 +60,19 @@ private:
     std::unique_ptr<Choice> phaseMode, table, analogShape, noiseColor;
     std::unique_ptr<Toggle> loop, keytrackSample, keytrackGranular;
 
-    // Sample SYNC (time-stretch to host BPM, beat-locked loop). Readout shows
-    // the detected/overridden native tempo + bar/beat count
-    // ("~137 BPM  2 bars", or "137 -> 120 BPM  2 bars  4/4" once SYNC is on);
-    // double-click edits the beats override (juce::Label's built-in editor --
-    // TextEditor subtrees are the documented exception to the no-focus-grab
-    // rule). Sample mode AND LOOP on only -- SYNC only makes sense as a loop
-    // feature, so both are hidden the instant LOOP goes off.
+    // Sample SYNC (time-stretch to host BPM, beat-locked loop). Sample mode
+    // AND LOOP on only -- SYNC only makes sense as a loop feature, so it's
+    // hidden the instant LOOP goes off. The per-oscillator time-signature
+    // dropdown (see timeSig below) is shown only once SYNC is ALSO on --
+    // Mike's call: it's meaningless while the loop free-runs unsynced.
     std::unique_ptr<Toggle> sync;
-    juce::Label syncReadout;
-    void updateSyncReadout();
+
+    // Per-oscillator time signature for the beat-locked loop ("Host", 4/4,
+    // 3/4, 6/8, 2/4, 5/4, 7/8, 12/8 -- id::osc::timeSig). Replaces the old
+    // BPM readout Mike found unhelpful; lets each sample oscillator run its
+    // own meter against the project (or another oscillator) for
+    // polyrhythms. Visible only Sample mode + LOOP on + SYNC on.
+    std::unique_ptr<Choice> timeSig;
 
     // Loop start/end only mean anything while looping is on; kept as a
     // separate rule from the mode-driven setVisible() above so the two

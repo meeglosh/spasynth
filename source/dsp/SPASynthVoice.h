@@ -54,6 +54,15 @@ struct SharedState
         double gridBeatSeconds = 0.5;      // 60/nativeBpm, native source-time seconds
         double gridOffsetSeconds = 0.0;    // sample->firstOnsetSeconds
 
+        // Effective beats-per-bar (quarter-note beats) for THIS slot's
+        // transport-lock bar origin -- resolved once per block by the
+        // processor from the per-slot osc::timeSig choice (Host = fall back
+        // to the shared/global value below). A slot in 3/4 against a project
+        // in 4/4 starts its loop every 3 beats instead of 4 -- the
+        // polyrhythm. 6/8 -> 3 beats/bar, 7/8 -> 3.5, matching
+        // timeSigBeatsPerBar's num * 4/den convention.
+        float beatsPerBar = 4.0f;
+
         int analogShape = 0;
         float subLevel = 0.0f;
         float fmRatio = 2.0f;
@@ -130,6 +139,10 @@ struct SharedState
     // quarter-note beat position at block start; hostTransportValid mirrors
     // the arp's gotHostPpq (host reports a real, advancing ppq) -- without it
     // the loop free-runs from the key press at the synced tempo instead.
+    // beatsPerBar here is the shared/global fallback (host's reported
+    // signature, or global.timeSig) -- each slot's ACTUAL bar origin uses
+    // SlotStatic::beatsPerBar, which is this value unless the slot's own
+    // osc::timeSig choice overrides it (polyrhythms between oscillators).
     bool hostPlaying = false;
     bool hostTransportValid = false;
     double hostPpqBeats = 0.0;

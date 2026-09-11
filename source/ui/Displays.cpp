@@ -490,7 +490,17 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         const auto beatNorm = (float) (beatSeconds / lengthSeconds);
         if (beatNorm > 0.0005f)
         {
-            const auto beatsPerBar = juce::jmax (1, juce::roundToInt (processor.getCurrentBeatsPerBar()));
+            // Follow THIS oscillator's own time signature (id::osc::timeSig)
+            // when it's not "Host" -- lets the bar-line grid show the
+            // polyrhythm a per-slot signature creates, matching the engine's
+            // per-slot bar origin (see SPASynthVoice's use of
+            // SlotStatic::beatsPerBar).
+            const auto slotTimeSigChoice = juce::roundToInt (
+                value (params::id::oscSlot (slot, params::id::osc::timeSig)));
+            const auto effectiveBeatsPerBar = slotTimeSigChoice > 0
+                ? params::id::timeSigBeatsPerBar (slotTimeSigChoice - 1)
+                : processor.getCurrentBeatsPerBar();
+            const auto beatsPerBar = juce::jmax (1, juce::roundToInt (effectiveBeatsPerBar));
             const auto offsetNorm = (float) (std::fmod (gridOffsetSeconds, beatSeconds) / lengthSeconds);
             // Walk both directions from the anchored offset so ticks cover
             // the whole file even when the first onset isn't near t=0.

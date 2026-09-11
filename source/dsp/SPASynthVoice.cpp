@@ -498,7 +498,11 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                     // offset (block-start ppq + elapsed chunk-domain samples).
                     const auto hostBeatsNow = shared.hostPpqBeats
                         + (double) blockOffset * (shared.bpm / 60.0) / juce::jmax (1.0, sampleRate);
-                    const auto bar = juce::jmax (1.0, (double) shared.beatsPerBar);
+                    // Per-slot bar origin (see SlotStatic::beatsPerBar) --
+                    // lets a slot in a different meter than the project
+                    // (or another slot) phase-lock to its OWN bar grid, the
+                    // polyrhythm feature.
+                    const auto bar = juce::jmax (1.0, (double) stat.beatsPerBar);
                     const auto barOrigin = std::floor (hostBeatsNow / bar) * bar;
                     const auto phaseBeats = std::fmod (
                         std::fmod (hostBeatsNow - barOrigin, loopLenBeats) + loopLenBeats, loopLenBeats);

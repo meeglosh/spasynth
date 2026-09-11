@@ -1187,6 +1187,15 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     // Right-clicks anywhere inside get routed here for MIDI Learn.
     addMouseListener (this, true);
 
+    // MIDI Learn diagnostics badge -- see the header comment. Hidden until a
+    // learn is armed; positioned over the header strip in resized().
+    midiLearnBadge.setJustificationType (juce::Justification::centred);
+    midiLearnBadge.setInterceptsMouseClicks (false, false);
+    addChildComponent (midiLearnBadge);
+    startTimerHz (10);   // event-driven diagnostics poll, well under the
+                          // 60 Hz learn-apply timer the 1.0.13 audit rejected
+                          // -- this only drives a text label, never applies MIDI
+
     // Deliberately NOT setSize()'d here -- see SPASynthEditor's constructor,
     // which gives this its first real layout AFTER addAndMakeVisible()
     // parents it. A setSize() call in THIS constructor would run while `this`
@@ -1220,6 +1229,31 @@ void ContentComponent::setBrowserOverlayMode (bool shouldOverlay)
     // NOT onBrowserToggled -- that would ask the shell to resize the host
     // window again, which is exactly what just failed.
     setSize (getContentBaseWidth(), getContentBaseHeight());
+}
+
+// The MIDI Learn right-click menu's callback body, factored out so
+// midiLearnEndToEndTest can drive it with the exact item id PopupMenu would
+// hand back (1 = "MIDI Learn", 2 = "Remove assignment", 3 = "Cancel"),
+// rather than calling MidiLearnManager::armLearn() directly -- that exercises
+// this wiring itself, not just the manager.
+void ContentComponent::applyMidiLearnMenuResult (int result, const juce::String& paramID)
+{
+    auto& midiLearn = processor.getMidiLearn();
+    if (result == 1)
+    {
+        midiLearn.armLearn (paramID);
+        // Snapshot the badge's tracking state at arm time: which param, and
+        // how many CCs the plugin has seen so far (so the badge can tell
+        // "listening" from "capturing" without racing processMidi).
+        midiLearnBadgeParamID = paramID;
+        midiLearnBadgeAssignedCC = midiLearn.getAssignedCC (paramID);
+        midiLearnBadgeSeenAtCapture = processor.getTelemetry().midiCcSeen.load (std::memory_order_relaxed);
+        midiLearnBadgeHideAtMs = 0;
+    }
+    else if (result == 2)
+        midiLearn.clearAssignment (paramID);
+    else if (result == 3)
+        midiLearn.cancelLearn();
 }
 
 void ContentComponent::mouseDown (const juce::MouseEvent& e)
@@ -1259,20 +1293,13 @@ void ContentComponent::mouseDown (const juce::MouseEvent& e)
         menu.addItem (2, "Remove assignment (CC " + juce::String (assignedCC) + ")");
 
     showPopupAnchored (menu, juce::PopupMenu::Options().withMousePosition(),
-                       [this, paramID] (int result)
-    {
-        auto& midiLearn = processor.getMidiLearn();
-        if (result == 1)
-            midiLearn.armLearn (paramID);
-        else if (result == 2)
-            midiLearn.clearAssignment (paramID);
-        else if (result == 3)
-            midiLearn.cancelLearn();
-    });
+                       [this, paramID] (int result) { applyMidiLearnMenuResult (result, paramID); });
 }
 
 ContentComponent::~ContentComponent()
 {
+    stopTimer();
+
     // A VOICE call-out still open when the host tears the editor down: its
     // panel must stop referencing the processor NOW (see VoicePanel::detach),
     // and the box should leave modal state so it can't swallow input into a
@@ -1294,6 +1321,62 @@ ContentComponent::~ContentComponent()
 void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     refreshAll();
+}
+
+// MIDI Learn diagnostics badge. Cheap poll (10 Hz, well under the 60 Hz
+// learn-apply timer the 1.0.13 audit rejected -- this never touches a
+// parameter, it only reads MidiLearnManager/Telemetry state and, on change,
+// updates one Label's text): while a learn is armed, shows that it's
+// listening and how many CC messages the plugin has seen in total (so Mike
+// can tell, live in Logic or the standalone, whether hardware CCs are
+// reaching the plugin at all); once the armed learn captures a CC, shows
+// which one for a couple of seconds, then hides.
+void ContentComponent::timerCallback()
+{
+    auto& learn = processor.getMidiLearn();
+    auto& telemetry = processor.getTelemetry();
+    const auto ccSeen = telemetry.midiCcSeen.load (std::memory_order_relaxed);
+
+    if (learn.isArmed() && learn.getArmedParamID() == midiLearnBadgeParamID)
+    {
+        midiLearnBadge.setVisible (true);
+        midiLearnBadge.setColour (juce::Label::textColourId, currentTheme().textSecondary);
+        const auto seenSinceArm = ccSeen - midiLearnBadgeSeenAtCapture;
+        midiLearnBadge.setText (seenSinceArm > 0
+            ? "MIDI Learn: listening... (" + juce::String (seenSinceArm) + " CC msg"
+                + (seenSinceArm == 1 ? juce::String() : juce::String ("s")) + " seen)"
+            : "MIDI Learn: move a control",
+            juce::dontSendNotification);
+        midiLearnBadgeHideAtMs = 0;
+        return;
+    }
+
+    // Not armed for this param any more -- either it was just captured, or
+    // cancelled/superseded. A fresh capture shows what it learned briefly.
+    if (midiLearnBadgeParamID.isNotEmpty() && midiLearnBadgeHideAtMs == 0)
+    {
+        const auto assignedNow = learn.getAssignedCC (midiLearnBadgeParamID);
+        if (assignedNow >= 0 && assignedNow != midiLearnBadgeAssignedCC)
+        {
+            midiLearnBadge.setVisible (true);
+            midiLearnBadge.setColour (juce::Label::textColourId, currentTheme().accent);
+            midiLearnBadge.setText ("CC " + juce::String (assignedNow)
+                + " (ch " + juce::String (telemetry.lastCcChannel.load (std::memory_order_relaxed)) + ") learned",
+                juce::dontSendNotification);
+            midiLearnBadgeHideAtMs = juce::Time::getMillisecondCounter() + 2500u;
+        }
+        else
+        {
+            midiLearnBadgeParamID = {};   // cancelled with no capture -- nothing to show
+        }
+    }
+
+    if (midiLearnBadgeHideAtMs != 0 && juce::Time::getMillisecondCounter() >= midiLearnBadgeHideAtMs)
+    {
+        midiLearnBadge.setVisible (false);
+        midiLearnBadgeParamID = {};
+        midiLearnBadgeHideAtMs = 0;
+    }
 }
 
 void ContentComponent::refreshAll()
@@ -1682,6 +1765,12 @@ void ContentComponent::resized()
 
     if (assignOverlay != nullptr)
         assignOverlay->setBounds (getLocalBounds());
+
+    // MIDI Learn diagnostics badge: a thin strip across the header's preset
+    // name area, topmost, shown only while relevant (see timerCallback).
+    midiLearnBadge.setBounds (moduleOriginX, metrics::brandBandHeight,
+                              metrics::baseWidth, 16);
+    midiLearnBadge.toFront (false);
 }
 
 // Parent for pop-over call-outs: the editor shell (SPASynthEditor), which

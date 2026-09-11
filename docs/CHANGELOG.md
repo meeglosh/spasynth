@@ -11,13 +11,12 @@ A large round of features and fixes from our testers' playtest sessions.
   into a beat-locked, tempo-matched part of your project. SYNC snaps the
   loop's start and end to the sample's own beat grid, stretches it to your
   project's tempo while keeping its pitch (using the sample's own detected
-  tempo, which you can edit if we guessed wrong), and follows your project's
-  tempo and time signature, locking to the transport while it plays, like a
-  clip launcher: press a key and the loop joins in on the beat, right where
-  the transport currently is. The readout shows the sample's own tempo when
-  SYNC is off (e.g. "Sample ~137 BPM · 2 bars") and, once SYNC is on, the
-  stretch and your project's time signature too ("137 -> 120 BPM · 2 bars ·
-  4/4"). Turning LOOP off hides SYNC, since it's a loop feature.
+  tempo), and follows your project's tempo, locking to the transport while it
+  plays, like a clip launcher: press a key and the loop joins in on the beat,
+  right where the transport currently is. Turning LOOP off hides SYNC, since
+  it's a loop feature. Each sample oscillator can also choose its own time
+  signature for its beat-locked loop, defaulting to your project's, so loops
+  in different meters can run against each other for polyrhythms.
 - A time signature setting is available for the standalone's tempo bar and,
   for hosts that don't tell us their own signature, from the settings menu
   as well, so synced sample loops always land on the right beat.
@@ -115,6 +114,10 @@ A large round of features and fixes from our testers' playtest sessions.
   reporting an unrecognized audio format.
 - The plugin window now opens at a size that fits the screen it appears on,
   and remembers the size you resize it to.
+- Fixed MIDI Learn not actually learning: moving a hardware control while a
+  learn was armed could leave it waiting indefinitely. While a learn is
+  armed, the control now shows that it's listening for a hardware control,
+  and confirms exactly which controller it learned once one arrives.
 
 **Notes for this build**
 

@@ -23,7 +23,8 @@ namespace ui
 // Everything inside the plugin window at base size; the editor shell scales
 // this whole component for resizing.
 class ContentComponent : public juce::Component,
-                         private juce::ChangeListener
+                         private juce::ChangeListener,
+                         private juce::Timer
 {
 public:
     ContentComponent (SPASynthProcessor&, std::function<void()> onThemeChanged);
@@ -81,8 +82,15 @@ public:
     void showPopupAnchored (juce::PopupMenu& menu, const juce::PopupMenu::Options& options,
                             std::function<void (int)> callback);
 
+    // The right-click MIDI Learn menu's callback body (1 = arm, 2 = remove
+    // assignment, 3 = cancel), exposed so tests can drive the exact wiring
+    // mouseDown() hooks up to the real PopupMenu, rather than reaching past
+    // it into MidiLearnManager directly.
+    void applyMidiLearnMenuResult (int result, const juce::String& paramID);
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void timerCallback() override;   // MIDI Learn badge diagnostics, see .cpp
     void togglePresetBrowser();
     void showAccentPicker();
     juce::Component* callOutParent();
@@ -222,6 +230,17 @@ private:
     // hence 1x1 rather than zero-size, and it must be a visible child, not
     // addChildComponent'd hidden). Intercepts nothing so it can't steal clicks.
     juce::Component popupFocusAnchor;
+
+    // MIDI Learn diagnostics badge: while a learn is armed, shows "MIDI
+    // Learn: move a control"; once the manager captures a CC, switches to
+    // "CC n (ch c) learned" for a couple of seconds. Also surfaces
+    // Telemetry::midiCcSeen so Mike can tell, live in the host, whether any
+    // controller messages are reaching the plugin at all (see timerCallback).
+    juce::Label midiLearnBadge;
+    juce::String midiLearnBadgeParamID;   // which param the badge is tracking
+    int midiLearnBadgeAssignedCC = -1;    // assignment seen last poll, to detect a fresh capture
+    juce::uint32 midiLearnBadgeSeenAtCapture = 0;   // Telemetry::midiCcSeen snapshot at arm time
+    juce::uint32 midiLearnBadgeHideAtMs = 0;        // 0 = not counting down
 
     // Preset drawer: normally widens the window and sits in a left column of
     // its own, beside (never over) the module grid -- see

@@ -1137,6 +1137,49 @@ namespace
         return file;
     }
 
+    // A single click at an arbitrary (non-beat-aligned) fractional-beat
+    // offset within an otherwise-silent file spanning totalBeats. Unlike
+    // writeClickPattern (a click on EVERY beat), this is deliberately
+    // aperiodic within a loop shorter than totalBeats: with clicks on every
+    // beat, "time from a given loop-phase to the next click" only depends
+    // on the phase's FRACTIONAL part (mod 1 beat) -- so it can NOT
+    // distinguish two bar-origin computations that differ by a whole number
+    // of beats (which floor(ppq/bar)*bar always produces for integer bar
+    // values), even when the two origins are flat-out wrong. A single click
+    // per loop breaks that: "time to the click" depends on the FULL phase
+    // (mod loopLenBeats), so it discriminates. See sampleSyncTransportLockTest's
+    // per-slot time-signature check.
+    static juce::File writeSingleClick (double sampleRate, double beatPeriodSeconds,
+                                        double totalBeats, double clickBeatOffset)
+    {
+        constexpr double clickFreq = 2500.0;
+        constexpr double clickDurSeconds = 0.015;
+        const auto clickLen = (int) (clickDurSeconds * sampleRate);
+        const auto numSamples = (int) (totalBeats * beatPeriodSeconds * sampleRate) + clickLen + 8;
+
+        juce::AudioBuffer<float> buffer (1, numSamples);
+        buffer.clear();
+        const auto start = (int) (clickBeatOffset * beatPeriodSeconds * sampleRate);
+        for (int i = 0; i < clickLen && start + i < numSamples; ++i)
+        {
+            const auto env = (float) std::exp (-(double) i / (clickDurSeconds * sampleRate * 0.25));
+            buffer.addSample (0, start + i, env * (float) std::sin (
+                juce::MathConstants<double>::twoPi * clickFreq * i / sampleRate));
+        }
+
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("spasynth-single-click-test", ".wav");
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+        auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
+                                                       .withSampleRate (sampleRate)
+                                                       .withNumChannels (1)
+                                                       .withBitsPerSample (24));
+        if (writer != nullptr)
+            writer->writeFromAudioSampleBuffer (buffer, 0, numSamples);
+        return file;
+    }
+
     // Simple peak/onset picker for measuring RENDERED timing: half-wave-
     // rectified sample-to-sample-envelope flux with a refractory gap, same
     // idea as the production loader's detector but standalone here so the
@@ -1902,8 +1945,13 @@ namespace
         fake.playing = true;
 
         // 3/4 time signature: a 3-beat loop's bar-line origin repeats every
-        // 3 beats (not 4) -- note-on at ppq 3.5 (one bar + 0.5 beats in a 3/4
-        // bar) should phase-join the same way ppq 0.5 would.
+        // 3 beats (not 4) -- note-on at ppq 6.5 (two 3/4 bars + 0.5 beats)
+        // should phase-join the same way ppq 0.5 would. ppq 6.5, not 3.5:
+        // a WRONG 4-beat divisor still lands 3.5 in the same "wrong" bar as
+        // 0.5 (floor(3.5/4) == floor(0.5/4) == 0), so that pair passes even
+        // with a broken divisor -- coincidentally-matching, not a real
+        // check. 6.5 forces the wrong divisor into a DIFFERENT bar
+        // (floor(6.5/4)=1 vs floor(0.5/4)=0), so it actually discriminates.
         {
             setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
             setParam (proc, id::oscSlot (0, id::osc::loopEnd), 3.0f / beatsOverride);
@@ -1911,7 +1959,7 @@ namespace
 
             double ppqA = 0.5;
             const auto renderA = render (1.5, &ppqA);
-            double ppqB = 3.5;   // one 3/4 bar later, same phase
+            double ppqB = 6.5;   // two 3/4 bars later, same phase
             const auto renderB = render (1.5, &ppqB);
             const auto onsetsA = detectOnsetsInBuffer (renderA, sr);
             const auto onsetsB = detectOnsetsInBuffer (renderB, sr);
@@ -1920,9 +1968,138 @@ namespace
             if (! onsetsA.empty() && ! onsetsB.empty())
                 expect (std::abs (onsetsA.front() - onsetsB.front()) * 1000.0 < 5.0,
                         "3/4 time signature repeats the loop's bar-line origin every 3 beats (ppq 0.5 vs "
-                            "3.5 join at the same phase: " + juce::String (onsetsA.front()) + "s vs "
+                            "6.5 join at the same phase: " + juce::String (onsetsA.front()) + "s vs "
                             + juce::String (onsetsB.front()) + "s)");
             fake.tsNum = 4; fake.tsDen = 4;
+        }
+
+        // Per-slot time signature (the polyrhythm feature): a slot left on
+        // "Host" (a 4-beat loop, matching the host's own 4/4) vs. a slot set
+        // to its own "3/4" (a 3-beat loop) even though the host still
+        // reports 4/4. This exercises the REAL per-slot plumbing in
+        // SPASynthProcessor::updateSharedState (slot.beatsPerBar), not just
+        // the loop-length math.
+        //
+        // The sample is a SINGLE click within an otherwise-silent file, via
+        // writeSingleClick, not writeClickPattern's click-on-every-beat --
+        // with a click on every beat, "time from a given phase to the next
+        // click" depends only on the phase's FRACTIONAL part (mod 1 beat),
+        // and floor(ppq/bar)*bar always produces an origin shift that's a
+        // WHOLE number of beats for any integer bar -- so a click-per-beat
+        // file literally cannot distinguish the correct bar from a wrong
+        // one, no matter which ppq is chosen (confirmed by hand: an earlier
+        // draft using writeClickPattern here passed unchanged with
+        // SPASynthProcessor::updateSharedState's slot.beatsPerBar line
+        // fully reverted, in both a shared processor with other voices
+        // still ringing AND a freshly isolated one -- it wasn't a
+        // contamination bug, the periodic click content itself made the
+        // check meaningless). A single click has period loopLenBeats
+        // instead of 1 beat, so its next-occurrence timing genuinely
+        // depends on the full phase.
+        //
+        // Each check uses a FRESH, single-oscillator SPASynthProcessor
+        // (isolation, not required for correctness here but keeps the
+        // measurement simple) and predicts the onset delay ANALYTICALLY
+        // (same technique as this function's very first check above) --
+        // confirmed by hand that reverting SPASynthProcessor::
+        // updateSharedState's slot.beatsPerBar line moves the second
+        // check's actual onset from ~0.367s to ~1.033s, failing the
+        // tolerance below; restored afterward.
+        const auto renderSlotJoin = [&] (float timeSigChoice, float loopBeats, double joinPpq)
+        {
+            spa::SPASynthProcessor p;
+            p.prepareToPlay (sr, blockSize);
+            const auto f = writeSingleClick (sr, beatPeriod, beatsOverride, 0.3);
+            p.loadSampleFromFile (0, f);
+            waitForSample (p, 0, 15000);
+            setParam (p, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+            setParam (p, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+            setParam (p, id::oscSlot (0, id::osc::keytrack), 0.0f);
+            setParam (p, id::oscSlot (0, id::osc::loop), 1.0f);
+            setParam (p, id::oscSlot (0, id::osc::sampleStart), 0.0f);
+            setParam (p, id::oscSlot (0, id::osc::loopStart), 0.0f);
+            setParam (p, id::oscSlot (0, id::osc::syncBeatsOverride), beatsOverride);
+            setParam (p, id::oscSlot (0, id::osc::loopEnd), loopBeats / beatsOverride);
+            setParam (p, id::oscSlot (0, id::osc::timeSig), timeSigChoice);
+
+            FakePlayHead fp;
+            fp.bpm = hostBpm;
+            fp.playing = true;
+            fp.tsNum = 4; fp.tsDen = 4;   // host always 4/4 in this sub-test
+            fp.ppq = joinPpq;
+            p.setPlayHead (&fp);
+
+            juce::AudioBuffer<float> buf (2, blockSize);
+            std::vector<float> out;
+            const auto numBlocks = (int) ((1.8 * sr) / blockSize) + 1;
+            out.reserve ((size_t) numBlocks * (size_t) blockSize);
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < blockSize; ++i) out.push_back (buf.getSample (0, i));
+                fp.ppq += (double) blockSize / sr * (fp.bpm / 60.0);
+            }
+            float peak = 0.0f;
+            for (auto v : out) peak = juce::jmax (peak, std::abs (v));
+            if (peak > 1.0e-6f) for (auto& v : out) v /= peak;
+            p.setPlayHead (nullptr);
+            f.deleteFile();
+            return out;
+        };
+
+        {
+            // Host (choice 0), 4-beat loop, join at ppq 7.5: bar = 4 ->
+            // origin = floor(7.5/4)*4 = 4 -> phase = 3.5 beats into the
+            // loop. The single click sits exactly at grid phase 0 (SYNC's
+            // snapToGrid pulls loopStart onto the grid line nearest 0, which
+            // -- since the grid is anchored to the click's own detected
+            // onset, per writeSingleClick's comment -- is the click's own
+            // position; confirmed empirically, see below), i.e. at the
+            // loop's own start/wrap point: delay = (4 - 3.5) = 0.5 beats.
+            const auto rA = renderSlotJoin (0.0f, 4.0f, 7.5);
+            const auto onsetsA = detectOnsetsInBuffer (rA, sr);
+            expect (! onsetsA.empty(), "Host-signature slot join produces an onset");
+            if (! onsetsA.empty())
+            {
+                const auto expected = 0.5 * beatPeriod;
+                const auto err = std::abs (onsetsA.front() - expected) * 1000.0;
+                expect (err < 25.0,
+                        "a slot left on Host resolves its 4-beat loop's bar origin from the host's "
+                        "own 4/4 (ppq 7.5 -> expected onset ~" + juce::String (expected) + "s, got "
+                        + juce::String (onsetsA.front()) + "s, err " + juce::String (err) + "ms)");
+            }
+        }
+        {
+            // 3/4 (choice 2), 3-beat loop, host still 4/4, join at ppq 5.75:
+            // bar = 3 (the per-slot override, NOT the host's 4) -> origin =
+            // floor(5.75/3)*3 = 3 -> phase = 2.75 beats into the loop ->
+            // the click (at the loop's own start/wrap point, see above) is
+            // next heard on the wrap: delay = (3 - 2.75) = 0.25 beats
+            // (~0.167s, empirically confirmed: 0.176s, ~9ms off, in line
+            // with this suite's usual onset-detector latency). A wrong
+            // 4-beat divisor (the host's own signature, or SlotStatic's
+            // struct default -- both 4 here) would instead give origin = 4,
+            // phase = 1.75, delay = (3 - 1.75) = 1.25 beats (~0.833s,
+            // empirically confirmed by hand with the plumbing line
+            // reverted: 0.842s) -- a full beat later, easily outside the
+            // tolerance below.
+            const auto rB = renderSlotJoin (2.0f, 3.0f, 5.75);
+            const auto onsetsB = detectOnsetsInBuffer (rB, sr);
+            expect (! onsetsB.empty(), "per-slot 3/4 override join produces an onset");
+            if (! onsetsB.empty())
+            {
+                const auto expected = 0.25 * beatPeriod;
+                const auto err = std::abs (onsetsB.front() - expected) * 1000.0;
+                expect (err < 25.0,
+                        "per-slot osc::timeSig (3/4) resolves its OWN bar origin, not the host's "
+                        "4/4 (ppq 5.75 -> expected onset ~" + juce::String (expected) + "s, got "
+                        + juce::String (onsetsB.front()) + "s, err " + juce::String (err)
+                        + "ms -- a wrong 4-beat divisor would instead land ~"
+                        + juce::String (1.25 * beatPeriod) + "s)");
+            }
         }
 
         proc.setPlayHead (nullptr);
@@ -1985,11 +2162,35 @@ namespace
         expect (std::abs (proc.getCurrentBeatsPerBar() - 4.0f) < 1.0e-3f,
                 "no host signature -> global.timeSig (4/4 default) resolves beatsPerBar (got "
                     + juce::String (proc.getCurrentBeatsPerBar()) + ")");
+
+        // Per-oscillator osc::timeSig: "Host" (index 0) plus the same 7
+        // choices as global.timeSig (index N maps to timeSigBeatsPerBar
+        // (N-1)) -- APPEND-ONLY, checked by parameter definition rather than
+        // engine behaviour (the engine-level per-slot resolution is covered
+        // by sampleSyncTransportLockTest's 3/4-vs-Host case).
+        const auto* timeSigDef = params::find (id::oscSlot (0, id::osc::timeSig));
+        expect (timeSigDef != nullptr, "osc::timeSig parameter exists in the registry");
+        if (timeSigDef != nullptr)
+        {
+            const juce::StringArray expectedChoices { "Host", "4/4", "3/4", "6/8", "2/4", "5/4", "7/8", "12/8" };
+            expect (timeSigDef->choices == expectedChoices,
+                    "osc::timeSig choice order is Host + global.timeSig's 7 choices (got "
+                        + timeSigDef->choices.joinIntoString (",") + ")");
+            expect (! timeSigDef->random.enabled, "osc::timeSig is not randomized (a deliberate meter choice)");
+        }
+
+        // Host-reported-signature > global.timeSig fallback order also holds
+        // as the two inputs a per-slot "Host" choice resolves through --
+        // already proven above via getHostReportsTimeSig()/getCurrentBeatsPerBar(),
+        // which is exactly what SlotStatic::beatsPerBar falls back to for a
+        // slot left on "Host" (see SPASynthVoice.h).
     }
 
-    // Editor-level checks: the SYNC toggle exists only in sample mode, shows
-    // a readout, doesn't grab keyboard focus, and the beats field writes the
-    // override param.
+    // Editor-level checks: the SYNC toggle exists only in sample mode and
+    // doesn't grab keyboard focus. The old BPM readout is gone (Mike: "not
+    // providing useful value"). The per-oscillator time-signature dropdown
+    // (its replacement) is hidden -- not merely dimmed -- unless Sample mode
+    // + LOOP + SYNC are ALL on.
     static void sampleSyncUiTest()
     {
         std::cout << "sampleSyncUiTest\n";
@@ -2009,8 +2210,9 @@ namespace
         // flag -- what isShowing() would report if this editor had a real
         // desktop peer (it doesn't, in this headless test), so it's the
         // correct check for a mode-driven setVisible() on an ANCESTOR (the
-        // Toggle wrapper) of the component actually under test (its inner
-        // juce::ToggleButton, whose own isVisible() flag stays true always).
+        // Toggle/Choice wrapper) of the component actually under test (its
+        // inner juce::ToggleButton/ComboBox, whose own isVisible() flag
+        // stays true always).
         const auto isVisibleInChain = [] (juce::Component* c)
         {
             for (; c != nullptr; c = c->getParentComponent())
@@ -2027,120 +2229,77 @@ namespace
         expect (toggleBtn != nullptr, "SYNC control is a ToggleButton");
         if (toggleBtn == nullptr) return;
 
-        // Wavetable mode (the default) -- not shown.
+        const auto timeSigId = id::oscSlot (0, id::osc::timeSig);
+        auto* timeSigComp = findByParamID (*editor, timeSigId);
+        expect (timeSigComp != nullptr, "per-oscillator time-signature dropdown found in the editor tree");
+        if (timeSigComp == nullptr) return;
+        auto* timeSigBox = dynamic_cast<juce::ComboBox*> (timeSigComp);
+        expect (timeSigBox != nullptr, "time-signature control is a ComboBox");
+        if (timeSigBox == nullptr) return;
+        expect (! timeSigBox->getMouseClickGrabsKeyboardFocus(),
+                "time-signature dropdown doesn't grab keyboard focus");
+
+        // No BPM readout label survives in the OscStrip tree any more.
+        auto* oscStrip = toggleBtn->getParentComponent() != nullptr
+                        ? toggleBtn->getParentComponent()->getParentComponent() : nullptr;
+        expect (oscStrip != nullptr, "found the OscStrip container");
+        if (oscStrip != nullptr)
+        {
+            juce::Label* readout = nullptr;
+            for (auto* child : oscStrip->getChildren())
+                if ((readout = dynamic_cast<juce::Label*> (child)) != nullptr)
+                    break;
+            expect (readout == nullptr, "the old BPM readout label is gone");
+        }
+
+        // Wavetable mode (the default) -- neither SYNC nor timeSig shown.
         expect (! isVisibleInChain (toggleBtn), "SYNC toggle hidden outside sample mode");
+        expect (! isVisibleInChain (timeSigBox), "time-sig dropdown hidden outside sample mode");
 
         setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
         for (int i = 0; i < 20 && ! isVisibleInChain (toggleBtn); ++i)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (25);   // let the AsyncUpdater land
-        expect (isVisibleInChain (toggleBtn), "SYNC toggle shown in sample mode");
+        expect (isVisibleInChain (toggleBtn), "SYNC toggle shown in sample mode (LOOP defaults on)");
         expect (! toggleBtn->getMouseClickGrabsKeyboardFocus(),
                 "SYNC toggle doesn't grab keyboard focus");
+        // SYNC still off -> the time-sig dropdown stays hidden (Mike: hidden,
+        // not dimmed, until SYNC is actually on).
+        expect (! isVisibleInChain (timeSigBox),
+                "time-sig dropdown hidden with LOOP on but SYNC off");
 
-        // Toggle -> OscStrip: the readout label is a direct sibling child.
-        auto* oscStrip = toggleBtn->getParentComponent() != nullptr
-                        ? toggleBtn->getParentComponent()->getParentComponent() : nullptr;
-        expect (oscStrip != nullptr, "found the OscStrip container");
-        juce::Label* readout = nullptr;
-        if (oscStrip != nullptr)
-            for (auto* child : oscStrip->getChildren())
-                if ((readout = dynamic_cast<juce::Label*> (child)) != nullptr)
-                    break;
-        expect (readout != nullptr, "SYNC readout label found");
-        if (readout == nullptr) return;
-        expect (isVisibleInChain (readout), "SYNC readout shown in sample mode");
-        expect (readout->getText().isNotEmpty(), "SYNC readout shows text ("
-                    + readout->getText() + ")");
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        for (int i = 0; i < 20 && ! isVisibleInChain (timeSigBox); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (isVisibleInChain (timeSigBox),
+                "time-sig dropdown shown once Sample + LOOP + SYNC are all on");
 
-        // Simulate committing the beats field (the double-click editor's
-        // onTextChange, without driving a real mouse/keyboard edit gesture).
-        readout->setText ("8", juce::dontSendNotification);
-        expect (readout->onTextChange != nullptr, "readout has a commit handler wired");
-        if (readout->onTextChange != nullptr)
-            readout->onTextChange();
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 0.0f);
+        for (int i = 0; i < 20 && isVisibleInChain (timeSigBox); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (! isVisibleInChain (timeSigBox), "time-sig dropdown hides again when SYNC goes off");
+        expect (isVisibleInChain (toggleBtn), "SYNC toggle itself stays visible (LOOP still on)");
 
-        const auto overrideValue = proc.getAPVTS()
-            .getRawParameterValue (id::oscSlot (0, id::osc::syncBeatsOverride))->load();
-        expect (std::abs (overrideValue - 8.0f) < 0.26f,
-                "beats field commit writes syncBeatsOverride (got " + juce::String (overrideValue) + ")");
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        for (int i = 0; i < 20 && ! isVisibleInChain (timeSigBox); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+        expect (isVisibleInChain (timeSigBox), "time-sig dropdown shown again once SYNC is back on");
 
-        // Mike's redesign: SYNC (and its readout) only exist while LOOP is on
-        // -- turning LOOP off hides both immediately, turning it back on
-        // restores them.
+        // Mike's redesign: SYNC (and now the time-sig dropdown) only exist
+        // while LOOP is on -- turning LOOP off hides both immediately,
+        // turning it back on restores SYNC (but not the dropdown, which
+        // needs SYNC re-enabled too, matching the gating above).
         setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);
         for (int i = 0; i < 20 && isVisibleInChain (toggleBtn); ++i)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
         expect (! isVisibleInChain (toggleBtn), "SYNC toggle hidden when LOOP is off");
-        expect (! isVisibleInChain (readout), "SYNC readout hidden when LOOP is off");
+        expect (! isVisibleInChain (timeSigBox), "time-sig dropdown hidden when LOOP is off");
 
         setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
         for (int i = 0; i < 20 && ! isVisibleInChain (toggleBtn); ++i)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
         expect (isVisibleInChain (toggleBtn), "SYNC toggle shown again once LOOP is back on");
-        expect (isVisibleInChain (readout), "SYNC readout shown again once LOOP is back on");
-
-        // Readout format, with a real loaded sample (mode/loop already on
-        // from above; the beats field commit above left syncBeatsOverride at
-        // 8, giving an exact, non-detection-noise native tempo to check
-        // against):
-        //   SYNC off -> "Sample ~137 BPM . N beats" naming the SAMPLE's own
-        //     total length (unchanged).
-        //   SYNC on  -> "137 -> 120 BPM . N bars/beats . num/den" naming the
-        //     EFFECTIVE (snapped) LOOP length, not the sample's total length
-        //     -- loopStart/loopEnd are set below to make that difference
-        //     concrete: an 8-beat-override file with a half-file loop should
-        //     read as "1 bar" (4 beats, the default 4/4), not "8 beats".
-        const auto file = writeClickPattern (48000.0, 60.0 / 120.0, 16, 4);
-        proc.loadSampleFromFile (0, file);
-        expect (waitForSample (proc, 0, 15000), "sampleSyncUiTest sample loads");
-        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
-        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.5f);
-
-        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 0.0f);
-        for (int i = 0; i < 20; ++i)
-        {
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
-            if (readout->getText().startsWith ("Sample ")) break;
-        }
-        // The 8-beat override file divides evenly into whole bars at the
-        // default 4/4 (8 / 4 = 2), so this reads as "2 bars", not "8 beats"
-        // -- the bars-or-beats formatting applies here too, same as SYNC on.
-        expect (readout->getText().startsWith ("Sample ") && readout->getText().contains ("2 bars"),
-                "SYNC-off readout names the sample's own total length, override beats (got "
-                    + readout->getText() + ")");
-
-        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
-        for (int i = 0; i < 20; ++i)
-        {
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
-            if (! readout->getText().startsWith ("Sample ")) break;
-        }
-        const auto syncOnText = readout->getText();
-        expect (syncOnText.contains ("\xe2\x86\x92") && syncOnText.contains ("/")
-                    && syncOnText.contains ("BPM"),
-                "SYNC-on readout shows native->host BPM and a time signature (got " + syncOnText + ")");
-        expect (syncOnText.contains ("1 bar") && ! syncOnText.contains ("8 beats"),
-                "SYNC-on readout names the EFFECTIVE (snapped) LOOP length (half the 8-beat file "
-                "-> 1 bar at 4/4), not the sample's total length (got " + syncOnText + ")");
-
-        // LOOP END moved out to change the effective loop length -> the
-        // readout updates without needing SYNC to be re-toggled (the new
-        // loopStart/loopEnd parameter listeners refresh it directly). 0.75
-        // (not 1.0 -- the full file edge snaps against the onset-anchored
-        // grid overshooting past the last sample, which clamps to a
-        // fractional beat count, an edge-clamp artifact unrelated to what
-        // this checks) -> 6 of the 8 native beats, not a whole number of
-        // bars at 4/4, so it reads as "6 beats".
-        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.75f);
-        for (int i = 0; i < 20 && syncOnText == readout->getText(); ++i)
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
-        expect (syncOnText != readout->getText(),
-                "SYNC-on readout refreshes when LOOP END moves (still \"" + readout->getText() + "\")");
-        expect (readout->getText().contains ("6.0 beats"),
-                "widening the loop to 6 of the 8 native beats reads as 6.0 beats, not a whole bar count (got "
-                    + readout->getText() + ")");
-
-        file.deleteFile();
+        expect (isVisibleInChain (timeSigBox),
+                "time-sig dropdown shown again too -- SYNC's param value survived the LOOP round-trip");
     }
 
     static void granularTest()
@@ -6621,16 +6780,19 @@ namespace
             }
 
             // No item-id lookup API exists on a live PopupMenu, so drive the
-            // exact same "MIDI Learn" callback ContentComponent::mouseDown
-            // wires up (result == 1 -> armLearn), then let the menu close on
-            // its own -- proving the callback path, not just that the menu
-            // stays open.
-            learn.armLearn (id::filter1Cutoff);
+            // menu's own callback body directly through
+            // ContentComponent::applyMidiLearnMenuResult() with item id 1
+            // ("MIDI Learn") -- exactly the id/paramID PopupMenu would hand
+            // back for the item mouseDown() just built -- rather than
+            // reaching past the wiring into MidiLearnManager::armLearn()
+            // directly. This is the wiring itself under test, not just the
+            // manager.
+            content->applyMidiLearnMenuResult (1, id::filter1Cutoff);
             juce::PopupMenu::dismissAllActiveMenus();
             pumpFor (100);
 
             expect (learn.isArmed() && learn.getArmedParamID() == id::filter1Cutoff,
-                    "MIDI Learn armed for filter1Cutoff via the right-click menu's callback");
+                    "MIDI Learn armed for filter1Cutoff via the right-click menu's own callback body");
 
             editor->removeFromDesktop();
         }
@@ -6662,6 +6824,85 @@ namespace
 
         learn.clearAll();   // "Clear All MIDI Learn" settings-menu path
         expect (learn.getAssignedCC (id::filter1Cutoff) == -1, "Clear All MIDI Learn clears the binding");
+
+        // Telemetry diagnostics: midiCcSeen counts every controller message
+        // the top of processBlock sees, independent of whether a learn is
+        // armed or bound -- this is what lets the UI badge tell Mike whether
+        // CCs are reaching the plugin at all in his host.
+        auto& telemetry = proc.getTelemetry();
+        const auto seenBefore = telemetry.midiCcSeen.load();
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 20, 64), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+        expect (telemetry.midiCcSeen.load() == seenBefore + 1, "midiCcSeen increments on every CC, learn or not");
+        expect (telemetry.lastCcNumber.load() == 20 && telemetry.lastCcChannel.load() == 1,
+                "telemetry records the last CC number/channel seen");
+
+        // CC on a non-default channel (controllers commonly aren't on ch 1).
+        learn.armLearn (id::filter1Cutoff);
+        midi.addEvent (juce::MidiMessage::controllerEvent (5, 74, 10), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+        expect (learn.getAssignedCC (id::filter1Cutoff) == 74, "CC bound regardless of MIDI channel (ch 5)");
+        learn.clearAll();
+
+        // Commonly special-cased controllers (mod wheel CC1, volume CC7,
+        // sustain CC64) must bind and apply exactly like any other CC.
+        for (const int cc : { 1, 7, 64 })
+        {
+            learn.armLearn (id::filter1Cutoff);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, cc, 5), 0);
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            expect (learn.getAssignedCC (id::filter1Cutoff) == cc,
+                    "CC " + juce::String (cc) + " binds like any other controller");
+
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, cc, 127), 0);
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            // Message-thread hop for setValueNotifyingHost; setValue() itself
+            // (what cutoffParam->getValue() reads) is synchronous -- see
+            // MidiLearnManager::processMidi().
+            expect (cutoffParam->getValue() > 0.99f,
+                    "CC " + juce::String (cc) + " still moves the mapped parameter");
+            learn.clearAll();
+        }
+
+        // CC arriving with oversampling engaged -- capture reads the raw
+        // host-domain MidiBuffer before it is ever scaled into the
+        // (possibly oversampled) engine domain, so this must behave
+        // identically to 1x.
+        {
+            spa::SPASynthProcessor osProc;
+            setParam (osProc, id::oversampling, 1.0f);   // index 1 = 2x
+            osProc.prepareToPlay (48000.0, 512);
+            auto& osLearn = osProc.getMidiLearn();
+            auto* osCutoff = osProc.getAPVTS().getParameter (id::filter1Cutoff);
+
+            juce::AudioBuffer<float> osBuf (2, 512);
+            juce::MidiBuffer osMidi;
+            osLearn.armLearn (id::filter1Cutoff);
+            osMidi.addEvent (juce::MidiMessage::controllerEvent (1, 71, 90), 0);
+            osProc.processBlock (osBuf, osMidi);
+            osMidi.clear();
+            expect (osLearn.getAssignedCC (id::filter1Cutoff) == 71, "CC binds with 2x oversampling engaged");
+
+            osMidi.addEvent (juce::MidiMessage::controllerEvent (1, 71, 127), 0);
+            osProc.processBlock (osBuf, osMidi);
+            osMidi.clear();
+            expect (osCutoff->getValue() > 0.99f, "mapped CC still moves the parameter with 2x oversampling engaged");
+        }
+
+        // Badge wiring: applyMidiLearnMenuResult (the same path the menu
+        // uses) sets the tracking state the badge's timerCallback reads.
+        content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0));
+        if (content != nullptr)
+        {
+            content->applyMidiLearnMenuResult (1, id::filter1Cutoff);
+            expect (proc.getMidiLearn().isArmed() && proc.getMidiLearn().getArmedParamID() == id::filter1Cutoff,
+                    "badge-tracked arm reaches the same MidiLearnManager the DSP reads");
+            proc.getMidiLearn().cancelLearn();
+        }
     }
 
     // Every remaining juce::PopupMenu::showMenuAsync call site outside

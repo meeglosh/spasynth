@@ -15,6 +15,11 @@ MidiLearnManager::MidiLearnManager (juce::AudioProcessorValueTreeState& state)
             parametersByIndex.push_back (ranged);
 }
 
+MidiLearnManager::~MidiLearnManager()
+{
+    cancelPendingUpdate();
+}
+
 int MidiLearnManager::indexOfParam (const juce::String& paramID) const
 {
     for (size_t i = 0; i < parametersByIndex.size(); ++i)
@@ -135,10 +140,32 @@ void MidiLearnManager::processMidi (const juce::MidiBuffer& midi)
         const auto target = ccToParam[(size_t) cc].load();
         if (target >= 0)
         {
+            const auto normValue = (float) message.getControllerValue() / 127.0f;
             auto* param = parametersByIndex[(size_t) target];
-            param->setValueNotifyingHost ((float) message.getControllerValue() / 127.0f);
+
+            // setValue() is a plain write (no lock) -- the DSP reads this
+            // parameter's raw APVTS pointer directly, so it reacts this
+            // block. setValueNotifyingHost() additionally walks the
+            // parameter's listener list under a CriticalSection, which is
+            // not safe to take here (see the class comment) -- defer that
+            // half to the message thread.
+            param->setValue (normValue);
+
+            pendingApplyIndex.store (target, std::memory_order_relaxed);
+            pendingApplyValue.store (normValue, std::memory_order_relaxed);
+            triggerAsyncUpdate();   // safe from any thread
         }
     }
+}
+
+void MidiLearnManager::handleAsyncUpdate()
+{
+    const auto index = pendingApplyIndex.exchange (-1, std::memory_order_relaxed);
+    if (index < 0)
+        return;
+
+    const auto value = pendingApplyValue.load (std::memory_order_relaxed);
+    parametersByIndex[(size_t) index]->setValueNotifyingHost (value);
 }
 
 } // namespace spa

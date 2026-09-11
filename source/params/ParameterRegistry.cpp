@@ -254,6 +254,15 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::syncBeatsOverride), letter + "Sync Beats", section,
                    ParamKind::floatParam, { 0.0f, 64.0f, 0.25f }, 0.0f, "beats",
                    false, { .enabled = false } });
+    // Per-slot time signature for the beat-locked loop -- lets different
+    // sample oscillators run polyrhythmically against each other (e.g. a 3/4
+    // loop against a 4/4 loop). Index 0 = Host (follow the project); 1-7
+    // mirror global.timeSig's 7 choices. Not a mod destination, not
+    // randomized (see id::osc::timeSig).
+    p.push_back ({ pid (id::osc::timeSig), letter + "Time Sig", section,
+                   ParamKind::choiceParam, {}, 0.0f, "",
+                   false, { .enabled = false },
+                   { "Host", "4/4", "3/4", "6/8", "2/4", "5/4", "7/8", "12/8" } });
     p.push_back ({ pid (id::osc::grainSize), letter + "Grain Size", section,
                    ParamKind::floatParam, { 10.0f, 500.0f, 0.0f, 0.4f }, 80.0f, "ms",
                    true, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.3f } });

@@ -351,6 +351,7 @@ private:
         std::atomic<float>* rootNote = nullptr;
         std::atomic<float>* syncToBpm = nullptr;
         std::atomic<float>* syncBeatsOverride = nullptr;
+        std::atomic<float>* timeSig = nullptr;
         std::atomic<float>* grainPitch = nullptr;
         std::atomic<float>* analogShape = nullptr;
         std::atomic<float>* sub = nullptr;

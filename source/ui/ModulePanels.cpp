@@ -73,37 +73,17 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     loop = std::make_unique<Toggle> (apvts, pid (id::osc::loop), "LOOP");
     keytrackSample = std::make_unique<Toggle> (apvts, pid (id::osc::keytrack), "KEY");
     sync = std::make_unique<Toggle> (apvts, pid (id::osc::syncToBpm), "SYNC");
+    sync->button.setTooltip ("Beat-lock the loop to the project tempo; the loop snaps to "
+                             "the sample's beat grid.");
 
-    // Readout: "~ 96 BPM  4 beats" from the loader's detection (dimmed "?"
-    // when confidence is low); double-click edits the beats override
-    // directly (juce::Label's built-in editor -- the documented TextEditor
-    // exception to the no-focus-grab rule).
-    syncReadout.setEditable (false, true, false);
-    syncReadout.setFont (metrics::labelFont());
-    syncReadout.setJustificationType (juce::Justification::centredLeft);
-    syncReadout.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-    syncReadout.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
-    syncReadout.setTooltip ("Sample tempo detected from its transients; SYNC stretches it to "
-                            "the project tempo. Double-click to set the sample's length in beats.");
-    syncReadout.onEditorShow = [this]
-    {
-        if (auto* ed = syncReadout.getCurrentTextEditor())
-            ed->setInputRestrictions (6, "0123456789.");
-    };
-    syncReadout.onTextChange = [this, pid]
-    {
-        const auto beats = syncReadout.getText().getDoubleValue();
-        if (auto* param = processor.getAPVTS().getParameter (pid (id::osc::syncBeatsOverride)))
-        {
-            const auto norm = param->convertTo0to1 (juce::jlimit (0.0f, 64.0f, (float) beats));
-            param->setValueNotifyingHost (norm);
-        }
-        updateSyncReadout();
-        // Hand focus back to the on-screen keyboard, like the preset
-        // browser's Esc path -- the editor just closed.
-        if (auto* kb = findParentComponentOfClass<juce::MidiKeyboardComponent>())
-            kb->grabKeyboardFocus();
-    };
+    // Per-oscillator time signature -- shown only once SYNC is on (it's
+    // meaningless while the loop free-runs unsynced). "Host" (index 0)
+    // follows the project/host signature; the rest let this one oscillator
+    // run its own meter for polyrhythms against the project or other slots.
+    timeSig = std::make_unique<Choice> (apvts, pid (id::osc::timeSig));
+    timeSig->combo.setTooltip ("This oscillator's own time signature for its beat-locked "
+                               "loop -- set it differently from the project (or other "
+                               "oscillators) for polyrhythms.");
 
     // LOOP ST/END only matter while looping is on -- independent of the
     // mode-driven visibility switch below, so it survives mode round-trips.
@@ -140,21 +120,17 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     addChildComponent (*keytrackSample);
     addChildComponent (*keytrackGranular);
     addChildComponent (*sync);
-    addChildComponent (syncReadout);
+    addChildComponent (*timeSig);
     addChildComponent (*analogShape);
     addChildComponent (*noiseColor);
 
     apvts.addParameterListener (pid (id::osc::mode), this);
     // LOOP gates SYNC's visibility (SYNC only makes sense as a loop feature).
     apvts.addParameterListener (pid (id::osc::loop), this);
-    // LOOP ST/END feed the SYNC readout's EFFECTIVE (snapped) loop length --
-    // refresh it whenever they move.
-    apvts.addParameterListener (pid (id::osc::loopStart), this);
-    apvts.addParameterListener (pid (id::osc::loopEnd), this);
+    // SYNC gates the per-oscillator time-signature dropdown's visibility.
+    apvts.addParameterListener (pid (id::osc::syncToBpm), this);
     processor.addChangeListener (this);
     handleAsyncUpdate();
-
-    startTimerHz (10);   // see timerCallback()
 }
 
 OscStrip::~OscStrip()
@@ -162,8 +138,7 @@ OscStrip::~OscStrip()
     processor.removeChangeListener (this);
     processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::mode), this);
     processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loop), this);
-    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loopStart), this);
-    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::loopEnd), this);
+    processor.getAPVTS().removeParameterListener (id::oscSlot (slot, id::osc::syncToBpm), this);
 }
 
 params::OscMode OscStrip::currentMode() const
@@ -228,17 +203,20 @@ void OscStrip::handleAsyncUpdate()
     keytrackSample->setVisible (m == params::OscMode::sample);
     keytrackGranular->setVisible (m == params::OscMode::granular);
 
-    // SYNC (and its readout) only exist as a LOOP feature -- Mike's call:
-    // "SYNC should only be available ... when LOOP is on". Turning LOOP off
-    // hides both immediately; the underlying param value is untouched (the
-    // engine itself is gated on loop&&sync, see SPASynthProcessor).
+    // SYNC only exists as a LOOP feature -- Mike's call: "SYNC should only
+    // be available ... when LOOP is on". Turning LOOP off hides it
+    // immediately; the underlying param value is untouched (the engine
+    // itself is gated on loop&&sync, see SPASynthProcessor). The per-
+    // oscillator time-signature dropdown goes one step further and only
+    // shows once SYNC is ALSO on (Mike: hidden, not dimmed, while SYNC is
+    // off -- it's meaningless until the loop is actually beat-locked).
     const auto loopOn = processor.getAPVTS()
                             .getRawParameterValue (id::oscSlot (slot, id::osc::loop))->load() >= 0.5f;
+    const auto syncOn = processor.getAPVTS()
+                            .getRawParameterValue (id::oscSlot (slot, id::osc::syncToBpm))->load() >= 0.5f;
     const auto showSync = m == params::OscMode::sample && loopOn;
     sync->setVisible (showSync);
-    syncReadout.setVisible (showSync);
-    if (showSync)
-        updateSyncReadout();
+    timeSig->setVisible (showSync && syncOn);
     analogShape->setVisible (m == params::OscMode::analog);
     noiseColor->setVisible (m == params::OscMode::noise);
     factoryButton.setVisible (m == params::OscMode::wavetable);
@@ -248,147 +226,6 @@ void OscStrip::handleAsyncUpdate()
 
     resized();
     repaint();
-}
-
-void OscStrip::updateSyncReadout()
-{
-    // Skip while the label's own editor is open -- overwriting the text the
-    // user is mid-typing would be a bad time.
-    if (syncReadout.getCurrentTextEditor() != nullptr)
-        return;
-
-    const auto sample = processor.getSample (slot);
-    const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
-    auto* apvts = &processor.getAPVTS();
-    const auto beatsOverride = apvts->getRawParameterValue (pid (id::osc::syncBeatsOverride))->load();
-    const auto syncOn = apvts->getRawParameterValue (pid (id::osc::syncToBpm))->load() >= 0.5f;
-
-    if (sample == nullptr)
-    {
-        syncReadout.setText ("--", juce::dontSendNotification);
-        return;
-    }
-
-    // The readout used to show only the SAMPLE's own detected/overridden
-    // tempo with no indication that's what it was -- Mike saw "137 BPM"
-    // while Logic ran at 120 and couldn't tell if that was a labelling
-    // mistake or an actual sync problem (it was neither -- SYNC just
-    // stretches the sample's own native tempo to the project's). Now the
-    // readout always names whose tempo it's showing, and SYNC-on makes the
-    // stretch itself visible as "native -> host".
-    const auto lengthSeconds = sample->lengthSeconds();
-    const auto lowConfidence = beatsOverride <= 0.0f && sample->bpmConfidence < 0.5f;
-
-    juce::String nativeBpmStr;
-    float beats = 0.0f;
-    if (beatsOverride > 0.0f)
-    {
-        // User-entered beat count is exact, not a detection -- no "~".
-        const auto bpm = lengthSeconds > 1.0e-6 ? 60.0 * beatsOverride / lengthSeconds : 0.0;
-        nativeBpmStr = juce::String (juce::roundToInt (bpm));
-        beats = beatsOverride;
-    }
-    else
-    {
-        nativeBpmStr = (lowConfidence ? juce::String ("~? ") : juce::String ("~"))
-                     + juce::String (juce::roundToInt (sample->detectedBpm));
-        beats = sample->detectedBeats;
-    }
-
-    // "2 bars" when the beat count divides evenly into whole bars at the
-    // current time signature, else "6 beats" -- matches how a clip launcher
-    // (Live) names loop lengths. SYNC off: the beat count is the SAMPLE's
-    // own total length (as before). SYNC on: LOOP+SYNC plays a beat-locked
-    // LOOP, not the whole sample, so what matters is the EFFECTIVE (snapped)
-    // loop length, not the file's total beat count -- computed the same way
-    // the engine snaps it (SamplePlayer::computeLoopBounds), via loopStart/
-    // loopEnd and the resolved native tempo.
-    const auto beatsPerBar = juce::jmax (1.0f, processor.getCurrentBeatsPerBar());
-
-    auto barsOrBeats = [&] (float beatCount)
-    {
-        const auto bars = beatCount / beatsPerBar;
-        const auto wholeBars = std::abs (bars - std::round (bars)) < 0.02f;
-        return wholeBars
-            ? juce::String (juce::roundToInt (bars)) + (juce::roundToInt (bars) == 1 ? " bar" : " bars")
-            : juce::String (beatCount, 1) + " beats";
-    };
-
-    juce::String text;
-    if (syncOn)
-    {
-        const auto hostBpm = processor.getCurrentBpm();
-
-        float loopBeats = beats;
-        const auto nativeBpm = lengthSeconds > 1.0e-6 ? 60.0 * beats / lengthSeconds : 0.0;
-        if (nativeBpm > 1.0e-6)
-        {
-            dsp::SamplePlayer::Params p;
-            p.sample = sample.get();
-            p.loopStartNorm = apvts->getRawParameterValue (pid (id::osc::loopStart))->load();
-            p.loopEndNorm = apvts->getRawParameterValue (pid (id::osc::loopEnd))->load();
-            p.snapToGrid = true;
-            p.gridBeatSeconds = 60.0 / nativeBpm;
-            p.gridOffsetSeconds = sample->firstOnsetSeconds;
-            double loopStartSmp = 0.0, loopEndSmp = 0.0;
-            dsp::SamplePlayer::effectiveLoopBoundsSamples (p, (double) sample->lengthSamples(),
-                                                            loopStartSmp, loopEndSmp);
-            loopBeats = (float) ((loopEndSmp - loopStartSmp) / (p.gridBeatSeconds * sample->sourceSampleRate));
-        }
-        const auto barsOrBeatsStr = barsOrBeats (loopBeats);
-        // Time signature string: from the global.timeSig choice when it's the
-        // active source, else approximated from the host's resolved
-        // beats-per-bar (assumes a quarter-note denominator -- correct for
-        // the common 4/4, 3/4, 2/4, 5/4 cases; a host reporting an eighth-
-        // based signature like 6/8 shows as its beats-per-bar equivalent,
-        // e.g. "3/4", which is musically the same loop length).
-        juce::String timeSigStr;
-        if (! processor.getHostReportsTimeSig())
-        {
-            int num = 4, den = 4;
-            params::id::timeSigNumDen ((int) processor.getAPVTS()
-                                            .getRawParameterValue (params::id::timeSig)->load(), num, den);
-            timeSigStr = juce::String (num) + "/" + juce::String (den);
-        }
-        else
-        {
-            timeSigStr = juce::String (juce::roundToInt (beatsPerBar)) + "/4";
-        }
-        text = nativeBpmStr + " \xe2\x86\x92 " + juce::String (juce::roundToInt (hostBpm))
-             + " BPM \xc2\xb7 " + barsOrBeatsStr + " \xc2\xb7 " + timeSigStr;
-    }
-    else
-    {
-        text = "Sample " + nativeBpmStr + " BPM \xc2\xb7 " + barsOrBeats (beats);
-    }
-
-    syncReadout.setColour (juce::Label::textColourId,
-                           lowConfidence ? currentTheme().textSecondary : currentTheme().textPrimary);
-    // Only setText/repaint when the text actually changed -- this is called
-    // from a 10Hz poll (see the Timer in the header) whenever SYNC is on and
-    // playing, so it must be cheap on every tick where the host tempo hasn't
-    // moved.
-    if (syncReadout.getText() != text)
-        syncReadout.setText (text, juce::dontSendNotification);
-}
-
-void OscStrip::timerCallback()
-{
-    if (! syncReadout.isVisible())   // Sample mode only (see handleAsyncUpdate)
-        return;
-
-    const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
-    const auto syncOn = processor.getAPVTS().getRawParameterValue (pid (id::osc::syncToBpm))
-                             ->load() >= 0.5f;
-    if (! syncOn)
-        return;
-
-    const auto hostBpm = processor.getCurrentBpm();
-    if (std::abs (hostBpm - lastPolledHostBpm) < 0.1)
-        return;
-
-    lastPolledHostBpm = hostBpm;
-    updateSyncReadout();
 }
 
 void OscStrip::chooseContent()
@@ -558,15 +395,22 @@ void OscStrip::resized()
     }
     else if (m == params::OscMode::sample)
     {
-        // SYNC/readout only show while LOOP is on -- when it's off, give
-        // LOOP/KEY the row instead of leaving dead space where SYNC was.
+        // SYNC only shows while LOOP is on -- when it's off, give LOOP/KEY
+        // the row instead of leaving dead space where SYNC was. The
+        // time-signature dropdown only shows once SYNC is ALSO on, taking
+        // the remaining width; when SYNC is on but timeSig is hidden
+        // (SYNC off), that space just stays empty -- the row lays out from
+        // sync->isVisible() either way.
         if (sync->isVisible())
         {
             loop->setBounds (extraRow.removeFromLeft (70));
             keytrackSample->setBounds (extraRow.removeFromLeft (70));
             sync->setBounds (extraRow.removeFromLeft (60));
-            extraRow.removeFromLeft (4);
-            syncReadout.setBounds (extraRow);
+            if (timeSig->isVisible())
+            {
+                extraRow.removeFromLeft (4);
+                timeSig->setBounds (extraRow);
+            }
         }
         else
         {

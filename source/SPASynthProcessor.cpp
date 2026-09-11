@@ -65,6 +65,7 @@ SPASynthProcessor::SPASynthProcessor()
         rs.rootNote    = apvts.getRawParameterValue (pid (params::id::osc::rootNote));
         rs.syncToBpm         = apvts.getRawParameterValue (pid (params::id::osc::syncToBpm));
         rs.syncBeatsOverride = apvts.getRawParameterValue (pid (params::id::osc::syncBeatsOverride));
+        rs.timeSig           = apvts.getRawParameterValue (pid (params::id::osc::timeSig));
         rs.grainPitch  = apvts.getRawParameterValue (pid (params::id::osc::grainPitch));
         rs.analogShape = apvts.getRawParameterValue (pid (params::id::osc::analogShape));
         rs.sub         = apvts.getRawParameterValue (pid (params::id::osc::sub));
@@ -1323,6 +1324,19 @@ void SPASynthProcessor::updateSharedState (int blockLength)
 
             slot.gridBeatSeconds = slot.nativeBpm > 1.0e-6 ? 60.0 / slot.nativeBpm : 0.5;
             slot.gridOffsetSeconds = slot.sample != nullptr ? slot.sample->firstOnsetSeconds : 0.0;
+
+            // Per-slot time signature for THIS slot's transport-lock bar
+            // origin (see SPASynthVoice's use of SlotStatic::beatsPerBar).
+            // "Host" (0) falls back to the block's resolved host/global
+            // beatsPerBar (blockBeatsPerBar, set above from the host's own
+            // reported signature or global.timeSig); 1-7 map to
+            // timeSigBeatsPerBar(choice-1) -- lets one oscillator run its
+            // own meter against the project (or another oscillator) for
+            // polyrhythms.
+            const auto slotTimeSigChoice = juce::roundToInt (rs.timeSig->load());
+            slot.beatsPerBar = slotTimeSigChoice > 0
+                ? params::id::timeSigBeatsPerBar (slotTimeSigChoice - 1)
+                : blockBeatsPerBar;
         }
     }
 
@@ -1416,6 +1430,22 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+
+    // MIDI Learn diagnostics: count controller messages exactly as they
+    // arrive from the host, before anything (keyboard-state merge,
+    // oversampling scale, arp rewrite) can touch the buffer. This is what
+    // lets the UI badge tell Mike whether CCs are reaching the plugin at all
+    // in Logic, independent of whether a learn is armed or bound.
+    for (const auto md : midi)
+    {
+        const auto m = md.getMessage();
+        if (m.isController())
+        {
+            telemetry.midiCcSeen.fetch_add (1, std::memory_order_relaxed);
+            telemetry.lastCcNumber.store (m.getControllerNumber(), std::memory_order_relaxed);
+            telemetry.lastCcChannel.store (m.getChannel(), std::memory_order_relaxed);
+        }
+    }
 
     // Merge the on-screen / computer keyboard's notes into the host MIDI stream
     // before anything consumes it. MidiKeyboardState briefly locks here; that is

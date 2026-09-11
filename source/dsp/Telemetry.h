@@ -95,6 +95,16 @@ struct Telemetry
     // pollModViz() in Controls.h.
     std::array<std::atomic<float>, params::maxModDests> modDestValue {};
     std::array<std::atomic<bool>, params::maxModDests> modDestActive {};
+
+    // MIDI Learn diagnostics: counts every controller message seen at the
+    // very top of processBlock, before any transformation (keyboard-state
+    // merge, oversampling scale, arp rewrite). Lets the UI show Mike whether
+    // CC messages are reaching the plugin at all in his host, independent of
+    // whether a learn is currently armed or a binding exists. lastCcNumber/
+    // lastCcChannel are cosmetic (last-write-wins is fine).
+    std::atomic<uint32_t> midiCcSeen { 0 };
+    std::atomic<int> lastCcNumber { -1 };
+    std::atomic<int> lastCcChannel { -1 };
 };
 
 } // namespace spa::dsp

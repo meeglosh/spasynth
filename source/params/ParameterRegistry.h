@@ -228,6 +228,15 @@ namespace id
         inline constexpr const char* syncToBpm         = "syncToBpm";
         inline constexpr const char* syncBeatsOverride = "syncBeatsOverride";
 
+        // Per-oscillator time signature for the beat-locked loop (LOOP+SYNC).
+        // Index 0 = "Host": follow the host's reported signature, or
+        // global.timeSig when the host reports none. Indices 1-7 mirror
+        // global.timeSig's own 7 choices 1:1 (see timeSigBeatsPerBar/
+        // timeSigNumDen, choiceIndex = this value - 1). APPEND-ONLY.
+        // Not a mod destination; randomizer disabled (meter changes are a
+        // deliberate creative choice, not something to roll randomly).
+        inline constexpr const char* timeSig = "timeSig";
+
         // Sample/SFX engine (granular)
         inline constexpr const char* grainSize    = "grainSize";
         inline constexpr const char* grainDensity = "grainDensity";

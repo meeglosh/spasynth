@@ -98,6 +98,8 @@ A large round of features and fixes from our testers' playtest sessions.
 - If a preset's sound file can't be found (a moved or renamed library
   folder, an unplugged drive), the strip now says so clearly instead of
   reporting an unrecognized audio format.
+- The plugin window now opens at a size that fits the screen it appears on,
+  and remembers the size you resize it to.
 
 **Notes for this build**
 

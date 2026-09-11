@@ -107,18 +107,125 @@ public:
             const bool selected = (target.kind == Target::destination && &target == selectedDest)
                                 || (target.kind == Target::source && &target == selectedSource);
 
-            if (selected)
+            if (auto* slider = dynamic_cast<juce::Slider*> (c))
             {
-                g.setColour (t.assignSelected.withAlpha (0.9f * alpha));
-                g.drawRoundedRectangle (bounds.reduced (1.5f), 4.0f, 2.0f);
-                g.setColour (t.assignSelected.withAlpha (0.18f * alpha));
-                g.fillRoundedRectangle (bounds.reduced (1.5f), 4.0f);
+                if (slider->isRotary())
+                {
+                    paintKnobHalo (g, *slider, bounds, t, selected, alpha);
+                    continue;
+                }
             }
-            else
+
+            paintRectHalo (g, bounds, t, selected, alpha);
+        }
+    }
+
+    // Ring geometry mirrored from SPASynthLookAndFeel::drawRotarySlider so
+    // the halo hugs the ring exactly (bounds.reduced(2), radius = min/2,
+    // lineW clamp, arcRadius inset). Computed in component-local space then
+    // scaled/translated into overlay space (uniform scale only -- this UI
+    // never rotates components).
+    static void knobRingGeometry (juce::Slider& slider, juce::Point<float>& centreOut, float& outerRadiusOut)
+    {
+        const auto lb = juce::Rectangle<float> (0.0f, 0.0f, (float) slider.getWidth(),
+                                                 (float) slider.getHeight()).reduced (2.0f);
+        const auto radius = juce::jmin (lb.getWidth(), lb.getHeight()) * 0.5f;
+        const auto lineW = juce::jlimit (1.6f, 2.6f, radius * 0.12f);
+        const auto arcRadius = radius - lineW * 1.2f;
+        centreOut = lb.getCentre();
+        outerRadiusOut = arcRadius + lineW * 0.5f;
+    }
+
+    void paintKnobHalo (juce::Graphics& g, juce::Slider& slider, juce::Rectangle<float> overlayBounds,
+                        const Theme& t, bool selected, float alpha)
+    {
+        juce::Point<float> centreLocal;
+        float ringOuterLocal = 0.0f;
+        knobRingGeometry (slider, centreLocal, ringOuterLocal);
+
+        const auto w = (float) juce::jmax (1, slider.getWidth());
+        const auto h = (float) juce::jmax (1, slider.getHeight());
+        const auto scaleX = overlayBounds.getWidth() / w;
+        const auto scaleY = overlayBounds.getHeight() / h;
+        const auto scale = 0.5f * (scaleX + scaleY);   // uniform in practice
+
+        const auto centre = overlayBounds.getTopLeft() + juce::Point<float> (centreLocal.x * scaleX,
+                                                                               centreLocal.y * scaleY);
+        const auto ringOuter = ringOuterLocal * scale;
+
+        constexpr int steps = 7;
+        constexpr float haloExtra = 13.0f;   // total halo reach beyond the ring, px
+
+        if (selected)
+        {
+            // Solid inner ring, legible and unambiguous...
+            g.setColour (t.assignSelected.withAlpha (0.95f * alpha));
+            g.drawEllipse (centre.x - ringOuter, centre.y - ringOuter, ringOuter * 2.0f, ringOuter * 2.0f, 2.0f);
+            // ...plus a lighter halo emanating outward, same falloff shape as
+            // the unselected pulse but a gentler peak (the ring already reads).
+            for (int i = 1; i <= steps; ++i)
             {
-                const float pulse = 0.25f + 0.55f * pulsePhase01();
-                g.setColour (t.assignGlow.withAlpha (pulse * alpha));
-                g.drawRoundedRectangle (bounds.reduced (1.0f), 4.0f, 2.0f);
+                const float f = (float) i / (float) steps;             // 0..1 outward
+                const float r = ringOuter + f * haloExtra;
+                const float a = 0.30f * std::exp (-3.0f * f * f);      // gaussian-ish falloff
+                g.setColour (t.assignSelected.withAlpha (a * alpha));
+                g.drawEllipse (centre.x - r, centre.y - r, r * 2.0f, r * 2.0f, 1.4f);
+            }
+        }
+        else
+        {
+            const float pulse = 0.35f + 0.65f * pulsePhase01();
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float f = (float) i / (float) steps;
+                const float r = ringOuter + f * haloExtra;
+                const float a = pulse * 0.5f * std::exp (-3.2f * f * f);
+                g.setColour (t.assignGlow.withAlpha (a * alpha));
+                g.drawEllipse (centre.x - r, centre.y - r, r * 2.0f, r * 2.0f, 1.6f);
+            }
+        }
+    }
+
+    void paintRectHalo (juce::Graphics& g, juce::Rectangle<float> bounds, const Theme& t,
+                        bool selected, float alpha)
+    {
+        // Pill shape for linear sliders (matrix depth column): full-radius
+        // rounded corners. Everything else (menus/tabs/panels/toggles) gets
+        // a modest corner radius. Either way the blur is the same recipe:
+        // several expanding strokes with decreasing alpha and growing corner
+        // radius, so the edge reads as feathered rather than a hard outline.
+        const bool pill = bounds.getHeight() < bounds.getWidth() * 0.6f && bounds.getHeight() > 0.0f
+                        && bounds.getHeight() <= 28.0f;
+        const float baseCorner = pill ? bounds.getHeight() * 0.5f : 4.0f;
+
+        constexpr int steps = 6;
+        constexpr float blurExtra = 12.0f;   // ~1.5x the old single-stroke halo
+
+        if (selected)
+        {
+            g.setColour (t.assignSelected.withAlpha (0.9f * alpha));
+            g.drawRoundedRectangle (bounds.reduced (1.5f), baseCorner, 2.0f);
+            g.setColour (t.assignSelected.withAlpha (0.18f * alpha));
+            g.fillRoundedRectangle (bounds.reduced (1.5f), baseCorner);
+            for (int i = 1; i <= steps; ++i)
+            {
+                const float f = (float) i / (float) steps;
+                const auto b = bounds.expanded (f * blurExtra);
+                const float a = 0.16f * std::exp (-3.0f * f * f);
+                g.setColour (t.assignSelected.withAlpha (a * alpha));
+                g.drawRoundedRectangle (b, baseCorner + f * blurExtra, 1.4f);
+            }
+        }
+        else
+        {
+            const float pulse = 0.35f + 0.65f * pulsePhase01();
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float f = (float) i / (float) steps;
+                const auto b = bounds.expanded (f * blurExtra);
+                const float a = pulse * 0.5f * std::exp (-3.0f * f * f);
+                g.setColour (t.assignGlow.withAlpha (a * alpha));
+                g.drawRoundedRectangle (b, baseCorner + f * blurExtra, 1.6f);
             }
         }
     }

@@ -2055,6 +2055,46 @@ void ContentComponent::saveUserPreset()
 
 // ============================ SPASynthEditor ================================
 
+namespace
+{
+    // Display to fit against: the editor's own peer if it has one yet (a
+    // host may construct off-screen first), else the display under the
+    // mouse, else the main display. juce::Displays never returns nullptr
+    // for getPrimaryDisplay() unless there are literally no connected
+    // displays (e.g. headless test runs), which callers below handle.
+    const juce::Displays::Display* displayForFit (juce::Component& editor)
+    {
+        auto& displays = juce::Desktop::getInstance().getDisplays();
+
+        if (auto* peer = editor.getPeer())
+            if (auto* d = displays.getDisplayForRect (peer->getBounds()))
+                return d;
+
+        if (auto* d = displays.getDisplayForPoint (juce::Desktop::getMousePosition()))
+            return d;
+
+        return displays.getPrimaryDisplay();
+    }
+}
+
+// Largest scale <= 1.0, quantised down to 0.05 steps so the result still
+// fits, that lets baseW x baseH (plus the host-chrome allowance below) sit
+// inside userArea; clamped to the constrainer's own minimum (0.4).
+float SPASynthEditor::scaleThatFits (juce::Rectangle<int> userArea, int baseW, int baseH)
+{
+    constexpr double hostChromeHeight = 140.0;   // DAW/plugin-window chrome allowance
+    constexpr double hostChromeWidth = 40.0;
+    constexpr double minScale = 0.4;             // matches configureConstrainer's floor
+
+    const auto availableH = (double) userArea.getHeight() - hostChromeHeight;
+    const auto availableW = (double) userArea.getWidth() - hostChromeWidth;
+
+    auto scale = juce::jmin (1.0, availableH / (double) baseH, availableW / (double) baseW);
+    scale = std::floor (juce::jmax (scale, 0.0) * 20.0) / 20.0;   // quantise, rounding down
+
+    return (float) juce::jmax (minScale, scale);
+}
+
 SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
     : juce::AudioProcessorEditor (p), arsenalProcessor (p)
 {
@@ -2126,22 +2166,35 @@ SPASynthEditor::SPASynthEditor (SPASynthProcessor& p)
     };
     sweepFocusGrab (*this);
 
-    // Restore the remembered window scale, clamped so the whole editor
-    // (including the resize corner) always fits the host's screen — on small
-    // displays the default must shrink, never open with edges off-screen.
-    auto maxScale = 2.0;
-    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-    {
-        const auto usable = display->userBounds;
-        maxScale = juce::jmin (
-            2.0,
-            (double) (usable.getWidth() - 40) / baseW,
-            (double) (usable.getHeight() - 140) / baseH);   // headroom for DAW chrome
-    }
+    // Fit-to-screen default (Mike, 2026-09-10): on first ever open there is
+    // no remembered scale, and even a remembered one might not fit THIS
+    // display (a laptop screen after being remembered on an external
+    // monitor) -- in both cases pick the largest scale that actually fits
+    // rather than opening with edges off-screen. A remembered scale that
+    // still fits is used as-is (still clamped to the constrainer's overall
+    // 0.4-2.0 range) -- fitting never overwrites what the user chose.
+    const auto* display = displayForFit (*this);
+    const auto userArea = display != nullptr
+        ? display->userBounds.getSmallestIntegerContainer()
+        : juce::Rectangle<int> (0, 0, 1920, 1080);   // headless fallback (e.g. test runs)
 
+    const auto rawMaxScale = juce::jmin (
+        1.0,
+        (double) (userArea.getHeight() - 140) / baseH,
+        (double) (userArea.getWidth() - 40) / baseW);
+
+    const auto hasRemembered = arsenalProcessor.getAPVTS().state.hasProperty ("uiScale");
     const auto saved = (double) arsenalProcessor.getAPVTS().state.getProperty ("uiScale", 1.0);
-    const auto scale = juce::jlimit (0.4, juce::jmax (0.4, maxScale), saved);
+
+    const auto scale = (hasRemembered && saved <= rawMaxScale + 0.001)
+        ? juce::jlimit (0.4, 2.0, saved)
+        : (double) scaleThatFits (userArea, baseW, baseH);
+
+    // This setSize() drives the first resized() call, which must NOT persist
+    // an auto-fitted size as if the user had chosen it.
+    suppressScaleSave = true;
     setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
+    suppressScaleSave = false;
 }
 
 // Fixes the window aspect ratio and size limits to the content's current base
@@ -2258,11 +2311,39 @@ void SPASynthEditor::resized()
     content->setTransform (juce::AffineTransform::scale (scale));
     content->setTopLeftPosition (0, 0);
 
-    arsenalProcessor.getAPVTS().state.setProperty ("uiScale", (double) scale, nullptr);
+    if (! suppressScaleSave)
+        arsenalProcessor.getAPVTS().state.setProperty ("uiScale", (double) scale, nullptr);
 }
 
 void SPASynthEditor::parentHierarchyChanged()
 {
+    // One-shot re-check: the host may have constructed the editor before it
+    // had a real peer/was actually on screen, so the constructor's fit could
+    // have used the wrong (or a fallback) display. Only refits if the
+    // window as it stands right now doesn't actually fit -- never fights an
+    // explicit setSize a test or host applied after construction.
+    if (! screenFitCheckDone && getPeer() != nullptr && isShowing())
+    {
+        screenFitCheckDone = true;
+
+        const auto* display = displayForFit (*this);
+        if (display != nullptr)
+        {
+            const auto userArea = display->userBounds.getSmallestIntegerContainer();
+
+            if (getWidth() > userArea.getWidth() - 40 || getHeight() > userArea.getHeight() - 140)
+            {
+                const auto baseW = content->getContentBaseWidth();
+                const auto baseH = content->getContentBaseHeight();
+                const auto scale = (double) scaleThatFits (userArea, baseW, baseH);
+
+                suppressScaleSave = true;
+                setSize (juce::roundToInt (baseW * scale), juce::roundToInt (baseH * scale));
+                suppressScaleSave = false;
+            }
+        }
+    }
+
    #if JUCE_MAC
     // macOS Tahoe's AUHostingService (Logic/GarageBand only — REAPER and the
     // standalone are fine) can open the editor with a stale hit-test region:

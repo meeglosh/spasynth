@@ -245,6 +245,13 @@ public:
     void resized() override;
     void parentHierarchyChanged() override;
 
+    // Largest scale <= 1.0 (quantised to 0.05 steps, floored so it still
+    // fits) such that content at baseW x baseH, including the host-chrome
+    // allowance (140 logical px tall, 40 wide -- title bar/menu/plugin
+    // chrome), fits inside userArea; never below the constrainer's own
+    // minimum (0.4, see configureConstrainer). Exposed for testing.
+    static float scaleThatFits (juce::Rectangle<int> userArea, int baseW, int baseH);
+
 private:
     void applyTheme();
     void configureConstrainer();   // aspect + size limits from content base size
@@ -256,6 +263,16 @@ private:
     juce::TooltipWindow tooltips { this };
     std::unique_ptr<ui::ContentComponent> content;
     bool hostViewWakeupDone = false;
+    // Set true only while a resize is our OWN auto-fit (construction, or the
+    // one-shot post-peer re-check below) -- resized() skips persisting
+    // uiScale while this is set, so an automatic fit is never mistaken for
+    // the user's chosen size (CLAUDE.md: remembered scale is only what the
+    // user actually resized to).
+    bool suppressScaleSave = false;
+    // One-shot: re-checks screen fit once the editor has a real peer/is
+    // actually on screen (a host may construct the editor off-screen first),
+    // and only refits if the window as it stands does not actually fit.
+    bool screenFitCheckDone = false;
     // The x delta (logical px, positive = moved left) actually applied by
     // the last successful native-window shift on drawer open -- see
     // NativeWindowShift.h. May be less than the requested width if clamped

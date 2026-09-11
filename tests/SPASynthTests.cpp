@@ -7993,6 +7993,156 @@ namespace
         editor->removeFromDesktop();
     }
 
+    // Mike (Logic): the blue glow used to be a rectangle around the knob's
+    // whole component bounds; wants it to emanate directly from the ring
+    // itself, blurred a bit more. Paints the overlay into an offscreen
+    // image with assign mode on and samples pixels around a rotary knob and
+    // a matrix DEST combo to prove: (a) circular halo hugging the ring,
+    // not the old rectangle, (b) the knob face/centre stays untouched,
+    // (c) the selected (yellow) knob gets a solid ring + halo, (d) the
+    // rect halo around a menu fades with distance (blur present). Also
+    // measures overlay paint time as a cheap perf guard.
+    static void assignGlowShapeTest()
+    {
+        std::cout << "assignGlowShapeTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::AssignOverlay* overlay = nullptr;
+        juce::Button* assignBtn = nullptr;
+        std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+        {
+            if (overlay == nullptr)
+                overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+            if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
+                assignBtn = dynamic_cast<juce::Button*> (&c);
+            for (auto* child : c.getChildren())
+                findParts (*child);
+        };
+        findParts (*editor);
+        expect (overlay != nullptr && assignBtn != nullptr, "overlay + ASSIGN button found");
+        if (overlay == nullptr || assignBtn == nullptr)
+            return;
+
+        assignBtn->triggerClick();
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+            while (! overlay->isAssignActive() && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        expect (overlay->isAssignActive(), "assign mode on for the shape test");
+
+        auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+        expect (cutoffKnob != nullptr, "filter 1 cutoff knob found");
+        if (cutoffKnob == nullptr)
+            return;
+
+        // Select it so we can also check the selected (yellow) halo shape.
+        {
+            const auto p = overlay->getLocalArea (cutoffKnob, cutoffKnob->getLocalBounds()).getCentre();
+            overlay->handleClickAt (p);
+        }
+        expect (overlay->isSelected (cutoffKnob), "cutoff knob selected for the shape test");
+
+        auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+        expect (row0Dest != nullptr, "row 0 DEST combo found");
+
+        // Measure just the overlay's own paint (not the whole editor tree --
+        // the brief's <8ms budget is for the overlay's per-frame cost at
+        // 30Hz, not a full editor repaint). Run it twice, keep the second
+        // (warm caches) as the reported figure.
+        const auto paintOverlayOnce = [&]
+        {
+            juce::Image img (juce::Image::ARGB, overlay->getWidth(), overlay->getHeight(), true);
+            juce::Graphics g (img);
+            overlay->paintEntireComponent (g, false);
+        };
+        paintOverlayOnce();
+        const auto t0 = juce::Time::getHighResolutionTicks();
+        paintOverlayOnce();
+        const auto t1 = juce::Time::getHighResolutionTicks();
+        const auto paintMs = juce::Time::highResolutionTicksToSeconds (t1 - t0) * 1000.0;
+        std::cout << "  AssignOverlay::paint time (all targets): " << paintMs << " ms\n";
+        expect (paintMs < 8.0, "overlay paint time under 8ms budget");
+
+        // Render the OVERLAY ALONE (not the editor -- its opaque panel
+        // background would make every pixel's composited alpha read 1.0
+        // regardless of the glow) into a transparent image, so a pixel's
+        // alpha directly measures whether the overlay painted anything
+        // there.
+        juce::Image overlayImg (juce::Image::ARGB, overlay->getWidth(), overlay->getHeight(), true);
+        {
+            juce::Graphics g (overlayImg);
+            overlay->paintEntireComponent (g, false);
+        }
+
+        const auto knobBoundsInOverlay = overlay->getLocalArea (cutoffKnob, cutoffKnob->getLocalBounds());
+        const auto centre = knobBoundsInOverlay.getCentre();
+        const auto w = (float) cutoffKnob->getWidth();
+        const auto h = (float) cutoffKnob->getHeight();
+        const auto radiusLocal = juce::jmin (w, h) * 0.5f - 2.0f;      // matches bounds.reduced(2)
+        const auto lineW = juce::jlimit (1.6f, 2.6f, radiusLocal * 0.12f);
+        const auto ringOuterLocal = radiusLocal - lineW * 1.2f + lineW * 0.5f;
+        const auto scale = (float) knobBoundsInOverlay.getWidth() / w;
+        const auto ringOuter = ringOuterLocal * scale;
+
+        const auto sampleAlpha = [&] (juce::Point<int> p) -> float
+        {
+            if (! overlayImg.getBounds().contains (p))
+                return 0.0f;
+            return overlayImg.getPixelAt (p.x, p.y).getFloatAlpha();
+        };
+
+        // (a) just outside the ring: non-zero alpha (halo present).
+        const auto justOutside = centre.translated ((int) (ringOuter + 4.0f), 0);
+        const auto justOutsideAlpha = sampleAlpha (justOutside);
+        expect (justOutsideAlpha > 0.02f, "halo pixel just outside the ring has alpha");
+
+        // (b) knob centre: untouched (the overlay leaves it fully transparent
+        // so the knob face beneath stays legible -- no fill over the face).
+        const auto centreAlpha = sampleAlpha (juce::Point<int> ((int) centre.x, (int) centre.y));
+        expect (centreAlpha < 0.02f, "knob centre left transparent by the overlay (face untouched)");
+
+        // (c) the OLD rectangular-halo corner of the knob's component
+        // bounds -- far outside the circular halo's reach (ring + ~13px) --
+        // must be transparent, proving the halo is circular, not a
+        // rectangle around the whole (often much wider/taller-than-the-
+        // circle) component bounds.
+        const auto rectCorner = knobBoundsInOverlay.getTopLeft().translated (2, 2);
+        const auto rectCornerAlpha = sampleAlpha (rectCorner);
+        expect (rectCornerAlpha < 0.02f,
+                "old rectangle corner (component bounds) is transparent -- halo is circular, not a rectangle");
+
+        // (d) selected knob: a stronger ring should exist right at ringOuter
+        // (the solid 2px inner ring), stronger than well outside it.
+        const auto onRing = centre.translated ((int) ringOuter, 0);
+        const auto farOut = centre.translated ((int) (ringOuter + 12.0f), 0);
+        expect (sampleAlpha (onRing) >= sampleAlpha (farOut),
+                "selected ring alpha at the ring >= well outside it (falloff)");
+
+        // (e) a matrix DEST combo (rect/pill halo): pixels just outside its
+        // bounds should have decreasing alpha with distance -- blur present.
+        if (row0Dest != nullptr)
+        {
+            const auto destBounds = overlay->getLocalArea (row0Dest, row0Dest->getLocalBounds()).toFloat();
+            const auto sample = [&] (float extra) -> float
+            {
+                const auto p = destBounds.getCentre().translated (destBounds.getWidth() * 0.5f + extra, 0.0f);
+                return sampleAlpha (juce::Point<int> ((int) p.x, (int) p.y));
+            };
+            const auto near = sample (2.0f);
+            const auto far = sample (10.0f);
+            expect (near >= far, "DEST combo halo alpha decreases with distance from the edge (blurred)");
+        }
+    }
+
     // Regression for a bug Mike hit in Logic: the ENV/LFO tab bars rendered
     // with generous, evenly-spaced default widths, then snapped to a
     // condensed/bunched-left layout the instant another tab was clicked.
@@ -8131,6 +8281,69 @@ namespace
     // peer (addToDesktop) so the shell's setSize() calls are actually
     // fulfilled -- this is the "host honors the resize" path (see
     // presetBrowserOverlayFallbackTest below for the refused-host path).
+    // Mike's laptop-screen report: the default window must fit the display
+    // it opens on. Covers both the pure scaleThatFits math (no editor/peer
+    // needed) and the real construction path (remembered scale cleared, so
+    // the constructor must compute a fit rather than default to 1.0).
+    static void editorFitsScreenTest()
+    {
+        std::cout << "editorFitsScreenTest\n";
+
+        const auto baseW = spa::ui::metrics::baseWidth;
+        const auto baseH = spa::ui::metrics::baseHeight;
+
+        // -- scaleThatFits() directly, synthetic displays --------------
+        {
+            const auto s1440 = spa::SPASynthEditor::scaleThatFits ({ 0, 0, 1440, 900 }, baseW, baseH);
+            expect (s1440 <= 0.8f + 0.001f, "1440x900 fits at <= 0.8");
+            expect ((float) baseW * s1440 <= 1440.0f - 40.0f, "1440x900: fitted width fits");
+            expect ((float) baseH * s1440 <= 900.0f - 140.0f, "1440x900: fitted height fits");
+
+            const auto sBig = spa::SPASynthEditor::scaleThatFits ({ 0, 0, 2560, 1440 }, baseW, baseH);
+            expect (sBig == 1.0f, "2560x1440: plenty of room, scale is 1.0 (never upscales)");
+
+            const auto sSmall = spa::SPASynthEditor::scaleThatFits ({ 0, 0, 1280, 720 }, baseW, baseH);
+            expect (sSmall >= 0.4f, "1280x720: never below the constrainer minimum");
+            const auto fittedW = (double) baseW * sSmall, fittedH = (double) baseH * sSmall;
+            expect (std::abs (sSmall - 0.4f) < 1.0e-6f || (fittedW <= 1280.0 - 40.0 && fittedH <= 720.0 - 140.0),
+                    "1280x720: fits, or is pinned at the minimum");
+        }
+
+        // -- real construction, remembered scale cleared ----------------
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        expect (! proc.getAPVTS().state.hasProperty ("uiScale"),
+                "fresh processor has no remembered scale (first-ever-open case)");
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pumpFor (200);
+
+        if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        {
+            const auto userArea = display->userBounds.getSmallestIntegerContainer();
+            expect (editor->getHeight() <= userArea.getHeight() - 140,
+                    "editor fits the main display vertically at construction");
+            expect (editor->getWidth() <= userArea.getWidth() - 40,
+                    "editor fits the main display horizontally at construction");
+
+            const auto aspect = (double) editor->getWidth() / (double) editor->getHeight();
+            const auto baseAspect = (double) baseW / (double) baseH;
+            expect (std::abs (aspect - baseAspect) / baseAspect < 0.01,
+                    "aspect ratio preserved within 1%");
+        }
+
+        editor->removeFromDesktop();
+    }
+
     static void presetBrowserWidensWindowTest()
     {
         std::cout << "presetBrowserWidensWindowTest\n";
@@ -8893,6 +9106,147 @@ namespace
         expect (seen.size() > 1, "chaos display paints non-uniform content");
     }
 
+    // Mike (Logic, 2026-09): "the entire interface is flickering when I play
+    // any notes" -- regressed since the ASSIGN overlay / organic-chaos trace /
+    // waveform zoom-pan / SYNC readout / octave highlight / EQ badge / TABLE
+    // dropdown / TabEngagementTracker / browser-widening round (9bc0114 ..
+    // 5703c28). Measures actual paint traffic on a real desktop editor with a
+    // note held (drives Telemetry->isLive() so every 24Hz DisplayComponent
+    // timer fires) vs. idle. A regression that invalidates a large fraction
+    // of the editor (or the whole thing) on every tick shows up as either a
+    // huge single clip, or a high total repainted-area-per-second, while
+    // playing.
+    static void paintRegionRegressionTest()
+    {
+        std::cout << "paintRegionRegressionTest\n";
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        // JUCE doesn't expose repaint()/ComponentPeer::repaint(area) calls to
+        // a test without editing JUCE itself, so measure the observable
+        // effect instead: render the editor into an offscreen image once per
+        // simulated tick and diff the changed-pixel bounding box against the
+        // previous frame. That bounding box is exactly "what actually got
+        // redrawn on screen" from the user's point of view -- what Mike is
+        // reporting as flicker.
+        struct FrameDiff
+        {
+            juce::Image prev;
+            int paints = 0;
+            juce::int64 totalDirtyArea = 0;      // sum of actually-changed pixels
+            double maxChangedFraction = 0.0;     // changed pixels / total, worst frame
+            bool sawFullBounds = false;          // >90% of pixels changed in one frame
+
+            void sample (juce::Component& editor)
+            {
+                juce::Image cur (juce::Image::ARGB, editor.getWidth(), editor.getHeight(), true);
+                {
+                    juce::Graphics g (cur);
+                    editor.paintEntireComponent (g, false);
+                }
+                if (prev.isValid())
+                {
+                    const int w = cur.getWidth(), h = cur.getHeight();
+                    juce::int64 changed = 0;
+                    int minX = w, minY = h, maxX = -1, maxY = -1;
+                    for (int y = 0; y < h; ++y)
+                        for (int x = 0; x < w; ++x)
+                            if (cur.getPixelAt (x, y).getARGB() != prev.getPixelAt (x, y).getARGB())
+                            {
+                                ++changed;
+                                minX = juce::jmin (minX, x); maxX = juce::jmax (maxX, x);
+                                minY = juce::jmin (minY, y); maxY = juce::jmax (maxY, y);
+                            }
+                    if (changed > 0)
+                    {
+                        ++paints;
+                        totalDirtyArea += changed;
+                        const double fraction = (double) changed / (double) ((juce::int64) w * h);
+                        maxChangedFraction = juce::jmax (maxChangedFraction, fraction);
+                        if (fraction > 0.90)
+                            sawFullBounds = true;
+                        if (getenv ("SPASYNTH_DEBUG_PAINT") != nullptr)
+                        {
+                            const juce::Rectangle<int> dirty { minX, minY, maxX - minX + 1, maxY - minY + 1 };
+                            std::cout << "    changed " << changed << " px (bbox " << dirty.toString()
+                                       << ") of " << w << "x" << h << "\n";
+                        }
+                    }
+                }
+                prev = cur;
+            }
+        };
+
+        const auto run = [&] (bool holdNote) -> FrameDiff
+        {
+            namespace id = spa::params::id;
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+
+            // Mirrors the session shape Mike reported flicker in: granular
+            // osc + chaos + delay + reverb all active, not a bare default
+            // patch, so the organic-chaos trace / granular grain-cloud
+            // animation / FX displays actually have something to animate.
+            setParam (proc, id::oscSlot (0, id::osc::mode),
+                      (float) (int) spa::params::OscMode::granular);
+            setParam (proc, id::chaos::enable, 1.0f);
+            setParam (proc, id::chaos::depth, 1.0f);
+            setParam (proc, id::chaos::rate, 8.0f);
+            setParam (proc, id::fx::delayEnable, 1.0f);
+            setParam (proc, id::fx::reverbEnable, 1.0f);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+            editor->addToDesktop (0);
+            editor->setVisible (true);
+            pumpFor (200);
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            if (holdNote)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+            FrameDiff diff;
+            diff.sample (*editor);   // baseline frame, not counted as a "paint"
+
+            // ~1s worth of ticks: keep audio flowing (so Telemetry stays live)
+            // and the message loop pumping (so every 24Hz timer actually
+            // fires), sampling a frame roughly every 42ms (~24Hz, matching
+            // the DisplayComponent timer Mike would perceive flicker at).
+            const auto deadline = juce::Time::getMillisecondCounter() + 1000u;
+            while (juce::Time::getMillisecondCounter() < deadline)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (42);
+                diff.sample (*editor);
+            }
+
+            editor->removeFromDesktop();
+            return diff;
+        };
+
+        const auto idle = run (false);
+        const auto playing = run (true);
+
+        std::cout << "  idle:    paints=" << idle.paints
+                   << " maxChangedFraction=" << idle.maxChangedFraction
+                   << " totalChangedPx/s=" << idle.totalDirtyArea << "\n";
+        std::cout << "  playing: paints=" << playing.paints
+                   << " maxChangedFraction=" << playing.maxChangedFraction
+                   << " totalChangedPx/s=" << playing.totalDirtyArea << "\n";
+
+        expect (! playing.sawFullBounds,
+                "no frame-to-frame diff while playing changes ~the entire editor's pixels");
+        expect (playing.maxChangedFraction < 0.35,
+                "max single-frame changed-pixel fraction while playing stays below 35% of the editor");
+    }
+
     // Tester request: enabled FX tabs bold their label so the user can see at
     // a glance which effects are engaged. isTabEngaged() is the generic hook
     // (ContentComponent maps tab name -> enable param id(s)); this exercises
@@ -9237,12 +9591,15 @@ int main (int argc, char* argv[])
     voicePanelEditorCloseTest();
     modAssignModeTest();
     modAssignFocusTest();
+    assignGlowShapeTest();
     tabLayoutInvarianceTest();
+    editorFitsScreenTest();
     presetBrowserWidensWindowTest();
     presetBrowserNativeShiftTest();
     presetBrowserOverlayFallbackTest();
     fxPanelLabelClippingTest();
     chaosDisplayPaintTest();
+    paintRegionRegressionTest();
     fxTabEngagedBoldTest();
     waveDisplayZoomTest();
 

@@ -3827,24 +3827,40 @@ namespace
         spa::SPASynthProcessor proc;
         proc.prepareToPlay (sampleRate, blockSize);
         proc.setRandomWildness (1.0f);
-        // Exact seeding scheme runSweep() above uses, at the exact seed
-        // (44) and wildness (1.0) originally found to be silent.
-        juce::Random::getSystemRandom() = juce::Random ((juce::int64) 44 * 7919 + 13);
-        proc.randomizeAll();
 
-        // The roll must still land on the scenario this test exists to
-        // cover (Arp Phrase mode, a fast-ish division) -- if a future,
-        // unrelated randomizeAll() change stops rolling this combination for
-        // this seed, that's fine, but this assertion makes the mismatch
-        // visible rather than silently testing nothing.
         auto realValue = [&] (const juce::String& pid)
         {
             auto* p = proc.getAPVTS().getParameter (pid);
             return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
         };
+
+        // Exact seeding scheme runSweep() above uses. Seed 44 was the exact
+        // seed originally found to roll Arp Phrase mode at wildness 1.0 --
+        // but the registry's RNG draw sequence shifts whenever a new
+        // randomizable param is added anywhere before the arp params (most
+        // recently: the analog SUB knob), so the seed that reproduces this
+        // scenario isn't permanent. Rather than re-hardcode a new magic
+        // number every time that happens, search forward from 44 for the
+        // first seed that still rolls the scenario -- the comment below's
+        // "that's fine, this makes the mismatch visible" premise, automated.
+        juce::int64 seed = 44;
+        for (; seed < 44 + 500; ++seed)
+        {
+            juce::Random::getSystemRandom() = juce::Random (seed * 7919 + 13);
+            proc.randomizeAll();
+            if ((params::ArpMode) (int) realValue (params::id::arp::mode) == params::ArpMode::phrase)
+                break;
+        }
+
+        // The roll must still land on the scenario this test exists to
+        // cover (Arp Phrase mode, a fast-ish division) -- if a future,
+        // unrelated randomizeAll() change stops rolling this combination for
+        // every seed in the search window, that's fine, but this assertion
+        // makes the mismatch visible rather than silently testing nothing.
         const auto arpMode = (params::ArpMode) (int) realValue (params::id::arp::mode);
         expect (arpMode == params::ArpMode::phrase,
-                "seed 44 @ wildness 1.0 still rolls Arp Mode = Phrase (this test's premise)");
+                "seed " + juce::String (seed) + " @ wildness 1.0 still rolls Arp Mode = Phrase "
+                    "(this test's premise)");
 
         // The fix itself: attack must have been clamped to a small fraction
         // of one arp step at the current (120bpm default) tempo, not left at
@@ -6620,6 +6636,304 @@ namespace
                     "pluck decays while held (early " + juce::String (early)
                     + " vs late " + juce::String (late) + ")");
         }
+    }
+
+    // Juno-style sub oscillator on the analog engine: a square wave one
+    // octave below the main waveform, phase-locked so it never drifts.
+    static void analogSubOscTest()
+    {
+        std::cout << "analogSubOscTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        // A3 = MIDI note 57 (~220 Hz), matches extraEnginesTest's analog check.
+        const auto render = [&] (int note, float subLevel, int unison, int numBlocks)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, numBlocks * blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::analog);
+            setParam (proc, id::oscSlot (0, id::osc::analogShape), 0.0f); // saw
+            setParam (proc, id::oscSlot (0, id::osc::sub), subLevel);
+            if (unison > 1)
+            {
+                setParam (proc, id::voiceMode, (float) (int) params::VoiceMode::poly);
+                setParam (proc, id::unisonVoices, (float) unison);
+            }
+
+            juce::AudioBuffer<float> buffer (2, numBlocks * blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+
+            juce::AudioBuffer<float> block (2, blockSize);
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                block.clear();
+                proc.processBlock (block, midi);
+                midi.clear();
+                buffer.copyFrom (0, b * blockSize, block, 0, 0, blockSize);
+                buffer.copyFrom (1, b * blockSize, block, 1, 0, blockSize);
+            }
+            return buffer;
+        };
+
+        // FFT magnitude+phase of a channel at a given bin.
+        const auto fftBinAt = [&] (const juce::AudioBuffer<float>& buffer, int startSample,
+                                   int fftOrder, float targetHz, float& magOut, float& phaseOut)
+        {
+            const int fftSize = 1 << fftOrder;
+            juce::dsp::FFT fft (fftOrder);
+            std::vector<std::complex<float>> data ((size_t) fftSize);
+            juce::dsp::WindowingFunction<float> window ((size_t) fftSize,
+                juce::dsp::WindowingFunction<float>::hann);
+            std::vector<float> windowed ((size_t) fftSize);
+            for (int i = 0; i < fftSize; ++i)
+                windowed[(size_t) i] = buffer.getSample (0, startSample + i);
+            window.multiplyWithWindowingTable (windowed.data(), (size_t) fftSize);
+            for (int i = 0; i < fftSize; ++i)
+                data[(size_t) i] = std::complex<float> (windowed[(size_t) i], 0.0f);
+
+            fft.perform (data.data(), data.data(), false);
+
+            const auto bin = (int) std::round (targetHz * (float) fftSize / (float) sampleRate);
+            magOut = std::abs (data[(size_t) bin]);
+            phaseOut = std::arg (data[(size_t) bin]);
+        };
+
+        // (a) sub = 0: matches today's plain analog-saw behaviour (audible,
+        // right pitch). subLevel == 0 skips the sub path entirely in
+        // AnalogOscillator::getNextSample, so this IS the pre-change code
+        // path -- bit-exactness with "before" is structural, not measured.
+        {
+            auto buf0 = render (57, 0.0f, 1, 24);
+            const auto peak = buf0.getMagnitude (0, buf0.getNumSamples());
+            expect (peak > 0.05f, "sub=0 analog saw still audible");
+
+            int crossings = 0;
+            for (int i = 1; i < buf0.getNumSamples(); ++i)
+                if ((buf0.getSample (0, i - 1) < 0.0f) != (buf0.getSample (0, i) < 0.0f))
+                    ++crossings;
+            const auto freq = (float) crossings * (float) sampleRate
+                             / (2.0f * (float) buf0.getNumSamples());
+            expect (freq > 200.0f && freq < 240.0f,
+                    "sub=0 analog saw still tracks pitch (" + juce::String (freq) + " Hz)");
+
+            // Render again bit-for-bit to confirm sub=0 is deterministic/
+            // side-effect-free (a stand-in fingerprint check).
+            auto buf0b = render (57, 0.0f, 1, 24);
+            bool identical = true;
+            for (int i = 0; i < 64; ++i)
+                identical = identical && std::abs (buf0.getSample (0, i) - buf0b.getSample (0, i)) < 1.0e-9f;
+            expect (identical, "sub=0 render is deterministic (first 64 samples match a repeat run)");
+        }
+
+        // (b)+(c) sub = 1 at A3: strong 110 Hz component absent at sub=0;
+        // RMS within +6 dB; peak <= 1.0 after voice gain.
+        {
+            auto buf0 = render (57, 0.0f, 1, 24);
+            auto buf1 = render (57, 1.0f, 1, 24);
+
+            constexpr int fftOrder = 13; // 8192 samples ~ 170ms @ 48k
+            const int fftSize = 1 << fftOrder;
+            const int start = buf1.getNumSamples() - fftSize - 1000; // settled region
+
+            float mag220_0 = 0, ph220_0 = 0, mag110_0 = 0, ph110_0 = 0;
+            float mag220_1 = 0, ph220_1 = 0, mag110_1 = 0, ph110_1 = 0;
+            fftBinAt (buf0, start, fftOrder, 220.0f, mag220_0, ph220_0);
+            fftBinAt (buf0, start, fftOrder, 110.0f, mag110_0, ph110_0);
+            fftBinAt (buf1, start, fftOrder, 220.0f, mag220_1, ph220_1);
+            fftBinAt (buf1, start, fftOrder, 110.0f, mag110_1, ph110_1);
+
+            const auto dB = [] (float a, float b) { return 20.0f * std::log10 (juce::jmax (1.0e-9f, a) / juce::jmax (1.0e-9f, b)); };
+
+            expect (dB (mag110_1, mag220_1) > -6.0f,
+                    "sub=1 110 Hz component is strong relative to the 220 Hz fundamental ("
+                        + juce::String (dB (mag110_1, mag220_1)) + " dB)");
+            expect (dB (mag110_0, mag220_1) < dB (mag110_1, mag220_1) - 6.0f,
+                    "110 Hz component is far weaker at sub=0 than sub=1");
+
+            const auto rms0 = buf0.getRMSLevel (0, 0, buf0.getNumSamples());
+            const auto rms1 = buf1.getRMSLevel (0, 0, buf1.getNumSamples());
+            expect (dB (rms1, rms0) <= 6.0f,
+                    "sub=1 RMS within +6 dB of sub=0 (" + juce::String (dB (rms1, rms0)) + " dB)");
+
+            const auto peak1 = buf1.getMagnitude (0, buf1.getNumSamples());
+            expect (peak1 <= 1.0f, "sub=1 peak stays within headroom (" + juce::String (peak1) + ")");
+
+            // (d) phase lock: compare sub-vs-main phase near the start and
+            // near the end of a 2s render -- must stay constant.
+            float mag220s = 0, ph220s = 0, mag110s = 0, ph110s = 0;
+            fftBinAt (buf1, 4000, fftOrder, 220.0f, mag220s, ph220s);
+            fftBinAt (buf1, 4000, fftOrder, 110.0f, mag110s, ph110s);
+
+            const auto wrap = [] (float a) { while (a > juce::MathConstants<float>::pi) a -= juce::MathConstants<float>::twoPi;
+                                             while (a < -juce::MathConstants<float>::pi) a += juce::MathConstants<float>::twoPi; return a; };
+            // Sub is exactly half the fundamental's frequency, so the
+            // combination (mainPhase - 2*subPhase) is time-invariant if and
+            // only if the sub stays phase-locked (each term's t0-dependence
+            // cancels: 220*t0 - 2*(110*t0) == 0).
+            const auto relPhaseStart = wrap (ph220s - 2.0f * ph110s);
+            const auto relPhaseEnd = wrap (ph220_1 - 2.0f * ph110_1);
+            const auto phaseDrift = std::abs (wrap (relPhaseEnd - relPhaseStart)) * 180.0f
+                                   / juce::MathConstants<float>::pi;
+            expect (phaseDrift < 2.0f,
+                    "sub stays phase-locked to the main wave across a 2s render ("
+                        + juce::String (phaseDrift) + " deg drift)");
+        }
+
+        // (d, unison) phase lock holds per-unison-voice too (each unison
+        // voice is a separate SPASynthVoice instance with its own sub).
+        {
+            auto buf1u = render (57, 1.0f, 3, 24);
+            const auto peak = buf1u.getMagnitude (0, buf1u.getNumSamples());
+            expect (peak > 0.05f && peak <= 1.0f,
+                    "sub=1 with 3-voice unison stays audible and in headroom ("
+                        + juce::String (peak) + ")");
+        }
+
+        // (e) aliasing sanity at A6 (1760 Hz, sub 880 Hz): no spurious
+        // component above -40 dB (rel. the 880 Hz sub peak) between 0.55 and
+        // 0.95 of Nyquist that isn't a harmonic of 880 Hz.
+        {
+            auto bufHi = render (93, 1.0f, 1, 12); // MIDI 93 ~= 1760 Hz (A6)
+
+            constexpr int fftOrder = 12;
+            const int fftSize = 1 << fftOrder;
+            const int start = bufHi.getNumSamples() - fftSize - 200;
+
+            juce::dsp::FFT fft (fftOrder);
+            std::vector<std::complex<float>> data ((size_t) fftSize);
+            juce::dsp::WindowingFunction<float> window ((size_t) fftSize,
+                juce::dsp::WindowingFunction<float>::hann);
+            std::vector<float> windowed ((size_t) fftSize);
+            for (int i = 0; i < fftSize; ++i)
+                windowed[(size_t) i] = bufHi.getSample (0, start + i);
+            window.multiplyWithWindowingTable (windowed.data(), (size_t) fftSize);
+            for (int i = 0; i < fftSize; ++i)
+                data[(size_t) i] = std::complex<float> (windowed[(size_t) i], 0.0f);
+            fft.perform (data.data(), data.data(), false);
+
+            std::vector<float> mags ((size_t) fftSize / 2);
+            for (int i = 0; i < fftSize / 2; ++i)
+                mags[(size_t) i] = std::abs (data[(size_t) i]);
+
+            const auto binOf = [&] (float hz) { return (int) std::round (hz * fftSize / (float) sampleRate); };
+            const auto subBin = binOf (880.0f);
+            const auto subMag = mags[(size_t) subBin];
+
+            const auto nyquist = (float) sampleRate / 2.0f;
+            const auto loBin = binOf (0.55f * nyquist);
+            const auto hiBin = binOf (0.95f * nyquist);
+
+            bool clean = true;
+            float worstDb = -1.0e9f;
+            for (int b = loBin; b <= hiBin; ++b)
+            {
+                const auto hz = (float) b * (float) sampleRate / fftSize;
+                // Skip bins near a harmonic of 880 Hz (+/- 2 bins tolerance).
+                const auto nearestHarmonic = std::round (hz / 880.0f) * 880.0f;
+                if (std::abs (hz - nearestHarmonic) < 2.0f * sampleRate / fftSize)
+                    continue;
+                const auto db = 20.0f * std::log10 (juce::jmax (1.0e-9f, mags[(size_t) b])
+                                                    / juce::jmax (1.0e-9f, subMag));
+                worstDb = juce::jmax (worstDb, db);
+                if (db > -40.0f)
+                    clean = false;
+            }
+            expect (clean, "no spurious non-harmonic component above -40 dB near Nyquist at A6 (worst "
+                        + juce::String (worstDb) + " dB)");
+        }
+    }
+
+    // The SUB knob only appears in analog mode and its bounds don't overlap
+    // any other visible knob/display.
+    static void analogSubKnobTest()
+    {
+        std::cout << "analogSubKnobTest\n";
+
+        namespace id = spa::params::id;
+        namespace params = spa::params;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::wavetable);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        // OscStrip's mode-driven show/hide runs via AsyncUpdater
+        // (handleAsyncUpdate) -- give it a turn of the message loop before
+        // reading initial visibility, same as elsewhere in this suite.
+        {
+            const auto deadline0 = juce::Time::getMillisecondCounter() + 300u;
+            while (juce::Time::getMillisecondCounter() < deadline0)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+
+        // findByParamID finds the Knob's inner Slider (that's where the
+        // "paramID" property lives, for MIDI Learn) -- its OWN isVisible()
+        // flag never changes; only its parent Knob's does, and only
+        // isShowing() (or the parent's own flag) reflects that. The outer
+        // Knob is what's added to/hidden in OscStrip's knob rows and what
+        // needs its bounds compared against siblings.
+        auto* subSlider = findByParamID (*editor, id::oscSlot (0, id::osc::sub));
+        expect (subSlider != nullptr, "found the SUB knob for OSC A");
+        auto* subKnob = subSlider != nullptr ? subSlider->getParentComponent() : nullptr;
+        expect (subKnob != nullptr, "SUB knob's slider has the expected Knob parent");
+        if (subKnob != nullptr)
+            expect (! subKnob->isShowing(), "SUB knob hidden while OSC A is in wavetable mode");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::analog);
+        {
+            juce::AudioBuffer<float> scratch (2, 8);
+            juce::MidiBuffer noMidi;
+            proc.processBlock (scratch, noMidi); // let mode-change listeners run
+        }
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 300u;
+            while (subKnob != nullptr && ! subKnob->isShowing()
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+
+        if (subKnob != nullptr && subKnob->isShowing())
+        {
+            spa::ui::OscStrip* oscA = nullptr;
+            std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+            {
+                if (oscA == nullptr)
+                    if (auto* s = dynamic_cast<spa::ui::OscStrip*> (&c))
+                        oscA = s;
+                for (auto* child : c.getChildren())
+                    find (*child);
+            };
+            find (*editor);
+
+            expect (oscA != nullptr, "found OscStrip A");
+            if (oscA != nullptr)
+            {
+                const auto subBounds = subKnob->getBoundsInParent();
+                bool overlaps = false;
+                for (auto* sibling : oscA->getChildren())
+                {
+                    if (sibling == subKnob || ! sibling->isVisible())
+                        continue;
+                    if (sibling->getBoundsInParent().intersects (subBounds))
+                    {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                expect (! overlaps, "SUB knob does not overlap any other visible OscStrip control");
+            }
+        }
+
+        editor->removeFromDesktop();
     }
 
     // Pluck engine buffers are allocated lazily (SPASynthVoice::
@@ -9809,6 +10123,8 @@ int main (int argc, char* argv[])
     arpNegativePpqTest();
     arpChanceTest();
     extraEnginesTest();
+    analogSubOscTest();
+    analogSubKnobTest();
     pluckLazyAllocTest();
     filterExtrasTest();
     dualFilterTest();

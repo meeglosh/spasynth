@@ -19,16 +19,23 @@ public:
     {
         sampleRate = newSampleRate;
         phase = 0.0;
+        subParity = false;
     }
 
-    void noteOn() noexcept { phase = 0.0; }
+    void noteOn() noexcept { phase = 0.0; subParity = false; }
 
     void setFrequency (float hz) noexcept
     {
         increment = juce::jlimit (0.0, 0.45, (double) hz / sampleRate);
     }
 
-    float getNextSample (Shape shape, float pulseWidth) noexcept
+    // subLevel 0..1: a square wave one octave below the main waveform,
+    // phase-locked to it (classic Juno-106 sub). subLevel == 0 skips the sub
+    // path entirely so today's output stays bit-exact when it's unused.
+    // subGain (~0.8) is tuned so subLevel==1 is roughly equal RMS to the main
+    // saw at unity, keeping the sum within existing headroom (see
+    // analogSubOscTest for the measured numbers).
+    float getNextSample (Shape shape, float pulseWidth, float subLevel = 0.0f) noexcept
     {
         const auto t = (float) phase;
         const auto dt = (float) increment;
@@ -61,14 +68,34 @@ public:
                 break;
         }
 
+        if (subLevel > 0.0f)
+        {
+            // Sub phase is derived directly from the main phase accumulator
+            // (half-rate square, toggling parity each main-cycle wrap) so it
+            // can never drift relative to the main wave, including through
+            // hard-sync/reset (noteOn resets both to 0 together).
+            const auto subT = 0.5f * t + (subParity ? 0.5f : 0.0f);
+            const auto subDt = dt * 0.5f;
+            auto subValue = subT < 0.5f ? 1.0f : -1.0f;
+            subValue += polyBlep (subT, subDt);
+            const auto subT2 = subT - 0.5f;
+            subValue -= polyBlep (subT2 - std::floor (subT2), subDt);
+
+            value += subValue * subLevel * subGain;
+        }
+
         phase += increment;
         if (phase >= 1.0)
+        {
             phase -= 1.0;
+            subParity = ! subParity;
+        }
 
         return value;
     }
 
 private:
+    static constexpr float subGain = 0.8f;
     static float polyBlep (float t, float dt) noexcept
     {
         if (dt <= 0.0f)
@@ -89,6 +116,7 @@ private:
     double sampleRate = 48000.0;
     double phase = 0.0;
     double increment = 0.0;
+    bool subParity = false;
 };
 
 // ================================ 2-op FM ===================================

@@ -697,7 +697,8 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                     {
                         const auto v = analogOscs[(size_t) s].getNextSample (
                             (AnalogOscillator::Shape) stat.analogShape,
-                            slotPulseWidth[(size_t) s]);
+                            slotPulseWidth[(size_t) s],
+                            stat.subLevel);
                         l = v * slotPanL[(size_t) s];
                         r = v * slotPanR[(size_t) s];
                         break;

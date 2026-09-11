@@ -4,6 +4,9 @@
 
 A large round of features and fixes from our testers' playtest sessions.
 
+- Analog oscillators gain a SUB knob: a square wave one octave below the
+  main waveform, phase-locked so it never drifts, just like the classic
+  sub-oscillator slider on a vintage analog synth.
 - Sample oscillators gain a SYNC option that time-stretches a loaded sample
   to your project's tempo while keeping its pitch, using the sample's own
   detected tempo (which you can edit if we guessed wrong), so you can play

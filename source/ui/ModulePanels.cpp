@@ -119,6 +119,7 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     keytrackGranular = std::make_unique<Toggle> (apvts, pid (id::osc::keytrack), "KEY");
 
     analogKnobs.push_back (knob (pid (id::osc::pulseWidth), "PW"));
+    analogKnobs.push_back (knob (pid (id::osc::sub), "SUB"));
     analogShape = std::make_unique<Choice> (apvts, pid (id::osc::analogShape));
 
     fmKnobs.push_back (knob (pid (id::osc::fmRatio), "RATIO"));

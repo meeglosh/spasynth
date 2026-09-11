@@ -51,6 +51,7 @@ struct SharedState
         double nativeBpm = 120.0;
 
         int analogShape = 0;
+        float subLevel = 0.0f;
         float fmRatio = 2.0f;
         int noiseColor = 0;
     };

@@ -342,6 +342,7 @@ private:
         std::atomic<float>* syncBeatsOverride = nullptr;
         std::atomic<float>* grainPitch = nullptr;
         std::atomic<float>* analogShape = nullptr;
+        std::atomic<float>* sub = nullptr;
         std::atomic<float>* fmRatio = nullptr;
         std::atomic<float>* noiseColor = nullptr;
     };

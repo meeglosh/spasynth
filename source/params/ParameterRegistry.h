@@ -232,6 +232,9 @@ namespace id
         // Analog / FM / Noise / Pluck engines
         inline constexpr const char* analogShape  = "analogShape";
         inline constexpr const char* pulseWidth   = "pulseWidth";
+        // Juno-style sub oscillator: a square wave one octave below the main
+        // analog waveform, phase-locked to it. Not a mod destination.
+        inline constexpr const char* sub          = "sub";
         inline constexpr const char* fmRatio      = "fmRatio";
         inline constexpr const char* fmIndex      = "fmIndex";
         inline constexpr const char* noiseColor   = "noiseColor";

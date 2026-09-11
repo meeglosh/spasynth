@@ -261,6 +261,12 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true },
                    { "Saw", "Square", "Pulse", "Triangle", "Sine" } });
+    // Juno-style sub: square wave one octave down, phase-locked to the main
+    // analog waveform. Low-biased randomization so most rolls stay subtle.
+    p.push_back ({ pid (id::osc::sub), letter + "Sub", section,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
+                            .biasStrength = 0.5f }, {}, true });
     p.push_back ({ pid (id::osc::fmRatio), letter + "FM Ratio", section,
                    ParamKind::floatParam, { 0.5f, 8.0f, 0.5f }, 2.0f, "x",
                    false, { .enabled = true, .biasCentre = 0.25f, .biasStrength = 0.4f } });

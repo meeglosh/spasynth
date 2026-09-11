@@ -66,6 +66,7 @@ SPASynthProcessor::SPASynthProcessor()
         rs.syncBeatsOverride = apvts.getRawParameterValue (pid (params::id::osc::syncBeatsOverride));
         rs.grainPitch  = apvts.getRawParameterValue (pid (params::id::osc::grainPitch));
         rs.analogShape = apvts.getRawParameterValue (pid (params::id::osc::analogShape));
+        rs.sub         = apvts.getRawParameterValue (pid (params::id::osc::sub));
         rs.fmRatio     = apvts.getRawParameterValue (pid (params::id::osc::fmRatio));
         rs.noiseColor  = apvts.getRawParameterValue (pid (params::id::osc::noiseColor));
 
@@ -1304,6 +1305,7 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.rootNote    = (int) rs.rootNote->load();
         slot.grainPitch  = rs.grainPitch->load();
         slot.analogShape = (int) rs.analogShape->load();
+        slot.subLevel    = rs.sub->load();
         slot.fmRatio     = rs.fmRatio->load();
         slot.noiseColor  = (int) rs.noiseColor->load();
 

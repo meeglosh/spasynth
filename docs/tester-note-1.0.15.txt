@@ -1,0 +1,30 @@
+SPASynth 1.0.15 - what's new since the last build you tested
+
+Fixes you asked for
+- Reverb: new engine based on the classic plate design. Smoother, more natural tail in all five modes.
+- Reverb MIX (and every other MIX knob) now reads in percent. 50% is an exact half/half blend, so the knob is no longer oversensitive. Factory presets were retuned to match.
+- Library folder of loose WAVs now works with SET LIBRARY, and presets tell you plainly when a sound file can't be found instead of "unrecognized audio format".
+- Waveform display: scroll or pinch to zoom, drag to pan, double-click to reset. Loop points stay lined up.
+- Computer-keyboard playing: Z and X shift the octave (also the -/+ buttons on the keyboard strip).
+- Sample loops that stopped after one pass when the loop end sat at the end of the file.
+- Turning LATCH off now stops the arp immediately (unless keys are still held).
+- MIDI Learn: fixed a case where an armed learn never completed. While armed, the header shows what your controller is actually sending (notes, bend, aftertouch, CC).
+- Recording-crash fix (from 1.0.14): the crash when recording a MIDI track with an arp preset during count-in.
+
+New features
+- SUB knob on the analog oscillator (square, one octave down).
+- Sample SYNC (shown when LOOP is on): beat-snaps the loop, stretches it to project tempo without changing pitch, and locks to the transport like a clip launcher. Each sample slot can pick its own time signature for polyrhythms.
+- Wavetable TABLE menu: Basic Shapes, Supersaw, PWM, Formant, Additive, Unison Spread, Sync Sweep, Bells. Your own wavetable files still load as before.
+- DIST gains a Crush (bit crusher) type.
+- EQ: right-click a node for Bell, Low/High Shelf, Low/High Cut, Notch, Band Pass, Tilt. Cuts have 6 to 48 dB/oct slopes. Double-click near the display's edge to drop in a cut.
+- ASSIGN mode in the mod matrix: everything assignable glows, click a control then a matrix row to wire the route.
+- Knobs being modulated now animate to show it. Enabled effects show bold tab names.
+- ORGANIC CHAOS display draws the real modulation scrolling in real time.
+- RANDOMIZE ALL can no longer produce a silent patch.
+- Preset browser opens beside the synth instead of covering it.
+- Window opens at a size that fits your screen and remembers resizes.
+- Factory presets rebuilt: Pulse presets are now a mix of the pack's sample plus a real synth layer, several distinct recipes per type, no arp, every preset verified audible. They refresh automatically on the next library scan; your own presets are untouched.
+
+Install notes
+- macOS: signed and notarized. If the new version doesn't show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

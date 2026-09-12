@@ -99,8 +99,7 @@ stapled, `spctl` accepted, md5 `31ae82e03ac4f84de4acbdf1f2ab3f0e`. **Windows
 exe from draft release `ci-windows-656a8bb`**, md5
 `93dc0fa8b67e49f61a464e4e15f9f1f6`. Both byte-identical across
 `dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.15/`.
-Repo is PUBLIC. Tester note drafted for Mike (in the session; condensed
-from the changelog).
+Repo is PUBLIC. Paste-ready tester note: `docs/tester-note-1.0.15.txt`.
 
 **Pending: Mike installs the final 1.0.15 pkg (absolute path:
 `sudo installer -pkg /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.15-macOS.pkg -target /`,

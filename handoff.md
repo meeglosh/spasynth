@@ -87,7 +87,8 @@ is the short version.
 1. Mike installs 1.0.15 (`sudo installer -pkg
    /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.15-macOS.pkg
    -target /`, Reset & Rescan, relaunch Logic), runs the gauntlet.
-2. Send both 1.0.15 installers + the tester note to Paul and Phil (nothing
+2. Send both 1.0.15 installers + the tester note
+   (`docs/tester-note-1.0.15.txt`, paste-ready) to Paul and Phil (nothing
    since 1.0.8 has gone out). Bump to 1.0.16 for anything after.
 3. Decide: one more tester round after that, or send the announcement
    directly once Mike's happy.

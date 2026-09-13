@@ -121,8 +121,13 @@ is the short version.
   Library` (Windows). Skip `__MACOSX`, `.DS_Store`; a 96k pack replacing a
   48k starter pack of the same name overwrites file-for-file (same names),
   so presets keep resolving. SPASynth rescans on next launch/Rescan.
-  Blocked as of 2026-09-13 on SPAStation's working tree having 32
-  uncommitted files (Download-all work) in the same files.
+  **DONE 2026-09-13: SPAStation main `3574085`** (on top of beta.13
+  `be4a602`, pushed): `electron/spasynth-{library,install,prefs}.cjs`,
+  IPC `spasynth:*`, Downloads-view buttons, 220 tests. Not yet in a
+  packaged SPAStation release (beta.13 predates it); needs an end-to-end
+  test (download Seagulls → Install → SPASynth Rescan). Note: Codex works
+  in the SPAStation repo too; check `git status` there before agents
+  touch it.
 - Open question (Mike): send SPASynth Pro buyers to the EB PDP instead of
   a separate Pro PDP.
 

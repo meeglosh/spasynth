@@ -82,6 +82,50 @@ is the short version.
   account-wide across all of Mike's repos, not per-repo, and the alert
   reflects a cycle-peak measurement, not live usage.
 
+## Library distribution: decisions of record (2026-09-13)
+
+- **SPASynth Pro = SPASynth + the Everything Bundle (EB) entitlement.** No
+  separate SPASynth Pro library exists any more. Standard, Pro and Upgrade
+  are the same binary; the difference is library access. Pro buyers become
+  EB owners and vice versa (same entitlements in Shopify + SPAStation);
+  existing EB owners get SPASynth Pro free; future EB includes it.
+- **Pro library = the original 24/96 pack zips**, delivered by SPAStation
+  (`/Users/mikejerugim/SPAStation`, Electron + Cloudflare Worker, streams
+  Shopify Digital Downloads; "Download all" exists). The 24/48 conversion,
+  the 11 Pro volumes, R2 and the links file are retired for Pro. SPASynth
+  plays 96k as-is (loader keeps source rate, voice resamples); cost is 2x
+  disk and 2x RAM (whole-file float in memory). **Accepted for now; add a
+  "load samples at 48k" preference only if testers hit memory trouble.**
+- **Standard's starter library stays 24/48** (5 sounds from every pack),
+  delivered via Shopify directly. It is an upsell bullet (Pro = full
+  fidelity originals) AND a marketing surface: **the starter grows with
+  every new pack release as a free update** (put this on the Standard PDP
+  and the website). So `package_library.sh`'s starter step must become
+  re-runnable as packs are added (today it skips if the zip exists);
+  library is 90 packs now (Seagulls, Antique Clock), our built `library/`
+  still has 88 and older pack folder names.
+- **Pack zip layout is fine for the scanner**: `<Pack>/Audio Files/*.wav`
+  plus jpg/pdf/.DS_Store; `scanLibrary` finds WAVs recursively per pack
+  folder and ignores the rest. Canonical pack folder name for the library
+  = the zip's top folder minus the "SilverPlatter Audio - " prefix (the
+  same rule `build_library.sh` uses); SPAStation's `catalog-releases.json`
+  `name` is the display name.
+- **SPAStation gets an "Install to SPASynth library" action** (Mike,
+  2026-09-13: build right away): after a verified download, extract the
+  zip into `<libraryRoot>/<Pack Name>/`, where libraryRoot is read from
+  SPASynth's settings file (`libraryRoot` in
+  `~/Library/Application Support/Silverplatter Audio/SPASynth/SPASynth.settings`
+  on macOS, `%APPDATA%\Silverplatter Audio\SPASynth\` on Windows) and
+  falls back to the default `/Users/Shared/Silverplatter Audio/SPASynth
+  Library` (macOS) / `C:\Users\Public\Documents\Silverplatter Audio\SPASynth
+  Library` (Windows). Skip `__MACOSX`, `.DS_Store`; a 96k pack replacing a
+  48k starter pack of the same name overwrites file-for-file (same names),
+  so presets keep resolving. SPASynth rescans on next launch/Rescan.
+  Blocked as of 2026-09-13 on SPAStation's working tree having 32
+  uncommitted files (Download-all work) in the same files.
+- Open question (Mike): send SPASynth Pro buyers to the EB PDP instead of
+  a separate Pro PDP.
+
 ## What's actually left before launch
 
 1. Mike installs 1.0.15 (`sudo installer -pkg

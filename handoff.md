@@ -92,7 +92,18 @@ is the short version.
 - **Pro library = the original 24/96 pack zips**, delivered by SPAStation
   (`/Users/mikejerugim/SPAStation`, Electron + Cloudflare Worker, streams
   Shopify Digital Downloads; "Download all" exists). The 24/48 conversion,
-  the 11 Pro volumes, R2 and the links file are retired for Pro. SPASynth
+  the 11 Pro volumes and the links file are retired for Pro. **R2 now holds
+  ONLY the Standard starter** (2026-09-13, Mike's call): the Pro volumes
+  were deleted from the bucket, and the starter is at
+  `https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip`
+  (bucket `spasynth`, folder `starter-library/`; re-upload with `rclone
+  copyto ... --s3-chunk-size 16M --s3-upload-concurrency 1
+  --multi-thread-streams 1` -- larger chunks/concurrency dropped the
+  connection twice on this link). Standard's Shopify product links that
+  URL; SPAStation fetches it for Standard owners. Pro and Upgrade link to
+  the Everything Bundle (Shopify links or SPAStation). The old
+  `SPASynth Pro Library - Downloads.html` pages were deleted from
+  `dist/shopify/`. SPASynth
   plays 96k as-is (loader keeps source rate, voice resamples); cost is 2x
   disk and 2x RAM (whole-file float in memory). **Accepted for now; add a
   "load samples at 48k" preference only if testers hit memory trouble.**

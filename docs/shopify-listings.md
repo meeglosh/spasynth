@@ -22,19 +22,18 @@ the sale would have cost.
 
 ## File attachments per product
 
-The 37 GB Pro library is too big for Shopify's per-product cap, so it lives on
-**Cloudflare R2** and is delivered as a small self-contained HTML download page
-(`SPASynth Pro Library - Downloads.html`, in `dist/shopify/`; buyers open it and
-click the 11 download buttons). The 11 parts
-are at `https://downloads.spasynth.com/pro-library/SPASynth-Pro-Library-Part-NN.zip`
-(NN = 01..11). Standard's 3 GB starter library still uploads to Shopify directly.
+Standard's starter library (5 sounds from every pack, 24/48, 3.4 GB, 90 packs)
+lives on **Cloudflare R2** at
+`https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip`
+and is linked from the Standard product rather than uploaded to Shopify. Pro and
+the Upgrade carry no library files: they are the Everything Bundle entitlement,
+and the 24/96 packs come through the bundle's own downloads or SPAStation.
 
-- **Standard:** `SPASynth-1.0.2-macOS.pkg`, `SPASynth-1.0.2-Windows.exe`,
-  `SPASynth Starter Library.zip`, `README.txt`, `QUICKSTART.txt`, `EULA.txt`
-- **Pro:** the pkg + exe + the 3 docs + `SPASynth Pro Library - Downloads.html`
-  (the library itself is on R2, NOT uploaded to Shopify)
-- **Upgrade:** `SPASynth Pro Library - Downloads.html` + `QUICKSTART.txt` +
-  `EULA.txt` (library only; buyer already owns the synth)
+- **Standard:** `SPASynth-<version>-macOS.pkg`, `SPASynth-<version>-Windows.exe`,
+  `README.txt`, `QUICKSTART.txt`, `EULA.txt`, plus the starter library link above
+- **Pro:** the pkg + exe + the 3 docs (library via the Everything Bundle)
+- **Upgrade:** `QUICKSTART.txt` + `EULA.txt` (buyer already owns the synth;
+  library via the Everything Bundle)
 
 macOS pkg is signed + notarized. Windows exe is unsigned by decision (SmartScreen
 "More info → Run anyway"). R2 has no egress fees, so customer downloads are ~free.

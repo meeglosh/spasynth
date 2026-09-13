@@ -62,31 +62,30 @@ Price = paid today; Compare-at = the higher struck-through number.
    folder (1.0.5 at time of writing), one at a time:
    - `SPASynth-<version>-macOS.pkg`
    - `SPASynth-<version>-Windows.exe`
-   - `SPASynth Starter Library.zip` (~3 GB, in the `Library` subfolder; if
-     that folder is empty, copy the zip in from `dist/library/SPASynth
-     Starter Library.zip` before uploading, and delete the copy afterward)
+   - The starter library is NOT uploaded to Shopify any more. It lives on
+     Cloudflare R2 at
+     `https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip`
+     (rebuilt by `scripts/build_starter.sh`, re-uploaded with `rclone copyto`
+     when packs are added). Link that URL from the product (SPAStation also
+     fetches it from there for Standard owners).
    - `README.txt`, `QUICKSTART.txt`, `EULA.txt`
    Never wrap them in one giant zip; attach individually.
 
 ## Part 4: Create SPASynth Pro
 
-The 37 GB Pro library is too big for Shopify, so it lives on Cloudflare R2 and
-is delivered as a small self-contained HTML page of download buttons
-(`SPASynth Pro Library - Downloads.html`; buyers open it and click the 11
-buttons). You do NOT upload the library to Shopify. (The Digital Products app
-has an "external URL" asset type, but it only supports Notion / Google
-Drive-Docs / Dropbox / YouTube / Vimeo / Figma etc., NOT a raw R2 link, so the
-HTML page is uploaded as a file asset instead.)
+SPASynth Pro is the synth plus the Everything Bundle. There is no separate Pro
+library any more: Pro buyers get the same 24/96 pack downloads as Everything
+Bundle owners, via the bundle's Shopify links or SPAStation. So the Pro product
+carries no library files and no download-links page.
 
 Repeat Parts 2 and 3 with:
 - Title `SPASynth Pro`; description = "2 · SPASynth Pro" section.
 - Price `499`, Compare-at `899`; URL handle `spasynth-pro`.
-- Files from the current `SPASynth-Pro-<version>/` folder (1.0.7 at time of
-  writing; all small, upload directly): pkg, exe, the 3 docs, and
-  `SPASynth Pro Library - Downloads.html`.
-- Do NOT upload the 11 Pro library zips at all, from anywhere (`Library/`
-  subfolder, `dist/library/`, wherever). The library is already on R2 at
-  downloads.spasynth.com; the links file gives buyers the download URLs.
+- Files from the current `SPASynth-Pro-<version>/` folder: pkg, exe, the 3
+  docs. Nothing else.
+- Grant the Everything Bundle entitlement to Pro buyers (SPAStation maps Pro
+  to the bundle; the Shopify side is whatever mechanism the store uses to
+  attach the bundle's downloads to this product).
 
 ## Part 5: Create the Standard to Pro Upgrade
 
@@ -94,8 +93,9 @@ Repeat Parts 2 and 3 with:
 - Title `SPASynth Standard to Pro Upgrade`; description = "3 · ... Upgrade".
 - Price `400`, Compare-at `750`; URL handle `spasynth-standard-to-pro-upgrade`.
 - Files from the current `SPASynth-Upgrade-<version>/` folder:
-  `SPASynth Pro Library - Downloads.html` + `QUICKSTART.txt` + `EULA.txt`. No
-  pkg/exe (upgraders already own the synth); no library upload (it is on R2).
+  `QUICKSTART.txt` + `EULA.txt`. No pkg/exe (upgraders already own the
+  synth); no library files. The upgrade is the Everything Bundle entitlement,
+  same as Pro above.
 - Honor system: Shopify cannot verify prior Standard ownership; fits the
   no-DRM stance.
 

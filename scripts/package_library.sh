@@ -1,4 +1,10 @@
 #!/bin/zsh
+# LEGACY — the per-pack zips and Pro volumes below are no longer shipped
+# (Pro is delivered by SPAStation as 24/96 originals via the Everything
+# Bundle, not zips built here). The starter library is now built directly
+# from the commercial pack zips by scripts/build_starter.sh. Kept for
+# history; behaviour unchanged.
+#
 # Packages the built SPASynth library (see build_library.sh) for delivery.
 #
 #   ./scripts/package_library.sh <library folder> <output folder>

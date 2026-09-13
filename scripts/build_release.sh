@@ -5,8 +5,13 @@
 #   ./scripts/build_release.sh [<library folder>]
 #   ./scripts/build_release.sh --stage-only <version>
 #
-# <library folder> defaults to ./library (the build_library.sh output). Pass
-# "-" to skip library packaging (much faster; installers + docs only).
+# <library folder> is IGNORED (kept only for CLI compatibility with older
+# invocations/muscle memory). The library step now calls
+# scripts/build_starter.sh, which builds the Standard starter library
+# directly from the commercial pack zips via the SPAStation catalog — there
+# is no more `library/` folder input. Pass "-" as this argument to skip the
+# library step entirely (much faster; installers + docs only) — that
+# skip semantics is unchanged.
 #
 # --stage-only <version> re-runs ONLY the Shopify-folder staging step (4)
 # against an already-built dist/installers/SPASynth-<version>-macOS.pkg —
@@ -16,8 +21,10 @@
 # Output layout (dist/):
 #   installers/SPASynth-<v>-macOS.pkg        (signed if identities are set —
 #                                             see installers/macos/build_installer.sh)
-#   library/packs/<Pack>.zip                 88 add-on packs
-#   library/SPASynth Starter Library.zip
+#   library/SPASynth Starter Library.zip     built by build_starter.sh from the
+#                                             commercial pack zips (Pro's full
+#                                             library ships separately via
+#                                             SPAStation, not from here)
 #   shopify/SPASynth-Standard-<v>/           ready-to-zip download folders
 #   shopify/SPASynth-Pro-<v>/
 #
@@ -123,7 +130,7 @@ fi
 
 # --- 3. Library packages --------------------------------------------------------
 if [[ "$LIBRARY" != "-" ]]; then
-    "$REPO_ROOT/scripts/package_library.sh" "$LIBRARY" "$DIST/library"
+    "$REPO_ROOT/scripts/build_starter.sh" --out "$DIST/library"
 fi
 
 # --- 4. Shopify download folders ------------------------------------------------

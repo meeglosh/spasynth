@@ -1291,9 +1291,12 @@ clangd/IDE diagnostics ("juce not found" etc.) — the build is the arbiter.
   `PresetBrowser` drawer, `ModulePanels`, `Displays` (telemetry scopes),
   `Controls.h` (Knob/Choice/Toggle with paramID props for MIDI Learn).
 - `tests/SPASynthTests.cpp` — the whole suite + `--snapshot` renderer.
-- `scripts/` — `build_library.sh` (zips→24/48 packs), `package_library.sh`
-  (pack zips + starter + Pro volumes; APFS-clone staging, idempotent),
-  `build_release.sh` (one-shot release + Shopify folders).
+- `scripts/` — `build_starter.sh` (Standard starter library, 5 sounds/pack
+  at 24/48, straight from the commercial pack zips via SPAStation's catalog;
+  re-runnable, manifest-diffed; `starter-pack-overrides.tsv` pins odd zips),
+  `build_library.sh` (zips→24/48 packs, now only for the `--real-library`
+  test), `package_library.sh` (LEGACY: Pro volumes retired, Pro ships via
+  SPAStation), `build_release.sh` (one-shot release + Shopify folders).
 - `installers/` — macOS pkg builder (unique per-component ids + signing
   hooks), Windows Inno `.iss`.
 - `packaging/` — customer docs (README/QUICKSTART/EULA),

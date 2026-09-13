@@ -1,0 +1,6 @@
+# Manual zip-path pins for catalog entries whose zipCandidates are stale and
+# whose display name doesn't match its Dropbox folder closely enough for the
+# name-guess fallback in build_starter.sh to find it. Tab-separated:
+# catalog-id<TAB>absolute path to the pack's distribution zip
+#
+waterfalls-creeks-and-rapids	/Users/mikejerugim/Library/CloudStorage/Dropbox-Flat7Inc./Michael Jerugim/Silverplatter/Packs/Waterfalls Creeks and Rapids/Zip for Distribution/SilverPlatter Audio - Waterfalls Creeks and Rapids.zip

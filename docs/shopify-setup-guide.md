@@ -13,9 +13,12 @@ the copy to paste lives in `docs/shopify-listings.md`. House style: no em dashes
    newest). Note: version folders are installer-iteration builds with an
    empty `Library/` subfolder inside them by design, to avoid keeping
    duplicate copies of the (large) library around on disk. The one and only
-   canonical copy of the packaged library zips lives in `dist/library/`
-   (built once by `scripts/package_library.sh`, never rebuilt if already
-   there). If a version folder's `Library/` is empty and you need a zip from
+   canonical copy of the starter zip lives in `dist/library/`, built by
+   `scripts/build_starter.sh` directly from the current commercial pack
+   catalog (so the starter grows automatically as new packs are released).
+   Re-running that same command later regenerates an updated starter zip you
+   can re-upload to the Standard product's Digital Downloads. If a version
+   folder's `Library/` is empty and you need a zip from
    it, copy it in from `dist/library/` for the upload, and delete it from the
    version folder again afterward so it doesn't linger as a duplicate.
 3. The copy: `docs/shopify-listings.md` (titles, descriptions, SEO, blurbs).

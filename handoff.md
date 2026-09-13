@@ -102,8 +102,26 @@ is the short version.
   every new pack release as a free update** (put this on the Standard PDP
   and the website). So `package_library.sh`'s starter step must become
   re-runnable as packs are added (today it skips if the zip exists);
-  library is 90 packs now (Seagulls, Antique Clock), our built `library/`
-  still has 88 and older pack folder names.
+  **DONE 2026-09-13: `scripts/build_starter.sh`** builds the starter
+  straight from the commercial pack zips using SPAStation's catalog map as
+  the pack list (`--catalog/--releases/--out/--overrides/--allow-missing`),
+  derives pack folder names with the SAME rule as SPAStation's installer
+  (zip top folder minus the company prefix, else catalog name), picks 5
+  sounds per pack by size spread, converts only uncached files into
+  `dist/starter-cache/`, and rezips only when the manifest
+  (`dist/library/SPASynth Starter Library.manifest.txt`) changes.
+  `build_release.sh` now calls it; `package_library.sh` is legacy. Current
+  starter: **90 packs / 450 sounds / 3.4 GB**, verified 5 WAVs per pack,
+  24/48, no junk. `scripts/starter-pack-overrides.tsv` pins zips the
+  catalog can't resolve (Waterfalls). Still unresolved: `glitch-percussive`
+  (catalog entry with no zip anywhere; needs a source zip in Dropbox or a
+  catalog fix). Gotchas learned: 56 of the 89 Dropbox zips are online-only
+  (~39 GB hydrates on first run; we freed 63 GB by deleting the retired
+  Pro volumes + per-pack zips from `dist/library/`, so `library/` at 37 GB
+  is now the only big local copy and only the `--real-library` test uses
+  it); uppercase `.WAV` and NFD-decomposed accented filenames both bit the
+  first run (fixed, case-insensitive + NFC-normalised). To ship a starter
+  update: run the script, re-upload the zip to the Standard product.
 - **Pack zip layout is fine for the scanner**: `<Pack>/Audio Files/*.wav`
   plus jpg/pdf/.DS_Store; `scanLibrary` finds WAVs recursively per pack
   folder and ignores the rest. Canonical pack folder name for the library

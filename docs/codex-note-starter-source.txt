@@ -1,0 +1,24 @@
+Note for Codex (SPAStation), 2026-09-13
+
+SPASynth Standard's starter library is now distributed two ways:
+- Shopify: the Standard product has a Digital Downloads External URL asset
+  (a Dropbox shared link). SPAStation's Shopify-stream path cannot follow
+  Dropbox external links.
+- For SPAStation, use the R2 copy instead:
+  https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip
+  size 3641410447 bytes, md5 0df041aed5ed66d7ab7cb759d6719f04
+  (sha256: compute on ingest; the file is byte-identical to the Dropbox one)
+
+Needed:
+1. Allow downloads.spasynth.com as a delivery source host (exact-host
+   allowlist) for this one catalog entry.
+2. Add a catalog entry for the SPASynth Standard starter library (kind sfx
+   so "Install to SPASynth library" is offered) mapped to the SPASynth
+   Standard product, with the R2 URL as its source and the hash registered
+   in shared/catalog-releases.json.
+3. SPASynth Pro / Upgrade map to the Everything Bundle entitlement, no
+   library entry of their own.
+4. The starter grows when packs are released; when it is regenerated the R2
+   object is replaced at the same URL and its hash changes, which is exactly
+   SPAStation's "updated release" signal.
+SPAStation remains recommended, not required, for SPASynth customers.

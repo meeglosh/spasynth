@@ -23,9 +23,11 @@ the sale would have cost.
 ## File attachments per product
 
 Standard's starter library (5 sounds from every pack, 24/48, 3.4 GB, 90 packs)
-lives on **Cloudflare R2** at
-`https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip`
-and is linked from the Standard product rather than uploaded to Shopify. Pro and
+is delivered from the Standard product as a Digital Downloads **External URL**
+(a Dropbox shared link to the evergreen file
+`Silverplatter/Packs/_SPASynth Starter Library/SPASynth Starter Library.zip`,
+overwritten in place on every rebuild so the link never changes). A copy on
+Cloudflare R2 (`downloads.spasynth.com/starter-library/`) serves SPAStation. Pro and
 the Upgrade carry no library files: they are the Everything Bundle entitlement,
 and the 24/96 packs come through the bundle's own downloads or SPAStation.
 

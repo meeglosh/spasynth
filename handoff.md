@@ -99,8 +99,16 @@ is the short version.
   (bucket `spasynth`, folder `starter-library/`; re-upload with `rclone
   copyto ... --s3-chunk-size 16M --s3-upload-concurrency 1
   --multi-thread-streams 1` -- larger chunks/concurrency dropped the
-  connection twice on this link). Standard's Shopify product links that
-  URL; SPAStation fetches it for Standard owners. Pro and Upgrade link to
+  connection twice on this link). Shopify Digital Downloads can't take a raw
+  R2 link and the 3.6 GB browser upload crashed in every browser, so the
+  Standard product uses an **External URL asset pointing at Dropbox**:
+  `https://www.dropbox.com/scl/fi/m0jgglmd4lek75e96x1my/SPASynth-Starter-Library.zip?rlkey=tfhahebjx5tr95ivgfdxnva7t&dl=0`
+  backed by the evergreen file
+  `Silverplatter/Packs/_SPASynth Starter Library/SPASynth Starter Library.zip`
+  (path-tied link; `build_starter.sh --publish` overwrites it in place, so
+  the link never changes -- NEVER move/rename that file). SPAStation should
+  fetch the starter from the R2 URL (Codex: allow downloads.spasynth.com as
+  a source). SPAStation is recommended, never required. Pro and Upgrade link to
   the Everything Bundle (Shopify links or SPAStation). The old
   `SPASynth Pro Library - Downloads.html` pages were deleted from
   `dist/shopify/`. SPASynth

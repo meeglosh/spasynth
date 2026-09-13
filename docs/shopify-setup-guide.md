@@ -62,12 +62,15 @@ Price = paid today; Compare-at = the higher struck-through number.
    folder (1.0.5 at time of writing), one at a time:
    - `SPASynth-<version>-macOS.pkg`
    - `SPASynth-<version>-Windows.exe`
-   - The starter library is NOT uploaded to Shopify any more. It lives on
-     Cloudflare R2 at
-     `https://downloads.spasynth.com/starter-library/SPASynth-Starter-Library.zip`
-     (rebuilt by `scripts/build_starter.sh`, re-uploaded with `rclone copyto`
-     when packs are added). Link that URL from the product (SPAStation also
-     fetches it from there for Standard owners).
+   - The starter library is NOT uploaded as a file (the 3.6 GB browser
+     upload crashes). Add an asset of type **External URL** pointing at the
+     Dropbox shared link of the evergreen file
+     `Silverplatter/Packs/_SPASynth Starter Library/SPASynth Starter Library.zip`:
+     `https://www.dropbox.com/scl/fi/m0jgglmd4lek75e96x1my/SPASynth-Starter-Library.zip?rlkey=tfhahebjx5tr95ivgfdxnva7t&dl=0`
+     `scripts/build_starter.sh` overwrites that file in place on every
+     rebuild, so the link never changes; never move or rename the file. A
+     copy also lives on R2 (`downloads.spasynth.com/starter-library/`) for
+     SPAStation.
    - `README.txt`, `QUICKSTART.txt`, `EULA.txt`
    Never wrap them in one giant zip; attach individually.
 

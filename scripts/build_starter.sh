@@ -54,6 +54,18 @@
 # "starter unchanged (N packs, M sounds)".
 #
 # Idempotent, safe to interrupt and rerun.
+#
+# --- Evergreen publish step ------------------------------------------------
+# Shopify's Digital Downloads app for the Standard SKU points at a Dropbox
+# shared link for the starter zip. A Dropbox shared link is tied to the file
+# PATH, not its content -- so the published copy at --publish must always be
+# overwritten IN PLACE at the exact same path, never deleted and recreated,
+# or the existing Shopify download link breaks for every past and future
+# buyer. This path MUST NOT be moved or renamed:
+#   /Users/mikejerugim/Library/CloudStorage/Dropbox-Flat7Inc./Michael Jerugim/Silverplatter/Packs/_SPASynth Starter Library/SPASynth Starter Library.zip
+# Pass --no-publish to skip publishing (e.g. for a local test build), or
+# --publish <path> to publish somewhere else. See --publish-only below for a
+# way to run just this step against the existing dist/library zip.
 
 set -e -u
 setopt extendedglob
@@ -67,6 +79,10 @@ OUT="$REPO_ROOT/dist/library"
 PACKS_ROOT="/Users/mikejerugim/Library/CloudStorage/Dropbox-Flat7Inc./Michael Jerugim/Silverplatter/Packs"
 OVERRIDES="$REPO_ROOT/scripts/starter-pack-overrides.tsv"
 ALLOW_MISSING=0
+PUBLISH="/Users/mikejerugim/Library/CloudStorage/Dropbox-Flat7Inc./Michael Jerugim/Silverplatter/Packs/_SPASynth Starter Library/SPASynth Starter Library.zip"
+PUBLISH_EXPLICIT=0
+DO_PUBLISH=1
+PUBLISH_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -75,7 +91,10 @@ while [[ $# -gt 0 ]]; do
         --out) OUT="$2"; shift 2 ;;
         --overrides) OVERRIDES="$2"; shift 2 ;;
         --allow-missing) ALLOW_MISSING=1; shift ;;
-        *) echo "usage: $0 [--catalog <path>] [--releases <path>] [--out <dir>] [--overrides <file>] [--allow-missing]" >&2; exit 2 ;;
+        --publish) PUBLISH="$2"; PUBLISH_EXPLICIT=1; shift 2 ;;
+        --no-publish) DO_PUBLISH=0; shift ;;
+        --publish-only) PUBLISH_ONLY=1; shift ;;
+        *) echo "usage: $0 [--catalog <path>] [--releases <path>] [--out <dir>] [--overrides <file>] [--allow-missing] [--publish <path>] [--no-publish] [--publish-only]" >&2; exit 2 ;;
     esac
 done
 
@@ -85,6 +104,81 @@ STARTER_ZIP="$OUT/SPASynth Starter Library.zip"
 MANIFEST="$OUT/SPASynth Starter Library.manifest.txt"
 
 mkdir -p "$OUT" "$CACHE"
+
+# publish_starter: copy dist/library's starter zip + manifest to $PUBLISH,
+# overwriting IN PLACE at the same path (write a temp file alongside the
+# target, then `mv -f` over it) so the Dropbox path is never briefly missing
+# and a partial copy is never visible. Skips (with a WARNING, exit 0 from the
+# caller) if the Dropbox path is unavailable, unless --publish was given
+# explicitly, in which case that's a hard error.
+publish_starter() {
+    if [[ "$DO_PUBLISH" -eq 0 ]]; then
+        return 0
+    fi
+    if [[ ! -f "$STARTER_ZIP" ]]; then
+        echo "WARNING: publish skipped -- no starter zip at $STARTER_ZIP" >&2
+        return 0
+    fi
+
+    local publish_dir="${PUBLISH:h}"
+    if [[ ! -d "$publish_dir" ]]; then
+        if ! mkdir -p "$publish_dir" 2>/dev/null; then
+            if [[ "$PUBLISH_EXPLICIT" -eq 1 ]]; then
+                echo "ERROR: publish target directory unavailable: $publish_dir" >&2
+                exit 1
+            fi
+            echo "WARNING: publish target directory unavailable (Dropbox not mounted?): $publish_dir" >&2
+            return 0
+        fi
+    fi
+
+    local src_size dst_size
+    src_size=$(stat -f%z "$STARTER_ZIP")
+
+    if [[ -f "$PUBLISH" ]]; then
+        dst_size=$(stat -f%z "$PUBLISH")
+        if [[ "$src_size" == "$dst_size" ]]; then
+            local src_md5 dst_md5
+            src_md5=$(md5 -q "$STARTER_ZIP")
+            dst_md5=$(md5 -q "$PUBLISH")
+            if [[ "$src_md5" == "$dst_md5" ]]; then
+                echo "publish target up to date"
+                return 0
+            fi
+        fi
+    fi
+
+    local tmp_zip="${publish_dir}/.$(basename "$PUBLISH").tmp-$$"
+    if ! cp "$STARTER_ZIP" "$tmp_zip"; then
+        rm -f "$tmp_zip"
+        if [[ "$PUBLISH_EXPLICIT" -eq 1 ]]; then
+            echo "ERROR: failed to copy starter zip to publish target" >&2
+            exit 1
+        fi
+        echo "WARNING: failed to copy starter zip to publish target ($publish_dir)" >&2
+        return 0
+    fi
+    mv -f "$tmp_zip" "$PUBLISH"
+
+    # Manifest travels alongside, same overwrite-in-place discipline. Not
+    # load-bearing for the Dropbox link, so failures here are non-fatal
+    # regardless of --publish-explicit.
+    if [[ -f "$MANIFEST" ]]; then
+        local publish_manifest="${PUBLISH%.zip}.manifest.txt"
+        local tmp_manifest="${publish_dir}/.$(basename "$publish_manifest").tmp-$$"
+        if cp "$MANIFEST" "$tmp_manifest" 2>/dev/null; then
+            mv -f "$tmp_manifest" "$publish_manifest"
+        fi
+    fi
+
+    dst_size=$(stat -f%z "$PUBLISH")
+    echo "published: $PUBLISH ($dst_size bytes)"
+}
+
+if [[ "$PUBLISH_ONLY" -eq 1 ]]; then
+    publish_starter
+    exit 0
+fi
 
 # --- Step 1: resolve every sfx catalog entry to a zip path + derived pack ------
 # folder name. Embedded Node script mirrors SPAStation's derivePackName().
@@ -373,6 +467,10 @@ if [[ -f "$MANIFEST" ]] && diff -q "$MANIFEST" "$NEW_MANIFEST_TMP" > /dev/null 2
     echo ""
     echo "starter unchanged ($RESOLVED_COUNT packs, $new_sound_count sounds)"
     rm -f "$NEW_MANIFEST_TMP"
+    # Even when the starter itself didn't change, still verify the published
+    # copy is present and matches -- covers the case where the publish
+    # target was deleted, moved, or drifted out from under a prior run.
+    publish_starter
 else
     echo ""
     if [[ -f "$MANIFEST" ]]; then
@@ -417,6 +515,8 @@ else
     mv -f "$NEW_MANIFEST_TMP" "$MANIFEST"
     zip_size=$(du -h "$STARTER_ZIP" | cut -f1)
     echo "packaged: starter library ($RESOLVED_COUNT packs, $new_sound_count sounds, $zip_size)"
+
+    publish_starter
 fi
 
 echo ""

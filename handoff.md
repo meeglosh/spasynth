@@ -1,4 +1,4 @@
-# SPASynth handoff (2026-09-11)
+# SPASynth handoff (2026-09-13)
 
 Quick "start here" for the next session. Full detail lives in `CLAUDE.md`; this
 is the short version.

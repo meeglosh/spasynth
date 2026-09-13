@@ -113,9 +113,11 @@ is the short version.
   `build_release.sh` now calls it; `package_library.sh` is legacy. Current
   starter: **90 packs / 450 sounds / 3.4 GB**, verified 5 WAVs per pack,
   24/48, no junk. `scripts/starter-pack-overrides.tsv` pins zips the
-  catalog can't resolve (Waterfalls). Still unresolved: `glitch-percussive`
-  (catalog entry with no zip anywhere; needs a source zip in Dropbox or a
-  catalog fix). Gotchas learned: 56 of the 89 Dropbox zips are online-only
+  catalog can't resolve (Waterfalls). **`glitch-percussive`: SKIP (Mike, 2026-09-13)** —
+  it is a SPAStation catalog entry with no zip file anywhere; **Codex fixes
+  it in SPAStation's `server/shopify/catalog-map.json`** (remove or remap
+  the entry). Until then `--allow-missing` is required and it stays out of
+  the starter. Gotchas learned: 56 of the 89 Dropbox zips are online-only
   (~39 GB hydrates on first run; we freed 63 GB by deleting the retired
   Pro volumes + per-pack zips from `dist/library/`, so `library/` at 37 GB
   is now the only big local copy and only the `--real-library` test uses

@@ -170,6 +170,9 @@ public:
     // APVTS from a destructor that may run after the processor is gone.
     void detach() { attachment.reset(); }
 
+    // Test-only introspection: true once the attachment has been released.
+    bool isDetached() const { return attachment == nullptr; }
+
     // Called by detail::ModVizClock at 30 Hz for mod-destination knobs only
     // (modDestIdx >= 0). Defined below the class -- needs dsp::Telemetry's
     // full definition, already included above.
@@ -253,6 +256,9 @@ public:
     juce::ComboBox combo;
 
     void detach() { attachment.reset(); }   // see Knob::detach
+
+    // Test-only introspection: true once the attachment has been released.
+    bool isDetached() const { return attachment == nullptr; }
 
 private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> attachment;

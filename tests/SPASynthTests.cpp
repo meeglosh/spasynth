@@ -9608,6 +9608,124 @@ namespace
         }
     }
 
+    // Two panels alive at once: one dismissed but not yet deleted by JUCE's
+    // modal manager (dismiss() only posts a command message; without a
+    // pump the panel isn't detached and its call-out isn't even hidden
+    // yet), one still fully open. Both must be tracked so ~ContentComponent
+    // detaches both when the editor is torn down with no pump in between --
+    // before this fix, a single SafePointer meant the first (superseded)
+    // panel was silently forgotten, and its eventual deferred deletion (in
+    // the final pump below) ran its Knob/Choice attachment destructors
+    // against a freed APVTS. Under ASan this is a heap-use-after-free; in a
+    // plain build it may silently pass (fine -- the ASan run covers it).
+    static void voicePanelDismissedThenClosedTest()
+    {
+        std::cout << "voicePanelDismissedThenClosedTest\n";
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+        const auto findVoiceButton = [] (juce::Component& root) -> juce::Button*
+        {
+            juce::Button* found = nullptr;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (found == nullptr)
+                    if (auto* b = dynamic_cast<juce::Button*> (&c))
+                        if (b->getTooltip().startsWith ("Voice mode"))
+                            found = b;
+                for (auto* child : c.getChildren()) walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+        // Walks for CallOutBoxes (the panels' only possible parent) rather
+        // than an unexported VoicePanel type, then reaches the panel via
+        // the exported spa::ui::VoicePanelDetachProbe interface.
+        const auto findAllVoicePanels = [] (juce::Component& root)
+        {
+            std::vector<juce::Component::SafePointer<juce::Component>> found;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (auto* box = dynamic_cast<juce::CallOutBox*> (&c))
+                    if (box->getNumChildComponents() > 0)
+                        if (auto* probe = dynamic_cast<spa::ui::VoicePanelDetachProbe*> (box->getChildComponent (0)))
+                            found.emplace_back (dynamic_cast<juce::Component*> (probe));
+                for (auto* child : c.getChildren()) walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+
+        auto procPtr = std::make_unique<spa::SPASynthProcessor>();
+        auto& proc = *procPtr;
+        proc.prepareToPlay (48000.0, 512);
+        struct HostHolder : juce::Component
+        {
+            ~HostHolder() override { deleteAllChildren(); }
+        };
+        auto holder = std::make_unique<HostHolder>();
+        auto* editorRaw = proc.createEditor();
+        editorRaw->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        holder->addAndMakeVisible (editorRaw);
+        holder->setSize (editorRaw->getWidth(), editorRaw->getHeight());
+        holder->addToDesktop (0);
+        holder->setVisible (true);
+        pumpFor (150);
+        juce::Component& editor = *editorRaw;
+
+        auto* voiceButton = findVoiceButton (editor);
+        expect (voiceButton != nullptr, "VOICE button found (dismissed-then-closed test)");
+        if (voiceButton == nullptr) return;
+
+        // Call the button's onClick directly rather than triggerClick():
+        // triggerClick() only posts a command message (Button::triggerClick),
+        // and pumping to process it would ALSO run the ModalComponentManager's
+        // AsyncUpdater that actually deletes a cancelled modal item (dismiss()
+        // similarly just posts a command) -- there is no pump duration short
+        // enough to process one without risking the other. Calling onClick()
+        // directly opens the call-out synchronously with no message involved,
+        // which is what actually lets us get a dismissed-but-undeleted panel
+        // and a still-open one coexisting with zero pumps in between.
+        voiceButton->onClick();
+        auto afterFirst = findAllVoicePanels (editor);
+        expect (afterFirst.size() == 1, "one VOICE panel after first open");
+        for (auto& sp : afterFirst)
+            if (auto* box = sp->findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();   // posts a command message; deliberately never pumped
+
+        // Open #2, still with no pump since -- #1's dismiss() is still only
+        // a queued command message, so #1 remains a live, undeleted,
+        // dismissed-in-flight panel alongside the freshly opened #2.
+        voiceButton->onClick();
+        auto afterSecond = findAllVoicePanels (editor);
+        expect (afterSecond.size() == 2,
+                "two VOICE panels alive: #1 dismissed-not-deleted, #2 freshly open");
+        for (auto& sp : afterSecond)
+            if (auto* box = sp->findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();
+
+        // Destroy the editor, then the processor, with no pump in between --
+        // exactly what a host does closing a project. ~ContentComponent's
+        // detach-all-live-panels sweep is the only thing that can run here
+        // (the DismissWatcher on each call-out never got a chance to: no
+        // pump has happened since either dismiss() call).
+        holder.reset();
+        for (auto& sp : afterSecond)
+        {
+            if (sp == nullptr) continue;
+            if (auto* probe = dynamic_cast<spa::ui::VoicePanelDetachProbe*> (sp.getComponent()))
+                expect (probe->isDetachedForTest(),
+                        "VOICE panel detached by ~ContentComponent before the processor is destroyed");
+        }
+        procPtr.reset();
+        pumpFor (400);   // let the modal manager's deferred deletes run; must not crash under ASan
+        expect (true, "editor + processor destroyed with dismissed-not-deleted VOICE panels, no crash");
+    }
+
     static void voicePanelCallOutFocusTest()
     {
         std::cout << "voicePanelCallOutFocusTest\n";
@@ -10178,7 +10296,18 @@ namespace
         const auto t1 = juce::Time::getHighResolutionTicks();
         const auto paintMs = juce::Time::highResolutionTicksToSeconds (t1 - t0) * 1000.0;
         std::cout << "  AssignOverlay::paint time (all targets): " << paintMs << " ms\n";
+        // A wall-clock budget is meaningless under AddressSanitizer's
+        // instrumentation (measured 10 ms there vs ~2 ms plain); the ASan
+        // run is for memory errors, not paint timing.
+       #if defined(__has_feature)
+        #if __has_feature(address_sanitizer)
+        std::cout << "  (paint budget check skipped under AddressSanitizer)\n";
+        #else
         expect (paintMs < 8.0, "overlay paint time under 8ms budget");
+        #endif
+       #else
+        expect (paintMs < 8.0, "overlay paint time under 8ms budget");
+       #endif
 
         // Render the OVERLAY ALONE (not the editor -- its opaque panel
         // background would make every pixel's composited alpha read 1.0
@@ -12022,6 +12151,7 @@ int main (int argc, char* argv[])
     keyboardOctaveShiftTest();
     voicePanelCallOutFocusTest();
     voicePanelEditorCloseTest();
+    voicePanelDismissedThenClosedTest();
     modAssignModeTest();
     modAssignFocusTest();
     assignGlowShapeTest();

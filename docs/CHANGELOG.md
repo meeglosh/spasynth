@@ -5,6 +5,8 @@
 - The library now refreshes itself when packs are added or removed, so
   packs installed by our companion app or copied in by hand appear without
   a rescan. The Rescan button remains for forcing one.
+- Fixed a rare crash when the plugin window was closed within a moment of
+  dismissing the VOICE panel.
 
 ## 1.0.15
 

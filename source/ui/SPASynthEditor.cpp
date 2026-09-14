@@ -626,7 +626,8 @@ private:
 
 // Voice-allocation controls, shown in a call-out from the header VOICE button:
 // mode + note priority, plus the unison voice/detune/width knobs.
-class VoicePanel : public juce::Component
+class VoicePanel : public juce::Component,
+                   public VoicePanelDetachProbe
 {
 public:
     // onDismissed fires from the destructor -- see the ctor comment on
@@ -706,12 +707,24 @@ public:
     // by the time this panel's destructor ran, its Knob/Choice attachments
     // would have unregistered from a freed APVTS (heap-use-after-free under
     // ASan, 2026-09-07; voicePanelEditorCloseTest variant 3).
+    // NOTE: deliberately leaves onDismissedCallback alone -- it only hands
+    // focus back to the on-screen keyboard via a SafePointer<ContentComponent>
+    // that already no-ops if the editor is gone, so it's safe to still fire
+    // from ~VoicePanel whenever this panel is eventually deleted, even after
+    // detach() ran early (on dismiss, or from ~ContentComponent's backstop).
     void detach()
     {
         mode.detach(); priority.detach();
         voices.detach(); detune.detach(); width.detach();
-        onDismissedCallback = nullptr;
     }
+
+    // Test-only introspection: true once every attachment has been released.
+    bool isDetached() const
+    {
+        return mode.isDetached() && priority.isDetached()
+            && voices.isDetached() && detune.isDetached() && width.isDetached();
+    }
+    bool isDetachedForTest() const override { return isDetached(); }
 
     void paint (juce::Graphics& g) override
     {
@@ -993,11 +1006,61 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
         // closed with the call-out still up (1.0.12 crash, 2026-09-05).
         if (auto* top = callOutParent())
         {
-            openVoicePanel = panel.get();   // for ~ContentComponent's detach
+            // Prune dead entries (their call-out's deferred delete already
+            // ran) before tracking the new one -- more than one panel can
+            // be alive at once (a dismissed-but-not-yet-deleted one, or the
+            // call-out reopened while an earlier one is still winding down).
+            for (int i = openVoicePanels.size(); --i >= 0;)
+                if (openVoicePanels.getReference (i).getComponent() == nullptr)
+                    openVoicePanels.remove (i);
+
+            auto* panelRaw = panel.get();
+            openVoicePanels.add (juce::Component::SafePointer<juce::Component> (panelRaw));
+
             auto& callout = juce::CallOutBox::launchAsynchronously (
                 std::move (panel),
                 top->getLocalArea (&voiceButton, voiceButton.getLocalBounds()),
                 top);
+
+            // Detach the panel from the processor the instant the call-out
+            // is dismissed, rather than waiting for its actual deletion
+            // (which JUCE's ModalComponentManager defers to a later
+            // message-loop turn -- see CallOutBoxCallback::modalStateFinished
+            // in juce_CallOutBox.cpp). CallOutBox::dismiss() posts a command
+            // message that calls exitModalState(0) then setVisible(false) on
+            // the CALL-OUT ITSELF, synchronously and well before deletion --
+            // Component::setVisible only notifies listeners on the component
+            // whose flag actually changed, never its children, which is why
+            // this watches the callout, not the panel. A dismissed-but-
+            // undeleted panel never needs its attachments again; detaching
+            // here (rather than only in ~ContentComponent) also covers a
+            // panel dismissed and superseded by a new one while this editor
+            // is still alive, which ~ContentComponent's sweep would never
+            // see. Self-deleting (it outlives nothing else and has no other
+            // owner) once it has done its one job.
+            struct DismissWatcher final : private juce::ComponentListener
+            {
+                DismissWatcher (juce::CallOutBox& box, juce::Component::SafePointer<VoicePanel> p)
+                    : panel (p) { box.addComponentListener (this); }
+                void componentVisibilityChanged (juce::Component& c) override
+                {
+                    if (! c.isVisible())
+                    {
+                        if (auto* live = panel.getComponent())
+                            live->detach();
+                        c.removeComponentListener (this);
+                        delete this;
+                    }
+                }
+                void componentBeingDeleted (juce::Component& c) override
+                {
+                    c.removeComponentListener (this);
+                    delete this;
+                }
+                juce::Component::SafePointer<VoicePanel> panel;
+            };
+            new DismissWatcher (callout, juce::Component::SafePointer<VoicePanel> (panelRaw));
+
             // The callout's own border/arrow area (its hitTest -- see
             // juce_CallOutBox.cpp -- only the outline, not the content) can
             // itself take a stray click; VoicePanel is the one deliberate
@@ -1312,17 +1375,24 @@ ContentComponent::~ContentComponent()
 {
     stopTimer();
 
-    // A VOICE call-out still open when the host tears the editor down: its
-    // panel must stop referencing the processor NOW (see VoicePanel::detach),
-    // and the box should leave modal state so it can't swallow input into a
-    // dead editor. Its actual deletion stays with JUCE's modal manager.
-    if (auto* panel = dynamic_cast<VoicePanel*> (openVoicePanel.getComponent()))
+    // Any VOICE call-out panel still around when the host tears the editor
+    // down -- open, or dismissed but not yet deleted by JUCE's modal
+    // manager -- must stop referencing the processor NOW (see
+    // VoicePanel::detach); an open one's box should also leave modal state
+    // so it can't swallow input into a dead editor. Normally the DismissWatcher
+    // in the VOICE button's onClick detaches a panel the instant it's
+    // dismissed, but this is the backstop for whatever's still live right
+    // now. Actual deletion stays with JUCE's modal manager either way.
+    for (auto& sp : openVoicePanels)
     {
-        panel->detach();
-        if (auto* box = panel->findParentComponentOfClass<juce::CallOutBox>())
+        if (auto* panel = dynamic_cast<VoicePanel*> (sp.getComponent()))
         {
-            box->exitModalState (0);
-            box->setVisible (false);
+            panel->detach();
+            if (auto* box = panel->findParentComponentOfClass<juce::CallOutBox>())
+            {
+                box->exitModalState (0);
+                box->setVisible (false);
+            }
         }
     }
 

@@ -20,6 +20,18 @@ class SPASynthProcessor;
 namespace ui
 {
 
+// Test-only introspection hook for the VOICE call-out's content panel
+// (VoicePanel, defined locally in SPASynthEditor.cpp -- not exposed here
+// since nothing else needs its full type). Lets the test suite verify a
+// panel's attachments were actually released without dynamic_cast'ing to
+// an unexported type.
+class VoicePanelDetachProbe
+{
+public:
+    virtual ~VoicePanelDetachProbe() = default;
+    virtual bool isDetachedForTest() const = 0;
+};
+
 // Everything inside the plugin window at base size; the editor shell scales
 // this whole component for resizing.
 class ContentComponent : public juce::Component,
@@ -206,11 +218,16 @@ private:
     juce::Slider glideSlider;
     juce::Label glideLabel;
     juce::TextButton voiceButton;   // opens the voice-mode call-out
-    // The VOICE call-out's content panel while it is open. JUCE's modal
-    // manager owns the call-out and deletes it asynchronously, so it can
-    // outlive this editor; the destructor uses this to detach the panel from
-    // the processor synchronously (see ~ContentComponent).
-    juce::Component::SafePointer<juce::Component> openVoicePanel;
+    // VOICE call-out content panels that may still be alive. JUCE's modal
+    // manager owns each call-out and deletes it asynchronously, so a
+    // dismissed-but-not-yet-deleted panel and a freshly reopened one can
+    // both be live at once -- one SafePointer isn't enough. Each panel is
+    // normally detached from the processor the instant its call-out is
+    // dismissed (see the DismissWatcher in the VOICE button's onClick), but
+    // this array is the backstop ~ContentComponent uses to detach any that
+    // are still around (open or dismissed-not-deleted) when the editor
+    // itself goes away. Dead entries are pruned on insert.
+    juce::Array<juce::Component::SafePointer<juce::Component>> openVoicePanels;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     // GLIDE knob only means anything once glideMode is off "Off".
     std::unique_ptr<DependentEnable> glideTimeEnable;

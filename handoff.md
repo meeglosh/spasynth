@@ -170,8 +170,28 @@ is the short version.
 - Open question (Mike): send SPASynth Pro buyers to the EB PDP instead of
   a separate Pro PDP.
 
-## Queued for 1.0.16 (Mike, 2026-09-14)
+## 1.0.16 in progress (2026-09-14; main `6caebe4`, NOT yet built)
 
+1.0.15 was SENT to Paul and Phil and tested by Mike. Landed since:
+- `0afe777` **library auto-refresh** (design below, implemented as spec'd:
+  watcher off the 150 ms timer, `computeLibraryFingerprint()` /
+  `tickLibraryWatch()` in SPASynthProcessor, two-tick debounce, Rescan
+  button kept with a new tooltip; `libraryAutoRefreshTest`).
+- `6caebe4` **VOICE panel use-after-free** found by ASan while verifying the
+  above: `ContentComponent` tracked only the latest VOICE panel, so one
+  dismissed-but-not-yet-deleted panel escaped `detach()` and its Knob
+  attachments hit freed parameters. Now `openVoicePanels` (array of
+  SafePointers) + a self-deleting `DismissWatcher` that detaches on hide;
+  `voicePanelDismissedThenClosedTest`. Also the ASSIGN overlay paint-budget
+  assertion is skipped under ASan (`__has_feature(address_sanitizer)`).
+Suite 1345 ALL PASS (Debug x2, Release, ASan x3, leak checks clean).
+Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
+Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
+SPASynth's Set Library Folder path. If the paths differ it's the root
+resolver in SPAStation; if they match, we need the pack name + folder
+listing. Next: any further 1.0.16 findings, then build + send.
+
+### Original 1.0.16 queue note
 - **Library auto-refresh.** Phil installed a pack via SPAStation and it did
   not appear in SPASynth (likely no Rescan/relaunch; root mismatch not yet
   ruled out -- asked him for the two paths). Regardless: SPASynth should

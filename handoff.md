@@ -170,6 +170,22 @@ is the short version.
 - Open question (Mike): send SPASynth Pro buyers to the EB PDP instead of
   a separate Pro PDP.
 
+## Queued for 1.0.16 (Mike, 2026-09-14)
+
+- **Library auto-refresh.** Phil installed a pack via SPAStation and it did
+  not appear in SPASynth (likely no Rescan/relaunch; root mismatch not yet
+  ruled out -- asked him for the two paths). Regardless: SPASynth should
+  watch its library root and refresh itself when a pack folder appears or
+  disappears. Design: message-thread timer (every ~3 s while an editor is
+  open, ~10 s otherwise) compares the root's immediate-subfolder listing
+  (names + mtimes) to the last scan; on change, `refreshLibrary()` (which
+  already generates presets for new packs), debounced so a pack mid-copy
+  is not scanned half-written (wait for the listing to be stable for two
+  ticks). Never on the audio thread; filesystem reads stay off the audio
+  path (they already do). Test: temp root, add a pack folder with a WAV
+  after construction, pump, assert the pack + its presets appear without a
+  manual rescan. Do not bump the version until a build is sent.
+
 ## What's actually left before launch
 
 1. Mike installs 1.0.15 (`sudo installer -pkg

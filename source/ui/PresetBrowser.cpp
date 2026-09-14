@@ -135,7 +135,8 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     addAndMakeVisible (libraryButton);
 
     rescanButton.setComponentID ("browser");
-    rescanButton.setTooltip ("Rescan the library and preset folders");
+    rescanButton.setTooltip ("Rescan now (the library also refreshes automatically "
+                              "when packs are added)");
     rescanButton.onClick = [this] { processor.refreshLibrary(); };
     rescanButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
     addAndMakeVisible (rescanButton);

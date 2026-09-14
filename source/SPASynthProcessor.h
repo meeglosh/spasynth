@@ -186,9 +186,22 @@ public:
     // real refresh, e.g. to warn the user rather than silently doing nothing.
     int getLibraryPackCount() const { return lastLibraryPackCount; }
 
+    // Test-only hooks for libraryAutoRefreshTest: shorten the watch intervals
+    // (real defaults are ~3s/~10s -- far too slow for a test) and allow the
+    // watcher to be disabled so the test can prove it actually matters.
+    void setLibraryWatchIntervalsForTest (int activeMs, int idleMs)
+    {
+        libraryWatchActiveIntervalMs = activeMs;
+        libraryWatchIdleIntervalMs = idleMs;
+        nextLibraryWatchMs = 0;   // force a check on the very next timer tick
+    }
+    void setLibraryWatchEnabledForTest (bool enabled) { libraryWatchEnabled = enabled; }
+
 private:
     void updateSharedState (int blockLength);
     void scanMidiControllers (const juce::MidiBuffer& midi);
+    juce::String computeLibraryFingerprint() const;
+    void tickLibraryWatch();
     void installTable (int slot, std::shared_ptr<const dsp::Wavetable> table,
                        juce::String path, juce::String error);
     void installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
@@ -298,6 +311,21 @@ private:
     std::unique_ptr<MidiLearnManager> midiLearn;
     std::unique_ptr<library::PresetManager> presetManager;
     int lastLibraryPackCount = 0;   // message thread only, see getLibraryPackCount()
+
+    // Library auto-refresh watcher (message thread only, driven off the
+    // existing 150ms timer -- see tickLibraryWatch()). A cheap fingerprint
+    // (sorted immediate-subfolder names + mtimes, plus the root's own mtime/
+    // existence) is compared each tick; a change must read IDENTICAL on two
+    // consecutive ticks (debounce against a pack still mid-copy) before a
+    // real refreshLibrary() runs. refreshLibrary() itself refreshes
+    // lastScannedLibraryFingerprint, so a manual Rescan resets the watcher.
+    juce::String lastScannedLibraryFingerprint;
+    juce::String pendingLibraryFingerprint;
+    int libraryFingerprintStableTicks = 0;
+    juce::uint32 nextLibraryWatchMs = 0;
+    bool libraryWatchEnabled = true;
+    int libraryWatchActiveIntervalMs = 3000;    // while an editor is open
+    int libraryWatchIdleIntervalMs = 10000;     // no editor open
 
     // On-screen keyboard note source (editor writes, processBlock reads).
     juce::MidiKeyboardState keyboardState;

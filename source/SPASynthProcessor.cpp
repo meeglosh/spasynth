@@ -369,6 +369,71 @@ void SPASynthProcessor::timerCallback()
     // use by the audio thread (it re-reads `live` every block).
     retiredTables.clear();
     retiredSamples.clear();
+
+    // Library auto-refresh: cheap (folder-listing-only) fingerprint check,
+    // throttled to ~3s/~10s -- see tickLibraryWatch() and the class comment
+    // on the watcher fields for the debounce rationale.
+    if (libraryWatchEnabled)
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (now >= nextLibraryWatchMs)
+        {
+            const int interval = getActiveEditor() != nullptr
+                                    ? libraryWatchActiveIntervalMs : libraryWatchIdleIntervalMs;
+            nextLibraryWatchMs = now + (juce::uint32) juce::jmax (0, interval);
+            tickLibraryWatch();
+        }
+    }
+}
+
+juce::String SPASynthProcessor::computeLibraryFingerprint() const
+{
+    const auto root = library::findLibraryRoot();
+    if (! root.isDirectory())
+        return "<missing>";
+
+    auto subfolders = root.findChildFiles (juce::File::findDirectories, false);
+    std::sort (subfolders.begin(), subfolders.end(),
+               [] (const juce::File& a, const juce::File& b)
+               { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
+
+    juce::StringArray parts;
+    parts.add (juce::String (root.getLastModificationTime().toMilliseconds()));
+    for (const auto& f : subfolders)
+        parts.add (f.getFileName() + ":" + juce::String (f.getLastModificationTime().toMilliseconds()));
+
+    return parts.joinIntoString ("|");
+}
+
+void SPASynthProcessor::tickLibraryWatch()
+{
+    const auto fp = computeLibraryFingerprint();
+
+    if (fp == lastScannedLibraryFingerprint)
+    {
+        // Already in sync (e.g. right after refreshLibrary() ran, manually
+        // or from a previous watcher tick) -- nothing pending.
+        pendingLibraryFingerprint = fp;
+        libraryFingerprintStableTicks = 0;
+        return;
+    }
+
+    if (fp == pendingLibraryFingerprint)
+    {
+        // Seen this exact (changed) listing before -- one more identical
+        // read confirms it's stable, i.e. not a pack still mid-copy.
+        if (++libraryFingerprintStableTicks >= 2)
+        {
+            libraryFingerprintStableTicks = 0;
+            refreshLibrary();   // also updates lastScannedLibraryFingerprint
+        }
+    }
+    else
+    {
+        // First sighting of this listing -- start the debounce over.
+        pendingLibraryFingerprint = fp;
+        libraryFingerprintStableTicks = 1;
+    }
 }
 
 void SPASynthProcessor::installSample (int slot, std::shared_ptr<const dsp::SampleData> sample,
@@ -1864,6 +1929,13 @@ bool SPASynthProcessor::refreshLibrary()
     if (! root.isDirectory())
     {
         lastLibraryPackCount = 0;
+        // Resets the watcher too: an absent root reads back as the same
+        // "<missing>" fingerprint every tick, so this doesn't cause a
+        // refresh loop, and a manual Rescan while the root is gone still
+        // clears any stale pending state from before it disappeared.
+        lastScannedLibraryFingerprint = computeLibraryFingerprint();
+        pendingLibraryFingerprint = lastScannedLibraryFingerprint;
+        libraryFingerprintStableTicks = 0;
         return false;
     }
 
@@ -1871,6 +1943,13 @@ bool SPASynthProcessor::refreshLibrary()
     lastLibraryPackCount = (int) packs.size();
     presetManager->generateFactoryPresets (packs, root);
     presetManager->rescan();
+
+    // Record what we just scanned so the watcher doesn't immediately think
+    // its own refresh was an unrelated change (and so a manual Rescan click
+    // resets the debounce state exactly like a watcher-triggered one).
+    lastScannedLibraryFingerprint = computeLibraryFingerprint();
+    pendingLibraryFingerprint = lastScannedLibraryFingerprint;
+    libraryFingerprintStableTicks = 0;
     return true;
 }
 

@@ -4807,6 +4807,129 @@ namespace
         lib::setLibraryRoot (savedRoot);
     }
 
+    // Writes a tiny, valid, playable pack folder (one short sine WAV) under
+    // `dir` -- just enough for scanLibrary()/generateFactoryPresets() to see
+    // a real pack, matching the makeFakeLibrary*() convention used elsewhere.
+    static void writeFakePackWav (const juce::File& dir, const juce::String& wavName)
+    {
+        dir.createDirectory();
+        juce::AudioBuffer<float> buffer (1, 4800);
+        for (int i = 0; i < 4800; ++i)
+            buffer.setSample (0, i, 0.5f * (float) std::sin (
+                juce::MathConstants<double>::twoPi * 220.0 * i / 48000.0));
+
+        const auto file = dir.getChildFile (wavName);
+        juce::WavAudioFormat fmt;
+        std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+        if (auto writer = fmt.createWriterFor (stream,
+                juce::AudioFormatWriterOptions().withSampleRate (48000.0)
+                    .withNumChannels (1).withBitsPerSample (24)))
+            writer->writeFromAudioSampleBuffer (buffer, 0, 4800);
+    }
+
+    // Queued for 1.0.16 (Phil's pack-didn't-appear report): SPASynth now
+    // watches its library root on a message-thread timer and refreshes
+    // itself when a pack folder appears or disappears, without the user
+    // clicking Rescan. Exercises the real processor construction path (which
+    // is what actually needs to notice a pack dropped in by the companion
+    // app), with the watcher interval shortened via the test-only setter so
+    // this doesn't need to wait out the real ~3s/~10s intervals.
+    static void libraryAutoRefreshTest()
+    {
+        std::cout << "libraryAutoRefreshTest\n";
+
+        namespace lib = spa::library;
+
+        const auto savedRoot = lib::getLibraryRoot();
+
+        const auto libRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-autorefresh-lib", "");
+        libRoot.createDirectory();
+        writeFakePackWav (libRoot.getChildFile ("Pack A"), "one.wav");
+
+        lib::setLibraryRoot (libRoot);
+
+        auto pump = [] (int ms)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (ms);
+        };
+
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            proc.setLibraryWatchIntervalsForTest (5, 5);
+
+            // Let the construction-time callAsync refreshLibrary() (and the
+            // first watcher ticks off the 150ms timer) settle.
+            pump (400);
+
+            expect (proc.getLibraryPackCount() == 1,
+                    "initial refresh finds the one pack present at construction");
+            auto presetNames = proc.getPresetManager().getCategories();
+            expect (presetNames.contains ("Pack A"),
+                    "factory presets exist for the initial pack");
+
+            // --- a folder still being written must NOT trigger a refresh
+            // until its listing has been stable for two consecutive ticks.
+            const auto midCopyDir = libRoot.getChildFile ("Pack B");
+            midCopyDir.createDirectory();
+            midCopyDir.getChildFile ("partial.tmp").replaceWithData ("x", 1);
+            pump (160);   // one tick sees the change, not yet confirmed stable
+            midCopyDir.getChildFile ("another.tmp").replaceWithData ("xx", 2);
+            pump (160);   // listing changed again -- debounce must restart
+            expect (proc.getLibraryPackCount() == 1,
+                    "a folder still being written does not trigger a refresh");
+
+            // Finish "writing" the pack (a real WAV) and let the listing go
+            // stable -- now it must be picked up with no manual Rescan.
+            writeFakePackWav (midCopyDir, "one.wav");
+            bool sawTwo = false;
+            for (int i = 0; i < 20 && ! sawTwo; ++i)
+            {
+                pump (160);
+                sawTwo = proc.getLibraryPackCount() == 2;
+            }
+            expect (sawTwo, "a new pack folder is auto-detected without calling Rescan");
+            presetNames = proc.getPresetManager().getCategories();
+            expect (presetNames.contains ("Pack B"),
+                    "factory presets are generated for the auto-detected pack");
+
+            // Removing a pack must also be auto-detected.
+            midCopyDir.deleteRecursively();
+            bool sawOne = false;
+            for (int i = 0; i < 20 && ! sawOne; ++i)
+            {
+                pump (160);
+                sawOne = proc.getLibraryPackCount() == 1;
+            }
+            expect (sawOne, "a removed pack folder drops the count without calling Rescan");
+        }
+
+        // Disabling the watcher must make the same scenario FAIL to update --
+        // proves the assertions above are actually exercising the watcher,
+        // not some other refresh path (e.g. a stray timer left running).
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            proc.setLibraryWatchIntervalsForTest (5, 5);
+            proc.setLibraryWatchEnabledForTest (false);
+            pump (400);
+            expect (proc.getLibraryPackCount() == 1, "sanity: initial pack still found with the watcher off");
+
+            const auto packC = libRoot.getChildFile ("Pack C");
+            writeFakePackWav (packC, "one.wav");
+            for (int i = 0; i < 10; ++i)
+                pump (160);
+            expect (proc.getLibraryPackCount() == 1,
+                    "with the watcher disabled, a new pack is NOT auto-detected");
+
+            packC.deleteRecursively();
+        }
+
+        libRoot.deleteRecursively();
+        lib::setLibraryRoot (savedRoot);
+    }
+
     // Regression test for a tester-reported bug (v1.0.8): clicking a preset
     // in the browser produced a short burst of noise even though nothing was
     // playing (there is no preview/audition feature). Root cause: a preset
@@ -11880,6 +12003,7 @@ int main (int argc, char* argv[])
     libraryDiscoveryTest();
     looseWavLibraryTest();
     libraryRootPersistsWhenEmptyTest();
+    libraryAutoRefreshTest();
     presetRoundTripTest();
     presetBankTest();
     malformedPresetTest();

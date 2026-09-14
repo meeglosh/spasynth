@@ -1,5 +1,11 @@
 # SPASynth changelog
 
+## 1.0.16
+
+- The library now refreshes itself when packs are added or removed, so
+  packs installed by our companion app or copied in by hand appear without
+  a rescan. The Rescan button remains for forcing one.
+
 ## 1.0.15
 
 A large round of features and fixes from our testers' playtest sessions.

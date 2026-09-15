@@ -184,7 +184,24 @@ is the short version.
   SafePointers) + a self-deleting `DismissWatcher` that detaches on hide;
   `voicePanelDismissedThenClosedTest`. Also the ASSIGN overlay paint-budget
   assertion is skipped under ASan (`__has_feature(address_sanitizer)`).
-Suite 1345 ALL PASS (Debug x2, Release, ASan x3, leak checks clean).
+- `bbe785e` **friendlier library setup**, from a Windows beta tester who
+  could not get the library recognised. Explorer's "Extract All" appends
+  the zip name to the destination, so the payload landed a folder deeper
+  than `expandLibraryCandidates()` probed, and nothing told him anything
+  was wrong. Discovery now accepts wrapper layouts plus Downloads and the
+  Desktop (capped at `maxCandidateDirsExamined` = 300, canonical paths
+  still win); the watcher's routine tick reads only the configured root
+  and attempts discovery at most every 30 s and only when unconfigured
+  (it was about to run the whole walk every 3 s for exactly the users we
+  were helping); a one-time prompt offers the folder picker when nothing
+  is found, persisted via `library::get/setEmptyLibraryPromptShown`; the
+  Windows installer pre-creates the destination and adds a "SPASynth
+  Sounds Folder" Start Menu item, and README/QUICKSTART give macOS and
+  Windows matched steps. Note the extraction destination is the GRANDparent
+  of the library folder on both platforms (`/Users/Shared`,
+  `C:\Users\Public\Documents`), because the zip carries
+  "Silverplatter Audio/SPASynth Library/" inside it.
+Suite 1366 ALL PASS (Debug x2, Release, ASan, leak checks clean).
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

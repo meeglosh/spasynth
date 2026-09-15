@@ -7,7 +7,9 @@ SPASynth Quickstart
 
 2. BROWSE THE PRESETS
    Click the preset name at the top. A browser slides out with every
-   factory preset, three per library pack:
+   factory preset, three per library pack (Windows: haven't unzipped the
+   library yet? Use the "SPASynth Sounds Folder" shortcut in the Start
+   Menu, see README.txt):
      Keys     the SFX as a playable, keytracked instrument
      Texture  a granular cloud scrubbed by a slow LFO
      Pulse    a wavetable voice whose filter is pumped by the SFX itself

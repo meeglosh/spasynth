@@ -197,6 +197,51 @@ public:
     }
     void setLibraryWatchEnabledForTest (bool enabled) { libraryWatchEnabled = enabled; }
 
+    // Test-only: override the throttle on the watcher's full-discovery probe
+    // (see libraryWatchDiscoveryIntervalMs) and force it due on the next tick.
+    void setLibraryWatchDiscoveryIntervalForTest (int ms)
+    {
+        libraryWatchDiscoveryIntervalMs = ms;
+        nextLibraryDiscoveryMs = 0;
+    }
+    // Test-only: how many times tickLibraryWatch() has actually run full
+    // discovery (as opposed to just checking the cheap configured-root
+    // fingerprint) -- see libraryWatchDiscoveryThrottleTest.
+    int getLibraryDiscoveryAttemptCountForTest() const { return libraryDiscoveryAttemptCountForTest; }
+
+    // Test-only: skip the actual library::findLibraryRoot() probe (and the
+    // scan/preset-generation that follows a successful one) inside the
+    // throttled discovery branch, while still running every bit of the
+    // throttle/gating logic around it (the thing under test). Needed because
+    // on a dev machine with a real library actually reachable from a default
+    // location, a real attempt succeeds and costs real wall-clock time (a
+    // full scan + factory-preset generation), which would otherwise make the
+    // throttle timing non-deterministic in a test. Defaults off (production
+    // behaviour unaffected).
+    void setSkipActualDiscoveryForTest (bool skip) { skipActualDiscoveryForTest = skip; }
+
+    // One-shot decision for the "we couldn't find your sound library" editor
+    // prompt (see ContentComponent's ctor). True at most once per machine,
+    // and only when no library root is configured AND discovery (already run
+    // at construction, or by the watcher) found zero packs. Persisted via the
+    // machine settings singleton (source/library/Library.cpp) so a customer
+    // who dismisses it once is never nagged again, including by a fresh
+    // plugin instance or a later session.
+    bool consumeEmptyLibraryPromptDecision()
+    {
+        if (library::getLibraryRoot().isDirectory())
+            return false;   // an explicit root is configured -- never prompt
+
+        if (library::getEmptyLibraryPromptShown())
+            return false;
+
+        if (lastLibraryPackCount > 0)
+            return false;   // discovery already found something usable
+
+        library::setEmptyLibraryPromptShown (true);
+        return true;
+    }
+
 private:
     void updateSharedState (int blockLength);
     void scanMidiControllers (const juce::MidiBuffer& midi);
@@ -326,6 +371,19 @@ private:
     bool libraryWatchEnabled = true;
     int libraryWatchActiveIntervalMs = 3000;    // while an editor is open
     int libraryWatchIdleIntervalMs = 10000;     // no editor open
+
+    // When no library root is configured, computeLibraryFingerprint() reads
+    // only the configured root (cheap, see its comment) and never notices a
+    // library appearing on its own -- so tickLibraryWatch() separately runs
+    // full discovery (refreshLibrary(), i.e. library::findLibraryRoot()'s
+    // multi-hundred-directory probe) in that case, but throttled hard: that
+    // probe is exactly the expensive walk this fix exists to stop from
+    // running every 3s. 30s is a named constant (not a magic number in the
+    // .cpp) so tests can retarget it via setLibraryWatchDiscoveryIntervalForTest.
+    int libraryWatchDiscoveryIntervalMs = 30000;
+    juce::uint32 nextLibraryDiscoveryMs = 0;
+    int libraryDiscoveryAttemptCountForTest = 0;   // see getLibraryDiscoveryAttemptCountForTest()
+    bool skipActualDiscoveryForTest = false;       // see setSkipActualDiscoveryForTest()
 
     // On-screen keyboard note source (editor writes, processBlock reads).
     juce::MidiKeyboardState keyboardState;

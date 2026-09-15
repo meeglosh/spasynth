@@ -1264,6 +1264,17 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
                           // 60 Hz learn-apply timer the 1.0.13 audit rejected
                           // -- this only drives a text label, never applies MIDI
 
+    // One-time "we couldn't find your library" prompt -- gated entirely on
+    // an editor actually being created (never from the processor ctor, so a
+    // host scanning plugins headlessly never triggers it), and further
+    // gated one-shot + no-configured-root inside the decision itself. Async
+    // so it never runs any earlier than the rest of this constructor.
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ContentComponent> (this)]
+    {
+        if (safe != nullptr)
+            safe->maybeShowEmptyLibraryPrompt();
+    });
+
     // Deliberately NOT setSize()'d here -- see SPASynthEditor's constructor,
     // which gives this its first real layout AFTER addAndMakeVisible()
     // parents it. A setSize() call in THIS constructor would run while `this`
@@ -2311,6 +2322,30 @@ void ContentComponent::rescanLibrary()
             if (result != 0 && safe != nullptr)
                 safe->chooseLibraryFolder();
         }));
+}
+
+void ContentComponent::maybeShowEmptyLibraryPrompt()
+{
+    if (! processor.consumeEmptyLibraryPromptDecision())
+        return;
+
+    juce::NativeMessageBox::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::InfoIcon)
+            .withTitle ("Sound Library Not Found")
+            .withMessage ("We could not find the SPASynth sound library on this computer.\n\n"
+                          "If you have already downloaded it, choose its folder and we will take it from there.")
+            .withButton ("Choose Folder...")
+            .withButton ("Not Now")
+            .withAssociatedComponent (this),
+        [safe = juce::Component::SafePointer<ContentComponent> (this)] (int result)
+        {
+            // withButton order makes this a zero-based index: 0 = "Choose
+            // Folder...", 1 = "Not Now" (NOT showOkCancelBox's convention,
+            // where the affirmative result is 1).
+            if (result == 0 && safe != nullptr)
+                safe->chooseLibraryFolder();
+        });
 }
 
 void ContentComponent::chooseLibraryFolder()

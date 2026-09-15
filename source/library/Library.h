@@ -44,6 +44,13 @@ void setAccentColors (juce::Colour accent, juce::Colour accentMod);
 bool getAccentsLinked();
 void setAccentsLinked (bool linked);
 
+// Whether the "we couldn't find your sound library" one-shot editor prompt
+// has already been shown on this machine (see
+// SPASynthProcessor::consumeEmptyLibraryPromptDecision()). False until the
+// prompt has actually been shown once.
+bool getEmptyLibraryPromptShown();
+void setEmptyLibraryPromptShown (bool shown);
+
 // Favorite presets (machine preference, like the theme). Keys are
 // "<category>/<name>" so they survive the presets root moving.
 juce::StringArray getFavoritePresets();
@@ -60,12 +67,33 @@ bool looksLikeLibrary (const juce::File&);
 // SPASynth at the library manually.
 std::vector<juce::File> defaultLibraryLocations();
 
-// Expands company dirs into an ordered candidate list: the canonical
-// "<dir>/<libraryName>" for every dir first, then every other existing
-// subfolder of each dir as a fallback (a renamed library, the starter
-// library dragged out of its zip, a lone add-on pack). Pure given its
-// inputs (testable); discoverLibrary() still vets every candidate.
-std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& companyDirs,
+// Hard cap on how many directories expandLibraryCandidates() will list while
+// probing for wrapper folders -- bounds cost to a handful of directory
+// listings even when a base dir contains hundreds of sibling folders,
+// instead of a tree walk.
+constexpr int maxCandidateDirsExamined = 300;
+
+// Expands base/company dirs into an ordered candidate list, most canonical
+// first (discoverLibrary() takes the first hit, so a correct install must
+// always win over a stray wrapper folder):
+//   1. "<companyDir>/<libraryName>" for every company dir -- the canonical
+//      install location.
+//   2. "<companyDir>/<anything>/<libraryName>" -- a wrapper folder still
+//      inside the right company dir.
+//   3. "<baseDir>/<libraryName>" -- the user extracted only the inner
+//      folder, skipping the company-dir level entirely.
+//   4. "<baseDir>/<anything>/<company>/<libraryName>" -- Windows Explorer's
+//      "Extract All" default: it wraps the zip's contents in a folder named
+//      after the zip, so our "Silverplatter Audio/SPASynth Library" payload
+//      ends up one level deeper than usual.
+//   5. any other existing subfolder of each company dir, as a last-resort
+//      fallback (a renamed library, a lone add-on pack).
+// Never recurses below these fixed levels, and stops listing further
+// directories once maxCandidateDirsExamined have been examined. Pure given
+// its inputs (testable); discoverLibrary() still vets every candidate.
+std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& baseDirs,
+                                                 const std::vector<juce::File>& companyDirs,
+                                                 const juce::String& company,
                                                  const juce::String& libraryName);
 
 // Pure discovery over a candidate list (testable).

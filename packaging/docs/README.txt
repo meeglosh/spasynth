@@ -11,7 +11,6 @@ WHAT'S IN THIS PACKAGE
 ----------------------
   SPASynth-<version>-macOS.pkg        macOS installer (AU, VST3, standalone)
   SPASynth-<version>-Windows.exe      Windows installer (VST3, standalone)
-  Library/                            Silverplatter SFX packs for SPASynth
   QUICKSTART.txt                      Five minutes to your first sound
   EULA.txt                            The license (short and friendly)
 
@@ -33,19 +32,33 @@ Windows: run the setup .exe. It installs:
 
 INSTALLING THE LIBRARY
 ----------------------
-Unzip the packs in Library/ into the shared documents folder:
+Your order includes a download link for the starter sound library, a
+single zip file. Its internal path already reads "Silverplatter Audio/
+SPASynth Library/<Pack Name>/", so wherever you extract it, those two
+folders (and the pack folders inside them) come along automatically.
 
-  macOS:    /Users/Shared/
-  Windows:  C:\Users\Public\Documents\
+macOS:
+  Extract the library zip into /Users/Shared/. You should end up with
+  /Users/Shared/Silverplatter Audio/SPASynth Library/ containing your
+  pack folders.
 
-Each zip already contains the full folder path
-("Silverplatter Audio/SPASynth Library/<Pack Name>/"), so extracting it
-in that location is all you need to do. SPASynth finds the library
-automatically the next time it opens and generates factory presets for
-every pack it finds, with no pointing and no scanning dialogs.
+Windows:
+  Open the Start Menu and click "SPASynth Sounds Folder" to open the
+  right destination, then extract the library zip there. Watch out:
+  Windows will suggest a destination with the zip's own name added to
+  the end of the path -- delete that last, extra folder name from the
+  destination box before you click Extract. You should end up with
+  C:\Users\Public\Documents\Silverplatter Audio\SPASynth Library\
+  containing your pack folders.
+
+Either way, SPASynth finds the library automatically the next time it
+opens and generates factory presets for every pack it finds, with no
+pointing and no scanning dialogs. If the sounds don't show up, use
+"SET LIBRARY..." in SPASynth's preset browser to point it at your
+library folder directly, then RESCAN to pick up anything added since.
 
 Prefer the library somewhere else (an external drive, say)? Extract the
-zips anywhere, then use "SET LIBRARY..." in SPASynth's preset browser to
+zip anywhere, then use "SET LIBRARY..." in SPASynth's preset browser to
 point at your "SPASynth Library" folder once.
 
 SPASynth accepts two folder layouts when you point it at a library: a
@@ -54,8 +67,8 @@ the layout above), or a plain folder of WAV files with no subfolders at
 all. Either way it finds the sounds and builds presets for them
 automatically.
 
-Standard edition: your Library/ folder contains the starter selection.
-Every add-on pack you buy later installs exactly the same way.
+Standard edition: the download above is the starter selection. Every
+add-on pack you buy later installs exactly the same way.
 
 ORGANIZING YOUR OWN PRESETS
 ----------------------------

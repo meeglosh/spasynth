@@ -4713,7 +4713,8 @@ namespace
         starterPack.createDirectory();
         starterPack.getChildFile ("a.wav").replaceWithData ("x", 1);
 
-        auto expanded = lib::expandLibraryCandidates ({ companyDir }, "SPASynth Library");
+        auto expanded = lib::expandLibraryCandidates ({}, { companyDir }, "Silverplatter Audio",
+                                                       "SPASynth Library");
         expect (! expanded.empty()
                     && expanded.front() == companyDir.getChildFile ("SPASynth Library"),
                 "canonical library name is the first candidate");
@@ -4724,7 +4725,8 @@ namespace
         const auto canonicalPack = canonical.getChildFile ("Real Pack");
         canonicalPack.createDirectory();
         canonicalPack.getChildFile ("b.wav").replaceWithData ("x", 1);
-        expect (lib::discoverLibrary (lib::expandLibraryCandidates ({ companyDir },
+        expect (lib::discoverLibrary (lib::expandLibraryCandidates ({}, { companyDir },
+                                                                    "Silverplatter Audio",
                                                                     "SPASynth Library"))
                     == canonical,
                 "canonical library outranks fallback folders");
@@ -4732,6 +4734,128 @@ namespace
         companyDir.deleteRecursively();
         realLib.deleteRecursively();
         emptyDir.deleteRecursively();
+    }
+
+    // Covers the real Windows beta report: Explorer's "Extract All" defaults
+    // to a wrapper folder named after the zip, so a customer extracting the
+    // starter zip into Public Documents ends up with an extra folder level
+    // between the base dir and "Silverplatter Audio/SPASynth Library".
+    // expandLibraryCandidates() must still find it, without walking a tree.
+    static void libraryDiscoveryLayoutsTest()
+    {
+        std::cout << "libraryDiscoveryLayoutsTest\n";
+
+        namespace lib = spa::library;
+
+        const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getNonexistentChildFile ("spasynth-discovery-layouts", "");
+        tmp.createDirectory();
+        const juce::String company = "Silverplatter Audio";
+        const juce::String libName = "SPASynth Library";
+
+        auto makeLibraryAt = [] (const juce::File& dir)
+        {
+            const auto pack = dir.getChildFile ("Pack");
+            pack.createDirectory();
+            pack.getChildFile ("a.wav").replaceWithData ("x", 1);
+        };
+
+        // 1. Canonical: <company>/SPASynth Library.
+        {
+            const auto base = tmp.getChildFile ("canonical");
+            const auto companyDir = base.getChildFile (company);
+            const auto canonical = companyDir.getChildFile (libName);
+            makeLibraryAt (canonical);
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            expect (! candidates.empty() && candidates.front() == canonical,
+                    "canonical company-dir library is the first candidate");
+            expect (lib::discoverLibrary (candidates) == canonical,
+                    "canonical layout is discovered");
+        }
+
+        // 2. Windows Extract All: <base>/SPASynth-Starter-Library/
+        // Silverplatter Audio/SPASynth Library.
+        {
+            const auto base = tmp.getChildFile ("winextract");
+            const auto companyDir = base.getChildFile (company);   // does not exist
+            const auto wrapper = base.getChildFile ("SPASynth-Starter-Library")
+                                     .getChildFile (company).getChildFile (libName);
+            makeLibraryAt (wrapper);
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            expect (lib::discoverLibrary (candidates) == wrapper,
+                    "Windows Extract All wrapper layout is discovered");
+        }
+
+        // 3. Wrapper inside the company dir: <company>/SPASynth-Starter-
+        // Library/SPASynth Library.
+        {
+            const auto base = tmp.getChildFile ("companywrapper");
+            const auto companyDir = base.getChildFile (company);
+            const auto wrapper = companyDir.getChildFile ("SPASynth-Starter-Library")
+                                     .getChildFile (libName);
+            makeLibraryAt (wrapper);
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            expect (lib::discoverLibrary (candidates) == wrapper,
+                    "wrapper folder inside the company dir is discovered");
+        }
+
+        // 4. Direct: <base>/SPASynth Library (company-dir level skipped).
+        {
+            const auto base = tmp.getChildFile ("directbase");
+            const auto companyDir = base.getChildFile (company);   // does not exist
+            const auto direct = base.getChildFile (libName);
+            makeLibraryAt (direct);
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            expect (lib::discoverLibrary (candidates) == direct,
+                    "library extracted straight into the base dir is discovered");
+        }
+
+        // 5. Canonical PLUS a decoy wrapper -- canonical must still win.
+        {
+            const auto base = tmp.getChildFile ("decoy");
+            const auto companyDir = base.getChildFile (company);
+            const auto canonical = companyDir.getChildFile (libName);
+            makeLibraryAt (canonical);
+            const auto decoy = base.getChildFile ("Old-Zip-Name")
+                                   .getChildFile (company).getChildFile (libName);
+            makeLibraryAt (decoy);
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            expect (lib::discoverLibrary (candidates) == canonical,
+                    "canonical library outranks a decoy wrapper folder");
+        }
+
+        // 6. A base dir with many sibling folders: the directory-examination
+        // cap must be respected and the call must still return promptly (no
+        // wall-clock timing -- assert on the candidate count staying bounded
+        // instead, which only holds if the cap actually stopped the scan).
+        {
+            const auto base = tmp.getChildFile ("manysiblings");
+            const auto companyDir = base.getChildFile (company);   // does not exist
+            base.createDirectory();
+            const int siblingCount = lib::maxCandidateDirsExamined + 50;
+            for (int i = 0; i < siblingCount; ++i)
+                base.getChildFile ("sibling-" + juce::String (i)).createDirectory();
+
+            const auto candidates = lib::expandLibraryCandidates ({ base }, { companyDir },
+                                                                   company, libName);
+            // One "<base>/anything>/company/libName" candidate per sibling
+            // examined, capped at maxCandidateDirsExamined -- if the cap were
+            // ignored this would be ~siblingCount candidates instead.
+            expect ((int) candidates.size() <= lib::maxCandidateDirsExamined + 4,
+                    "sibling scan stops at the directory-examination cap");
+        }
+
+        tmp.deleteRecursively();
     }
 
     // WAV files sitting directly in a library root (no pack subfolder) form
@@ -4825,6 +4949,43 @@ namespace
                 juce::AudioFormatWriterOptions().withSampleRate (48000.0)
                     .withNumChannels (1).withBitsPerSample (24)))
             writer->writeFromAudioSampleBuffer (buffer, 0, 4800);
+    }
+
+    // End-to-end: a library laid out the Windows Extract All way is actually
+    // picked up by scanLibrary() through the discovery path a real install
+    // would use, not just by the pure candidate-expansion helper above.
+    static void libraryDiscoveryLayoutsEndToEndTest()
+    {
+        std::cout << "libraryDiscoveryLayoutsEndToEndTest\n";
+
+        namespace lib = spa::library;
+
+        const auto savedRoot = lib::getLibraryRoot();
+        lib::setLibraryRoot ({});   // force rediscovery, not the configured root
+
+        const auto base = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getNonexistentChildFile ("spasynth-e2e-winextract", "");
+        const auto wrapperLib = base.getChildFile ("SPASynth-Starter-Library")
+                                    .getChildFile ("Silverplatter Audio")
+                                    .getChildFile ("SPASynth Library");
+        const auto pack = wrapperLib.getChildFile ("Pack");
+        pack.createDirectory();
+        writeFakePackWav (pack, "one.wav");
+
+        const auto candidates = spa::library::expandLibraryCandidates (
+            { base }, { base.getChildFile ("Silverplatter Audio") },
+            "Silverplatter Audio", "SPASynth Library");
+        const auto discovered = lib::discoverLibrary (candidates);
+        expect (discovered == wrapperLib,
+                "wrapper-layout library is discovered among real-shaped candidates");
+
+        lib::setLibraryRoot (discovered);
+        const auto packs = lib::scanLibrary (lib::findLibraryRoot());
+        expect (packs.size() == 1 && packs[0].wavs.size() == 1,
+                "scanLibrary sees the pack once discovery lands on the wrapper folder");
+
+        base.deleteRecursively();
+        lib::setLibraryRoot (savedRoot);
     }
 
     // Queued for 1.0.16 (Phil's pack-didn't-appear report): SPASynth now
@@ -4927,6 +5088,198 @@ namespace
         }
 
         libRoot.deleteRecursively();
+        lib::setLibraryRoot (savedRoot);
+    }
+
+    // Regression test (2026-09-15): with no library root configured,
+    // computeLibraryFingerprint() used to call library::findLibraryRoot(),
+    // which runs full auto-discovery (a probe across ~300 candidate
+    // directories) AND persists whatever it finds -- and the watcher called
+    // it every ~3s while an editor is open. Fixed so the cheap per-tick
+    // fingerprint only ever reads the configured root, and full discovery
+    // (when no root is configured) is a separate path throttled to at most
+    // once per libraryWatchDiscoveryIntervalMs. This test proves the
+    // throttle: with no root configured and the watcher ticking far faster
+    // than the (test-shortened) discovery interval, the number of actual
+    // discovery attempts must be far below the number of ticks -- and with a
+    // root configured, there must be NONE at all.
+    static void libraryWatchDiscoveryThrottleTest()
+    {
+        std::cout << "libraryWatchDiscoveryThrottleTest\n";
+
+        namespace lib = spa::library;
+        const auto savedRoot = lib::getLibraryRoot();
+
+        auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
+
+        // --- no root configured: discovery must run, but throttled -------
+        //
+        // NOTE: setSkipActualDiscoveryForTest(true) is used here. On this dev
+        // machine (and Mike's) a real library genuinely exists at one of the
+        // default discovery locations, so a real discovery attempt from a
+        // cleared root SUCCEEDS and runs a real scan + factory-preset
+        // generation -- costing real, variable wall-clock time per attempt,
+        // which would make the timing in this test non-deterministic (and
+        // slow) no matter how the throttle behaves. The skip flag makes each
+        // simulated attempt free while still running every bit of the
+        // throttle/gating logic under test (the increment + the
+        // now-vs-nextLibraryDiscoveryMs check), so the tick vs. attempt ratio
+        // is measured cleanly.
+        {
+            lib::setLibraryRoot (juce::File());   // clear -- nothing configured
+
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            proc.setSkipActualDiscoveryForTest (true);
+            // The ctor's own buildStateTree() call (via PresetManager
+            // capturing defaultState) synchronously stamps portable content
+            // paths using library::findLibraryRoot() -- unrelated to and not
+            // gated by setSkipActualDiscoveryForTest() above -- and on this
+            // machine that succeeds against the real library. Re-clear so
+            // the watcher genuinely faces an unconfigured root below.
+            lib::setLibraryRoot (juce::File());
+            // Watcher tick every 5ms (so every real ~150ms Timer tick counts),
+            // discovery itself throttled to 300ms -- roughly one throttled
+            // attempt per 2 ticks. If the throttle were reverted (discovery
+            // attempted on every due tick instead), attempts would instead
+            // equal the tick count.
+            proc.setLibraryWatchIntervalsForTest (5, 5);
+            proc.setLibraryWatchDiscoveryIntervalForTest (300);
+
+            // The ctor also scheduled its OWN one-time async refreshLibrary()
+            // (a completely separate mechanism from the watcher, unaffected
+            // by setSkipActualDiscoveryForTest()); once the pump below lets
+            // it run, it too will really find the real library and persist a
+            // root. Re-clear after every slice so the watcher keeps facing
+            // an unconfigured root regardless (that one-time real scan still
+            // happens once, but costs nothing further after that).
+            for (int i = 0; i < 18; ++i)
+            {
+                pump (50);
+                lib::setLibraryRoot (juce::File());
+            }
+
+            const auto attempts = proc.getLibraryDiscoveryAttemptCountForTest();
+            expect (attempts >= 1, "discovery does run at least once when no root is configured");
+            expect (attempts <= 4,
+                    "discovery attempts are bounded by the throttle, not by the tick count "
+                    "(reverting the fix would attempt discovery on ~every due tick, ~6 times here)");
+        }
+
+        // --- a configured root must never trigger discovery from the watcher
+        {
+            const auto libRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-throttle-lib", "");
+            libRoot.createDirectory();
+            writeFakePackWav (libRoot.getChildFile ("Pack A"), "one.wav");
+            lib::setLibraryRoot (libRoot);
+
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            proc.setLibraryWatchIntervalsForTest (5, 5);
+            proc.setLibraryWatchDiscoveryIntervalForTest (5);   // would fire constantly if not gated
+
+            pump (400);
+
+            expect (proc.getLibraryDiscoveryAttemptCountForTest() == 0,
+                    "with a root configured, the watcher never runs full discovery");
+
+            libRoot.deleteRecursively();
+        }
+
+        lib::setLibraryRoot (savedRoot);
+    }
+
+    // Regression test (2026-09-15): the empty-library editor prompt. Drives
+    // the one-shot decision predicate directly (the native message box can't
+    // be exercised headlessly) -- proves it fires exactly once when there's
+    // no usable library, and never at all when a root is configured (even an
+    // empty one, which has its own separate messaging via Rescan/the picker).
+    static void emptyLibraryPromptTest()
+    {
+        std::cout << "emptyLibraryPromptTest\n";
+
+        namespace lib = spa::library;
+        const auto savedRoot = lib::getLibraryRoot();
+
+        // NOTE: deliberately NOT pumping the message loop in this test. The
+        // processor ctor schedules its own one-time refreshLibrary() via
+        // MessageManager::callAsync (async, so it can't run without a pump --
+        // never observed here). BUT buildStateTree() -- called SYNCHRONOUSLY
+        // inside the ctor, via PresetManager's constructor capturing
+        // defaultState -- stamps portable ($LIB$) content paths using
+        // library::findLibraryRoot(), which (like the watcher, see
+        // libraryWatchDiscoveryThrottleTest above) runs real auto-discovery
+        // when no root is configured. On this machine a real library
+        // genuinely exists at a default location, so that synchronous call
+        // finds it and persists a root -- even with zero pumping. It does
+        // NOT touch lastLibraryPackCount (that's only set by refreshLibrary's
+        // full scan), so to get a deterministic "no usable library" scenario
+        // the root is re-cleared right after construction, simulating a
+        // library that was there a moment ago and is not anymore (the same
+        // real-world shape as an unplugged drive).
+        // --- no root, no packs found yet: true once, then false ----------
+        {
+            lib::setLibraryRoot (juce::File());
+
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            lib::setLibraryRoot (juce::File());   // re-clear: see NOTE above
+
+            expect (proc.getLibraryPackCount() == 0, "sanity: no refresh has run yet in this processor instance");
+            expect (proc.consumeEmptyLibraryPromptDecision() == true,
+                    "first call: no usable library -> prompt should show");
+            expect (proc.consumeEmptyLibraryPromptDecision() == false,
+                    "second call: one-shot, must not fire again");
+
+            // Persistence: the decision must be recorded in the settings
+            // singleton itself, not an in-process member -- so it must
+            // already read back true here, before any fresh processor exists.
+            expect (lib::getEmptyLibraryPromptShown() == true,
+                    "decision must be persisted to the settings singleton immediately");
+        }
+
+        // --- persists across a brand-new processor instance, i.e. what a
+        // fresh plugin instantiation (a new editor open, a new host session)
+        // looks like. This must FAIL if the guard ever regresses to an
+        // in-process bool. ------------------------------------------------
+        {
+            lib::setLibraryRoot (juce::File());   // re-clear: see NOTE above
+
+            spa::SPASynthProcessor proc2;
+            proc2.prepareToPlay (48000.0, 512);
+            lib::setLibraryRoot (juce::File());   // re-clear: see NOTE above
+
+            expect (proc2.getLibraryPackCount() == 0, "sanity: no refresh has run yet in this fresh processor instance");
+            expect (proc2.consumeEmptyLibraryPromptDecision() == false,
+                    "a FRESH processor instance must still see the prompt as already shown, "
+                    "since the earlier decision was persisted, not held in an in-process member");
+
+            // Confirm the flag is actually present in the (hermetically
+            // overridden) settings file on disk, not just in memory.
+            const auto settingsFile = lib::getSettingsFile();
+            expect (settingsFile.existsAsFile(), "settings file must exist on disk by now");
+            expect (settingsFile.loadFileAsString().contains ("emptyLibraryPromptShown"),
+                    "emptyLibraryPromptShown key must be written to the settings file");
+        }
+
+        // --- a configured root (even with packs) must never prompt -------
+        {
+            const auto libRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-emptyprompt-lib", "");
+            libRoot.createDirectory();
+            writeFakePackWav (libRoot.getChildFile ("Pack A"), "one.wav");
+            lib::setLibraryRoot (libRoot);
+
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+
+            expect (proc.consumeEmptyLibraryPromptDecision() == false,
+                    "a configured root must never trigger the empty-library prompt");
+
+            libRoot.deleteRecursively();
+        }
+
         lib::setLibraryRoot (savedRoot);
     }
 
@@ -12130,9 +12483,13 @@ int main (int argc, char* argv[])
     glideTest();
     libraryScanTest();
     libraryDiscoveryTest();
+    libraryDiscoveryLayoutsTest();
     looseWavLibraryTest();
     libraryRootPersistsWhenEmptyTest();
+    libraryDiscoveryLayoutsEndToEndTest();
     libraryAutoRefreshTest();
+    libraryWatchDiscoveryThrottleTest();
+    emptyLibraryPromptTest();
     presetRoundTripTest();
     presetBankTest();
     malformedPresetTest();

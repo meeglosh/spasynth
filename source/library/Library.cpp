@@ -177,58 +177,128 @@ std::vector<juce::File> defaultLibraryLocations()
 {
     const juce::String company = "Silverplatter Audio";
 
+    std::vector<juce::File> baseDirs;
     std::vector<juce::File> companyDirs;
 
     // Shared, user-writable, visible across accounts — the primary install
     // target (/Users/Shared on macOS, Public Documents on Windows).
-    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::commonDocumentsDirectory)
-                               .getChildFile (company));
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::commonDocumentsDirectory));
 
     // System-wide application data.
    #if JUCE_MAC
-    companyDirs.push_back (juce::File ("/Library/Application Support").getChildFile (company));
+    baseDirs.push_back (juce::File ("/Library/Application Support"));
    #else
-    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
-                               .getChildFile (company));
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory));
    #endif
 
     // Per-user application data.
-    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                              #if JUCE_MAC
-                               .getChildFile ("Application Support")
-                              #endif
-                               .getChildFile (company));
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                        #if JUCE_MAC
+                         .getChildFile ("Application Support")
+                        #endif
+                        );
 
     // User documents (people drag content there more often than anywhere).
-    companyDirs.push_back (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                               .getChildFile (company));
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
 
-    return expandLibraryCandidates (companyDirs, "SPASynth Library");
+    // Downloads and Desktop: JUCE has no dedicated SpecialLocationType for
+    // Downloads on either platform, but both live directly under the user's
+    // home dir on macOS and Windows, so this is reliable without one.
+    // People extract zips wherever the browser put them (Downloads) or
+    // straight onto the Desktop, and never move the result -- probe both.
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+                            .getChildFile ("Downloads"));
+    baseDirs.push_back (juce::File::getSpecialLocation (juce::File::userDesktopDirectory));
+
+    for (const auto& base : baseDirs)
+        companyDirs.push_back (base.getChildFile (company));
+
+    return expandLibraryCandidates (baseDirs, companyDirs, company, "SPASynth Library");
 }
 
-std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& companyDirs,
+std::vector<juce::File> expandLibraryCandidates (const std::vector<juce::File>& baseDirs,
+                                                 const std::vector<juce::File>& companyDirs,
+                                                 const juce::String& company,
                                                  const juce::String& libraryName)
 {
     std::vector<juce::File> candidates;
+    int examined = 0;
 
-    for (const auto& dir : companyDirs)
-        candidates.push_back (dir.getChildFile (libraryName));
+    auto addUnique = [&] (const juce::File& f)
+    {
+        if (std::find (candidates.begin(), candidates.end(), f) == candidates.end())
+            candidates.push_back (f);
+    };
 
-    // Fallback: any other folder sitting in a company dir. Customers end up
-    // here by dragging the inner folder out of the zip or renaming it — the
-    // README promises "no pointing, no scanning dialogs", so probe those too.
-    // discoverLibrary() vets each candidate with looksLikeLibrary(), and the
-    // canonical names above always win when present.
-    for (const auto& dir : companyDirs)
+    auto sortedChildDirs = [] (const juce::File& dir)
     {
         auto children = dir.findChildFiles (juce::File::findDirectories, false);
         std::sort (children.begin(), children.end(),
                    [] (const juce::File& a, const juce::File& b)
                    { return a.getFullPathName().compareIgnoreCase (b.getFullPathName()) < 0; });
+        return children;
+    };
 
-        for (const auto& child : children)
-            if (std::find (candidates.begin(), candidates.end(), child) == candidates.end())
-                candidates.push_back (child);
+    // 1. Canonical: "<companyDir>/<libraryName>". Always wins when present.
+    for (const auto& dir : companyDirs)
+        addUnique (dir.getChildFile (libraryName));
+
+    // 2. "<companyDir>/<anything>/<libraryName>" -- a wrapper folder still
+    // inside the right company dir (e.g. Extract All run a second time into
+    // an existing Silverplatter Audio folder).
+    for (const auto& dir : companyDirs)
+    {
+        if (examined >= maxCandidateDirsExamined)
+            break;
+
+        for (const auto& child : sortedChildDirs (dir))
+        {
+            if (examined++ >= maxCandidateDirsExamined)
+                break;
+            addUnique (child.getChildFile (libraryName));
+        }
+    }
+
+    // 3. "<baseDir>/<libraryName>" -- the user extracted only the inner
+    // folder, skipping the company-dir level entirely.
+    for (const auto& dir : baseDirs)
+        addUnique (dir.getChildFile (libraryName));
+
+    // 4. "<baseDir>/<anything>/<company>/<libraryName>" -- Windows
+    // Explorer's "Extract All" default wraps the zip's contents in a folder
+    // named after the zip, so our real "Silverplatter Audio/SPASynth
+    // Library" payload sits one level deeper than usual under wherever the
+    // zip was extracted (typically Downloads or Documents).
+    for (const auto& dir : baseDirs)
+    {
+        if (examined >= maxCandidateDirsExamined)
+            break;
+
+        for (const auto& child : sortedChildDirs (dir))
+        {
+            if (examined++ >= maxCandidateDirsExamined)
+                break;
+            addUnique (child.getChildFile (company).getChildFile (libraryName));
+        }
+    }
+
+    // 5. Last resort: any other folder sitting directly in a company dir.
+    // Customers end up here by dragging the inner folder out of the zip and
+    // renaming it — the README promises "no pointing, no scanning dialogs",
+    // so probe those too. discoverLibrary() vets each candidate with
+    // looksLikeLibrary(), and every named candidate above always wins when
+    // present.
+    for (const auto& dir : companyDirs)
+    {
+        if (examined >= maxCandidateDirsExamined)
+            break;
+
+        for (const auto& child : sortedChildDirs (dir))
+        {
+            if (examined++ >= maxCandidateDirsExamined)
+                break;
+            addUnique (child);
+        }
     }
 
     return candidates;
@@ -322,6 +392,17 @@ bool getAccentsLinked()
 void setAccentsLinked (bool linked)
 {
     settings().setValue ("accentsLinked", linked);
+    settings().saveIfNeeded();
+}
+
+bool getEmptyLibraryPromptShown()
+{
+    return settings().getBoolValue ("emptyLibraryPromptShown", false);
+}
+
+void setEmptyLibraryPromptShown (bool shown)
+{
+    settings().setValue ("emptyLibraryPromptShown", shown);
     settings().saveIfNeeded();
 }
 

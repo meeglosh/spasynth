@@ -124,6 +124,10 @@ private:
     void chooseLibraryFolder();
     void rescanLibrary();
     void saveUserPreset();
+    // One-time "we couldn't find your library" prompt for a first-time
+    // buyer whose extraction went wrong -- see processor's
+    // consumeEmptyLibraryPromptDecision(). Called once from the ctor.
+    void maybeShowEmptyLibraryPrompt();
 
     // Header button showing the two accents as a split circle; clicking
     // drops down the colour picker.

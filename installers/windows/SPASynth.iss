@@ -49,5 +49,23 @@ Source: "..\..\packaging\docs\README.txt"; DestDir: "{app}"; Flags: ignoreversio
 Source: "..\..\packaging\docs\QUICKSTART.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\packaging\docs\EULA.txt"; DestDir: "{app}"; Flags: ignoreversion
 
+; Pre-create the library destination so customers have somewhere obvious to
+; unzip the sound library into. "users-modify" grants the normal
+; (non-admin) user account write access to a folder under {commondocs},
+; which otherwise inherits admin-only permissions from a per-machine
+; install -- without this, extracting the library zip here would fail or
+; silently require elevation.
+[Dirs]
+Name: "{commondocs}\Silverplatter Audio\SPASynth Library"; Permissions: users-modify; \
+    Flags: uninsneveruninstall
+
 [Icons]
 Name: "{group}\SPASynth"; Filename: "{app}\SPASynth.exe"; Components: app
+; C:\Users\Public\Documents isn't in Explorer's sidebar and most customers
+; never find it on their own. The library zip's internal paths are rooted
+; ABOVE the "SPASynth Library" folder we pre-create above (each zip
+; contains "Silverplatter Audio/SPASynth Library/<Pack>/"), so the
+; shortcut must open {commondocs} itself -- the extraction destination --
+; not the "SPASynth Library" folder one level down, or extracting there
+; would nest the path a second time.
+Name: "{group}\SPASynth Sounds Folder"; Filename: "{commondocs}"

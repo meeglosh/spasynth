@@ -7,6 +7,15 @@
   a rescan. The Rescan button remains for forcing one.
 - Fixed a rare crash when the plugin window was closed within a moment of
   dismissing the VOICE panel.
+- Setting up the sound library on Windows is friendlier. Our installer now
+  creates the destination folder and adds a "SPASynth Sounds Folder" item to
+  the Start Menu that opens it, so there is no hunting for the right place.
+  We also find the library in more of the places it realistically ends up,
+  including when Windows adds an extra folder of its own while extracting the
+  zip, and when the library is still sitting in Downloads or on the Desktop.
+- If we cannot find a sound library at all, we now say so the first time you
+  open SPASynth and offer to take you straight to the folder picker, instead
+  of leaving you with an empty preset browser and no explanation.
 
 ## 1.0.15
 

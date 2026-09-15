@@ -388,7 +388,13 @@ void SPASynthProcessor::timerCallback()
 
 juce::String SPASynthProcessor::computeLibraryFingerprint() const
 {
-    const auto root = library::findLibraryRoot();
+    // Configured root only -- NEVER run discovery here. This runs every
+    // ~3s while an editor is open (see the timer above); findLibraryRoot()
+    // used to be called here and, with no root configured, would run its
+    // full multi-hundred-directory auto-discovery probe on every tick (and
+    // persist whatever it found) -- see tickLibraryWatch() for the throttled
+    // discovery path that replaces that behaviour.
+    const auto root = library::getLibraryRoot();
     if (! root.isDirectory())
         return "<missing>";
 
@@ -407,6 +413,27 @@ juce::String SPASynthProcessor::computeLibraryFingerprint() const
 
 void SPASynthProcessor::tickLibraryWatch()
 {
+    if (! library::getLibraryRoot().isDirectory())
+    {
+        // No root configured: computeLibraryFingerprint() deliberately never
+        // runs discovery (see its comment), so on its own the watcher would
+        // never notice a library appearing in a default install location.
+        // Run full discovery (refreshLibrary(), which calls
+        // library::findLibraryRoot()'s multi-hundred-directory probe and
+        // persists whatever it finds) here instead -- but throttled hard,
+        // since that's the exact expensive walk this fix exists to stop
+        // running every tick.
+        const auto now = juce::Time::getMillisecondCounter();
+        if (now < nextLibraryDiscoveryMs)
+            return;
+
+        nextLibraryDiscoveryMs = now + (juce::uint32) juce::jmax (0, libraryWatchDiscoveryIntervalMs);
+        ++libraryDiscoveryAttemptCountForTest;
+        if (! skipActualDiscoveryForTest)
+            refreshLibrary();   // no-op fingerprint side effects if still nothing found
+        return;
+    }
+
     const auto fp = computeLibraryFingerprint();
 
     if (fp == lastScannedLibraryFingerprint)

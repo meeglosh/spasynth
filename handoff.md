@@ -223,7 +223,24 @@ is the short version.
   to Sample via `setValueNotifyingHost`. Highlight is border-only using
   Theme's assign glow token (same blue as ASSIGN, deliberately: it means
   "this is a target"). `oscStripFileDropTest`.
-Suite 1408 ALL PASS (Debug x2, Release, ASan, leak checks clean).
+- `8a4aed1` **new mod routes start at half depth** (user report: "every row
+  should come standard with at least .5 level" -- rows were silent because
+  Depth is bipolar and defaults to 0). Parameter default deliberately LEFT
+  at 0 (correct centre and correct reset for a bipolar control);
+  `maybeAutoFillRouteDepth` in MatrixPanel.h nudges to +0.5 only when a row
+  becomes complete AND depth is still exactly 0. **The rule that must not
+  be broken: this fires on genuine user edits only.** Preset load, session
+  restore, reset-to-default and RANDOMIZE ALL all write parameters
+  programmatically and a saved route deliberately at 0 must survive. ASSIGN
+  is inherently user-only; the dropdowns use `RouteComboBox`, whose flag is
+  set in the virtual `showPopup()` that JUCE reaches only from mouse/key
+  handling, never from an attachment sync. An abandoned popup clears the
+  flag via a self-stopping 40 ms poll on `isPopupActive()` -- without that,
+  opening a dropdown, backing out, then loading a preset silently rewrote
+  the preset's depth, which is the bug class to watch for here. Failure
+  direction is deliberately "missed nudge", never "rewritten value".
+  `modRouteAutoDepthTest` has guards for all four programmatic paths.
+Suite 1431 ALL PASS (Debug x2, Release, ASan, leak checks clean).
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

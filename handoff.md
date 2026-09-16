@@ -256,7 +256,14 @@ exercise that are new here: drag audio onto an oscillator, ASSIGN single vs
 double click, a freshly made mod route being audible immediately, and a
 saved preset with a deliberately zeroed route still loading at zero.
 
-## Planned for 1.0.17 (Mike, 2026-09-16)
+## Planned for 1.1.0 (Mike, 2026-09-16)
+
+**Version: 1.1.0, not 1.0.17** (Mike's call). First minor bump since
+launch, because this round changes the plugin's SHAPE rather than its
+behaviour: an audio input bus and a new serialized FX module. Both items
+below ship together in it. (Note for anyone reading a stray reference to
+"1.0.2" in older notes: that was a slip, 1.0.2 shipped 2026-07 and is the
+build that first went to Paul and Phil.)
 
 - **Direct Audio Input** (Phil). See the parked write-up in the editions
   section above for why it waited and the three implementation paths;

@@ -201,7 +201,20 @@ is the short version.
   of the library folder on both platforms (`/Users/Shared`,
   `C:\Users\Public\Documents`), because the zip carries
   "Silverplatter Audio/SPASynth Library/" inside it.
-Suite 1366 ALL PASS (Debug x2, Release, ASan, leak checks clean).
+- `7e73983` **ASSIGN one-shot + latch** (Mike, 2026-09-16). Single click
+  arms one route and exits as soon as the row just written has BOTH a
+  source and a destination (his call over "any single assignment"), so
+  writing a destination into a row that already had a source exits
+  immediately. Double click latches, caps-lock style, and latch is
+  unconditional from any starting mode. Padlock glyph marks latch (his
+  choice over a filled button or a longer label). `MatrixPanel::AssignMode`
+  is the single source of truth with JUCE's own toggling disabled;
+  `AssignOverlay::maybeCompleteOneShot` checks both route params against
+  the real "None" index 0 from ParameterRegistry. Gotcha for anyone
+  touching this: JUCE dispatches BOTH ordinary clicks before
+  `mouseDoubleClick` (juce_Component.cpp internalMouseUp), so the double
+  click handler promotes whatever the clicks left behind.
+Suite 1389 ALL PASS (Debug x2, Release, ASan, leak checks clean).
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

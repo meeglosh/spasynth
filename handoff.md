@@ -170,7 +170,7 @@ is the short version.
 - Open question (Mike): send SPASynth Pro buyers to the EB PDP instead of
   a separate Pro PDP.
 
-## 1.0.16 in progress (2026-09-14; main `6caebe4`, NOT yet built)
+## 1.0.16 BUILT + STAGED (2026-09-16, main `0858427`), awaiting Mike's install
 
 1.0.15 was SENT to Paul and Phil and tested by Mike. Landed since:
 - `0afe777` **library auto-refresh** (design below, implemented as spec'd:
@@ -241,6 +241,48 @@ is the short version.
   direction is deliberately "missed nudge", never "rewritten value".
   `modRouteAutoDepthTest` has guards for all four programmatic paths.
 Suite 1431 ALL PASS (Debug x2, Release, ASan, leak checks clean).
+
+**1.0.16 artifacts (2026-09-16):** macOS pkg from `0858427`, signed +
+notarized + stapled, `spctl` accepted, universal (x86_64 + arm64), minos
+11.0, md5 `c821da7a04130867a8c0ddc5c33ce549`. Windows exe from draft release
+`ci-windows-0858427`, md5 `08dd4a22a9935ea7965e7491a8cdfe4e`. Both
+byte-identical across `dist/installers/` and
+`dist/shopify/SPASynth-{Standard,Pro}-1.0.16/`. Dev plugin copies cleared.
+**Pending: Mike installs (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.16-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic), runs
+the gauntlet, and sends both installers to Paul and Phil.** Things to
+exercise that are new here: drag audio onto an oscillator, ASSIGN single vs
+double click, a freshly made mod route being audible immediately, and a
+saved preset with a deliberately zeroed route still loading at zero.
+
+## Planned for 1.0.17 (Mike, 2026-09-16)
+
+- **Direct Audio Input** (Phil). See the parked write-up in the editions
+  section above for why it waited and the three implementation paths;
+  capture-to-slot over a sidechain bus is the recommended one. The bus
+  topology change is the risk, so give it its own round and its own Logic
+  verification.
+- **Granular effect** in the style of Absynth's Aetherizer. Starting param
+  set: grain size, density, pitch, spread, feedback, mix, plus a freeze that
+  holds the buffer. Two things established while scoping it:
+  - **Do NOT merge Reverb and Convolve into one tab** to make room. Their
+    ids live in an append-only enum packed into every preset's FX order;
+    removing one breaks saved presets, and a merged tab also breaks
+    per-module drag reorder.
+  - **Adding a 10th module has a hidden migration bug.**
+    `FXChain::unpackOrder` reads exactly `numModules` nibbles, so bumping 9
+    to 10 makes it read a tenth entry out of old nine-module values, see a
+    duplicate, decide the value is corrupt and fall back to the default
+    order. Every preset with a custom FX order would silently revert.
+    Handle a short packed value explicitly by appending the new module.
+  - **Space: rebalance row 3** (Mike's call). The FX tab bar is 44% of the
+    row with the matrix taking the rest; nine tabs sit in roughly 600 px
+    and a tenth needs about 60 more, which is about five points moved from
+    the matrix. Shortening labels alone does not work, since EQ and MOD are
+    already on the tab-width floor.
+  - The live ring buffer this needs is the same machinery Direct Audio
+    Input's rolling-buffer option would want, so build them in that order.
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

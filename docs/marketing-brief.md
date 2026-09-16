@@ -9,7 +9,7 @@ numbers beyond what is listed here.
 ## Product in one sentence
 
 SPASynth is a hybrid synthesizer built around the entire Silverplatter Audio
-sound-effects library, 90 packs and more than 11,000 production-ready sounds
+sound-effects library, 90 packs and 11,479 production-ready sounds
 that act as oscillators, granular fuel, and modulation sources inside a full
 wavetable synth with an organic-chaos engine and a one-button patch
 randomizer.
@@ -60,7 +60,7 @@ randomizer.
   library.
 - **In-pack quick-swap**: audition every variant in a pack straight from the
   oscillator: click the sample name for a dropdown of the whole pack. No file
-  dialogs, no browser trip. Turns more than 11,000 sounds into something you
+  dialogs, no browser trip. Turns up to 11,818 sounds into something you
   can actually explore while you play.
 - **Granular**: grain size, density, position, spray, and pitch over any
   sample; scrub the playhead with an LFO for evolving textures.
@@ -123,7 +123,7 @@ randomizer.
   with ping-pong, reverb, 3-band EQ, each with a live signal-fed scope.
 
 ### The library & presets
-- **90 Silverplatter Audio packs, more than 11,000 sounds**: our original
+- **90 Silverplatter Audio packs, 11,479 sounds**: our original
   masters at 24-bit/96 kHz, production-ready for film and TV work (Pro
   edition, delivered through the customer's Shopify downloads or our
   companion app, SPAStation; Standard ships a 450-sound starter selection
@@ -153,7 +153,7 @@ randomizer.
 - **SPASynth Standard**: the full synth, all features, all 270 presets, with
   a 450-sound starter library (5 representative sounds from all 90 packs).
 - **SPASynth Pro**: the same synth plus our Everything Bundle entitlement,
-  the complete library, more than 11,000 sounds, our original masters at
+  the complete library, up to 11,818 sounds, our original masters at
   24-bit/96 kHz.
 - **Standard to Pro upgrade**: pay the difference, download the full library
   through Shopify downloads or SPAStation, drop it in the same folder. No

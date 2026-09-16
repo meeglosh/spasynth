@@ -3,10 +3,14 @@
 Paste-ready launch email for the Silverplatter Audio mailing list. House style:
 no em dashes. Prices live in `[PRICE]` placeholders so the copy does not need
 editing when the intro period ends (current values in the pricing note below,
-and in `docs/shopify-listings.md`). Sound count is stated as "more than
-11,000 sounds" (no precise total is currently verifiable). Feature claims
-match the full shipping feature set (FX chain, voice modes, oversampling,
-on-screen keyboard included).
+and in `docs/shopify-listings.md`). Sound counts are verified via the
+SPAStation catalog (`~/spasynth-landing/scripts/update-library-stats.py`):
+90 packs hold 11,479 sounds; Pro/Everything Bundle owners get those plus
+339 Vault bonus recordings, up to 11,818 sounds total. Use the packs figure
+when the sentence is about the packs, and "up to 11,818" when it is about
+everything a Pro owner can play. Feature claims match the full shipping
+feature set (FX chain, voice modes, oversampling, on-screen keyboard
+included).
 
 ## Subject line options (pick one)
 
@@ -58,7 +62,7 @@ add that any time.
 Introductory price [PRICE], regularly [PRICE].
 
 **SPASynth Pro** is the same synth plus our Everything Bundle entitlement: the
-complete Silverplatter Audio collection, 90 packs, more than 11,000
+complete Silverplatter Audio collection, 90 packs, 11,479
 production-ready sounds, our original masters at 24-bit / 96 kHz, cleared for
 film and television.
 Launch price [PRICE], regularly [PRICE].
@@ -138,7 +142,7 @@ A few things it does:
 
 Two editions. Standard is the full synth with a 450-sound starter
 library. Pro is the same synth with the complete collection: 90 packs,
-more than 11,000 sounds, our original masters at 24-bit / 96 kHz,
+11,479 sounds, our original masters at 24-bit / 96 kHz,
 cleared for film and television. If you start with Standard, you can
 upgrade to Pro later for the difference.
 

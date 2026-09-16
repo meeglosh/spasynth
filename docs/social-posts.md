@@ -2,8 +2,11 @@
 
 Paste-ready launch posts for X and Instagram. House style: no em dashes. X keeps
 the link inline; Instagram uses "Link in bio" (IG captions are not clickable).
-Where a sound count is cited, use "more than 11,000 sounds" (no precise total
-is currently verifiable); feature claims match the full shipping feature set
+Where a sound count is cited, use the verified figures from the SPAStation
+catalog: 90 packs hold 11,479 sounds; Pro/Everything Bundle owners get those
+plus 339 Vault bonus recordings, up to 11,818 sounds total. Use the packs
+figure for the packs themselves, "up to 11,818" for what a Pro owner can
+play. Feature claims match the full shipping feature set
 (FX chain, voice modes, oversampling, on-screen keyboard included).
 Companion to `docs/launch-email.md` and `docs/shopify-listings.md`.
 

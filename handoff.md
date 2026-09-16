@@ -214,7 +214,16 @@ is the short version.
   touching this: JUCE dispatches BOTH ordinary clicks before
   `mouseDoubleClick` (juce_Component.cpp internalMouseUp), so the double
   click handler promotes whatever the clicks left behind.
-Suite 1389 ALL PASS (Debug x2, Release, ASan, leak checks clean).
+- `5e47bb7` **drag and drop audio** (Phil asked for an easier way to get
+  his own audio in; shipped instead of Direct Audio Input, see the
+  editions section above for why). `OscStrip` and `ConvolvePanel` are
+  `FileDragAndDropTarget`s; `oscContentExtensions/Wildcard/Accepts` in
+  ModulePanels is the ONE list both the choosers and the drop targets
+  read, so keep it that way. Dropping on a non-file mode switches the slot
+  to Sample via `setValueNotifyingHost`. Highlight is border-only using
+  Theme's assign glow token (same blue as ASSIGN, deliberately: it means
+  "this is a target"). `oscStripFileDropTest`.
+Suite 1408 ALL PASS (Debug x2, Release, ASan, leak checks clean).
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

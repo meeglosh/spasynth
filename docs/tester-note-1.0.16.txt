@@ -1,0 +1,23 @@
+SPASynth 1.0.16 - what's new since 1.0.15
+
+From your feedback
+- Drag and drop. You can now drag audio straight onto an oscillator from the Finder, from Explorer, or from your DAW's own browser, instead of going through the LOAD button. The oscillator lights up as you drag over it so you can see where the sound will land, and dropping onto an oscillator that is not already playing a file switches it to Sample for you. Convolve takes a dropped impulse response the same way.
+- New modulation routes are audible immediately. A route now arrives with its depth already at half, so connecting a source to a destination does something straight away instead of staying silent until you also turn the depth up. Routes you have already dialled in, including ones you deliberately set to zero, are never changed, and loading a preset never alters the depths it was saved with.
+- ASSIGN got quicker for single connections. It now switches itself back off once a route is complete, so a quick connection takes one click and no cleanup. Double click it instead to lock it on, the way caps lock works, and it stays on through as many assignments as you want. A small padlock on the button shows when it is locked. Esc still leaves either mode.
+- Setting up the sound library on Windows is much friendlier. Our installer now creates the destination folder and adds a "SPASynth Sounds Folder" item to the Start Menu that opens it, so there is no hunting for the right place. We also find the library in more of the places it realistically ends up, including when Windows adds an extra folder of its own while extracting the zip, and when the library is still sitting in Downloads or on the Desktop. The README now has separate macOS and Windows steps.
+- If we cannot find a sound library at all, we now say so the first time you open SPASynth and offer to take you straight to the folder picker, instead of leaving you with an empty preset browser and no explanation.
+
+Also in this build
+- The library refreshes itself when packs are added or removed, so packs installed by our companion app or copied in by hand appear without a rescan. The Rescan button remains for forcing one.
+- Fixed a rare crash when the plugin window was closed within a moment of dismissing the VOICE panel.
+
+Worth trying specifically
+- Drag a file onto each oscillator, including one that is set to Analog or FM.
+- Single click ASSIGN, make one route, and confirm it switches off by itself. Then double click it and make several.
+- Make a route and play it without touching the depth knob.
+- Open a preset you saved in 1.0.15 and confirm it sounds the same, especially if you had any routes deliberately turned down to zero.
+- Windows: install fresh and follow the README from the top, and tell us if anything about getting the library in place is still awkward.
+
+Install notes
+- macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

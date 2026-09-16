@@ -11,10 +11,19 @@ class SPASynthProcessor;
 namespace ui
 {
 
+// Extensions accepted for oscillator content -- ONE list read by both the
+// LOAD file chooser and drag-and-drop, so the two routes never disagree.
+// Wavetable mode excludes mp3 (matches the pre-existing chooser filter);
+// every other file-shaped mode (sample/granular) accepts it.
+juce::StringArray oscContentExtensions (bool wavetableMode);
+juce::String oscContentWildcard (bool wavetableMode);
+bool oscContentAccepts (const juce::String& filePathOrName, bool wavetableMode);
+
 // One oscillator column: scope on top, curated mode-aware controls below —
 // the panel reshapes itself for Wavetable / Sample / Granular like the
 // reference synths do.
 class OscStrip : public juce::Component,
+                 public juce::FileDragAndDropTarget,
                  private juce::AudioProcessorValueTreeState::Listener,
                  private juce::AsyncUpdater,
                  private juce::ChangeListener
@@ -26,6 +35,15 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+
+    // juce::FileDragAndDropTarget -- lets a customer drag a file straight
+    // from Finder/Explorer/a DAW browser onto this strip instead of using
+    // LOAD. Does not grab keyboard focus at any point (see the
+    // setMouseClickGrabsKeyboardFocus rule in Controls.h/CLAUDE.md).
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray& files, int x, int y) override;
+    void fileDragExit (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
 
 private:
     void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
@@ -80,6 +98,13 @@ private:
     std::unique_ptr<DependentEnable> loopRangeEnable;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
+
+    // True while an acceptable drag hovers this strip -- drives the paint()
+    // highlight, cleared on exit/drop. Test-visible via isDragHighlighted().
+    bool dragHighlight = false;
+public:
+    bool isDragHighlighted() const { return dragHighlight; }
+private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OscStrip)
 };

@@ -460,6 +460,7 @@ private:
 
 // Convolve tab: IR pickers, the waveform display, and the shaping controls.
 class ConvolvePanel : public juce::Component,
+                      public juce::FileDragAndDropTarget,
                       private juce::ChangeListener
 {
 public:
@@ -496,7 +497,69 @@ public:
 
     // Faceplate restyle: FX-chain tab content, same as FXPanel's other tabs
     // (DIST/CHORUS/DELAY/...) — no card fill, continuous surface shows through.
-    void paint (juce::Graphics&) override {}
+    void paint (juce::Graphics& g) override
+    {
+        if (! dragHighlight)
+            return;
+        // Same outline-only halo as OscStrip's drop highlight -- see that
+        // file's paint() comment for why it's a stroke, not a fill.
+        const auto& t = currentTheme();
+        auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+        for (int i = 3; i >= 0; --i)
+        {
+            const float inflate = (float) i * 1.5f;
+            g.setColour (t.assignGlow.withAlpha (i == 0 ? 0.9f : 0.14f));
+            g.drawRoundedRectangle (bounds.expanded (inflate),
+                                     metrics::cornerRadius + inflate,
+                                     i == 0 ? 2.0f : 1.5f);
+        }
+    }
+
+    // juce::FileDragAndDropTarget -- same idea as OscStrip: drop an impulse
+    // WAV straight onto the Convolve tab instead of using the file chooser.
+    // Shares OscStrip's extension helper: Convolve's chooser filter
+    // ("*.wav;*.WAV;*.aif;*.aiff;*.flac") is exactly the wavetable-mode
+    // (no mp3) extension set.
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (auto& f : files)
+            if (oscContentAccepts (f, true))
+                return true;
+        return false;
+    }
+
+    void fileDragEnter (const juce::StringArray&, int, int) override
+    {
+        dragHighlight = true;
+        repaint();
+    }
+
+    void fileDragExit (const juce::StringArray&) override
+    {
+        dragHighlight = false;
+        repaint();
+    }
+
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        dragHighlight = false;
+        repaint();
+
+        for (auto& path : files)
+        {
+            if (oscContentAccepts (path, true))
+            {
+                const auto f = juce::File (path);
+                if (f.existsAsFile())
+                {
+                    library::setLastIRFolder (f);
+                    processor.loadConvolutionIR (f);
+                    updateLabel();
+                }
+                return;
+            }
+        }
+    }
 
     void resized() override
     {
@@ -622,6 +685,7 @@ private:
     Toggle enable;
     Knob mix, predelay, decay, damping, width;
     std::unique_ptr<juce::FileChooser> fileChooser;
+    bool dragHighlight = false;
 };
 
 // Voice-allocation controls, shown in a call-out from the header VOICE button:

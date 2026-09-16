@@ -21,6 +21,12 @@
   click it instead to lock it on, the way caps lock works, and it stays on
   through as many assignments as you want. A small padlock on the button
   shows when it is locked, and Esc still leaves either mode.
+- You can now drag audio straight onto an oscillator from the Finder, from
+  Explorer, or from your DAW's own browser, instead of going through the LOAD
+  button. The oscillator lights up as you drag over it so you can see where
+  the sound will land, and dropping onto an oscillator that is not already
+  playing a file switches it to Sample for you. The Convolve effect takes a
+  dropped impulse response the same way.
 
 ## 1.0.15
 

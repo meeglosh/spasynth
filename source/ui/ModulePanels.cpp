@@ -9,6 +9,28 @@ namespace spa::ui
 
 namespace id = params::id;
 
+juce::StringArray oscContentExtensions (bool wavetableMode)
+{
+    juce::StringArray ext { "wav", "aif", "aiff", "flac" };
+    if (! wavetableMode)
+        ext.add ("mp3");
+    return ext;
+}
+
+juce::String oscContentWildcard (bool wavetableMode)
+{
+    juce::StringArray patterns;
+    for (auto& e : oscContentExtensions (wavetableMode))
+        patterns.add ("*." + e);
+    return patterns.joinIntoString (";");
+}
+
+bool oscContentAccepts (const juce::String& filePathOrName, bool wavetableMode)
+{
+    return oscContentExtensions (wavetableMode)
+             .contains (juce::File (filePathOrName).getFileExtension().substring (1), true);
+}
+
 // ============================== OscStrip ===================================
 
 OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
@@ -239,7 +261,7 @@ void OscStrip::chooseContent()
         lastFolder.isDirectory() ? lastFolder
             : ! wavetableMode && libraryRoot.isDirectory()
                 ? libraryRoot : juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        wavetableMode ? "*.wav;*.aif;*.aiff;*.flac" : "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+        oscContentWildcard (wavetableMode));
 
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode
                             | juce::FileBrowserComponent::canSelectFiles,
@@ -253,6 +275,70 @@ void OscStrip::chooseContent()
         else
             processor.loadSampleFromFile (slot, fc.getResult());
     });
+}
+
+bool OscStrip::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    // A slot in a mode that plays no file at all still accepts a drop --
+    // that means "put this here", handled by switching to Sample in
+    // filesDropped() -- so the accepted set is always the sample/granular
+    // (non-wavetable) extensions unless the slot IS in Wavetable mode.
+    const auto wavetableMode = currentMode() == params::OscMode::wavetable;
+    for (auto& f : files)
+        if (oscContentAccepts (f, wavetableMode))
+            return true;
+    return false;
+}
+
+void OscStrip::fileDragEnter (const juce::StringArray&, int, int)
+{
+    dragHighlight = true;
+    repaint();
+}
+
+void OscStrip::fileDragExit (const juce::StringArray&)
+{
+    dragHighlight = false;
+    repaint();
+}
+
+void OscStrip::filesDropped (const juce::StringArray& files, int, int)
+{
+    dragHighlight = false;
+    repaint();
+
+    const auto oscMode = currentMode();
+    const auto wavetableMode = oscMode == params::OscMode::wavetable;
+
+    juce::File chosen;
+    for (auto& path : files)
+    {
+        if (oscContentAccepts (path, wavetableMode))
+        {
+            chosen = juce::File (path);
+            break;
+        }
+    }
+    if (! chosen.existsAsFile())
+        return;
+
+    // Non-file-shaped modes (analog/fm/noise/pluck): a dropped audio file
+    // clearly means "put this here" -- switch to Sample first, through the
+    // APVTS on the message thread (never write the raw value directly).
+    const bool fileShaped = oscMode == params::OscMode::wavetable
+                          || oscMode == params::OscMode::sample
+                          || oscMode == params::OscMode::granular;
+    if (! fileShaped)
+    {
+        if (auto* param = processor.getAPVTS().getParameter (id::oscSlot (slot, id::osc::mode)))
+            param->setValueNotifyingHost (param->convertTo0to1 ((float) (int) params::OscMode::sample));
+    }
+
+    library::setLastContentFolder (chosen);
+    if (wavetableMode)
+        processor.loadWavetableFromFile (slot, chosen);
+    else
+        processor.loadSampleFromFile (slot, chosen);
 }
 
 void OscStrip::paint (juce::Graphics& g)
@@ -270,6 +356,24 @@ void OscStrip::paint (juce::Graphics& g)
                          currentTheme().accent);
     if (swap)
         paintSampleSwapper (g);
+
+    // Drag-and-drop highlight: an outline-only glow (same colour token and
+    // layered-falloff idea as AssignOverlay's halo) so it flags the whole
+    // strip as the drop target without a fill that would wash out the
+    // waveform or the header text underneath.
+    if (dragHighlight)
+    {
+        const auto& t = currentTheme();
+        auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+        for (int i = 3; i >= 0; --i)
+        {
+            const float inflate = (float) i * 1.5f;
+            g.setColour (t.assignGlow.withAlpha (i == 0 ? 0.9f : 0.14f));
+            g.drawRoundedRectangle (bounds.expanded (inflate),
+                                     metrics::cornerRadius + inflate,
+                                     i == 0 ? 2.0f : 1.5f);
+        }
+    }
 }
 
 juce::Rectangle<int> OscStrip::headerNameRect() const

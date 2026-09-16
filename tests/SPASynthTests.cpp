@@ -904,6 +904,25 @@ namespace
         return false;
     }
 
+    // Like waitForSample, but for re-loading a slot that already holds a
+    // (different) sample: getSampleName() is already non-empty from the
+    // PREVIOUS load, so a plain "wait until non-empty" would return
+    // immediately without actually waiting for the new file to land.
+    static bool waitForSampleName (spa::SPASynthProcessor& proc, int slot,
+                                    const juce::String& expectedName, int timeoutMs)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
+        while (juce::Time::getMillisecondCounter() < deadline)
+        {
+            if (proc.getSampleName (slot) == expectedName)
+                return true;
+            if (proc.getSampleError (slot).isNotEmpty())
+                return false;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        return false;
+    }
+
     static void samplePlaybackTest()
     {
         std::cout << "samplePlaybackTest\n";
@@ -948,6 +967,129 @@ namespace
                 "keytrack-off sample plays at source pitch (" + juce::String (freq) + " Hz)");
 
         file.deleteFile();
+    }
+
+    // Drag-and-drop onto an OscStrip: a customer should be able to drag a
+    // file from Finder/Explorer/a DAW browser straight onto an oscillator,
+    // matching exactly what the LOAD file chooser accepts. Drives the
+    // juce::FileDragAndDropTarget interface directly rather than simulating
+    // an OS-level drag.
+    static void oscStripFileDropTest()
+    {
+        std::cout << "oscStripFileDropTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pumpFor (200);
+
+        spa::ui::OscStrip* oscA = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (oscA == nullptr)
+                if (auto* s = dynamic_cast<spa::ui::OscStrip*> (&c))
+                    oscA = s;
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (oscA != nullptr, "found OscStrip A");
+        if (oscA == nullptr)
+        {
+            editor->removeFromDesktop();
+            return;
+        }
+
+        // --- extension matching, same list the LOAD chooser reads --------
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        expect (oscA->isInterestedInFileDrag ({ "/tmp/foo.wav" }),
+                "sample mode accepts .wav");
+        expect (oscA->isInterestedInFileDrag ({ "/tmp/FOO.WAV" }),
+                "extension match is case-insensitive");
+        expect (! oscA->isInterestedInFileDrag ({ "/tmp/foo.txt" }),
+                "sample mode rejects an unrelated extension");
+        expect (oscA->isInterestedInFileDrag ({ "/tmp/foo.mp3" }),
+                "sample mode accepts .mp3 (matches chooseContent's filter)");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::wavetable);
+        expect (! oscA->isInterestedInFileDrag ({ "/tmp/foo.mp3" }),
+                "wavetable mode rejects .mp3 (chooseContent excludes it there)");
+        expect (oscA->isInterestedInFileDrag ({ "/tmp/foo.wav" }),
+                "wavetable mode still accepts .wav");
+
+        // --- highlight sets and clears ------------------------------------
+        expect (! oscA->isDragHighlighted(), "no highlight before a drag arrives");
+        oscA->fileDragEnter ({ "/tmp/foo.wav" }, 5, 5);
+        expect (oscA->isDragHighlighted(), "highlight set on drag enter");
+        oscA->fileDragExit ({ "/tmp/foo.wav" });
+        expect (! oscA->isDragHighlighted(), "highlight cleared on drag exit");
+
+        // --- dropping a real WAV actually loads it into a sample slot -----
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        const auto sampleFile = writeRampSine (0.5, 48000.0);
+        oscA->fileDragEnter ({ sampleFile.getFullPathName() }, 5, 5);
+        expect (oscA->isDragHighlighted(), "highlight set while the drag is over the strip");
+        oscA->filesDropped ({ sampleFile.getFullPathName() }, 5, 5);
+        expect (! oscA->isDragHighlighted(), "highlight cleared immediately on drop");
+        expect (waitForSample (proc, 0, 15000), "dropped sample loads with analysis");
+        expect (proc.getSampleName (0) == sampleFile.getFileNameWithoutExtension(),
+                "dropped file's name lands in the slot ("
+                    + proc.getSampleName (0) + " vs " + sampleFile.getFileNameWithoutExtension() + ")");
+
+        // --- dropping onto a non-file-shaped mode switches to Sample ------
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::analog);
+        const auto sampleFile2 = writeRampSine (0.5, 48000.0);
+        oscA->filesDropped ({ sampleFile2.getFullPathName() }, 5, 5);
+        expect ((params::OscMode) (int) proc.getAPVTS()
+                    .getParameter (id::oscSlot (0, id::osc::mode))
+                    ->convertFrom0to1 (proc.getAPVTS()
+                                           .getParameter (id::oscSlot (0, id::osc::mode))->getValue())
+                    == params::OscMode::sample,
+                "dropping audio onto a non-file mode switches the slot to Sample");
+        expect (waitForSampleName (proc, 0, sampleFile2.getFileNameWithoutExtension(), 15000),
+                "the switched-to-Sample slot actually loaded the dropped file ("
+                    + proc.getSampleName (0) + " vs " + sampleFile2.getFileNameWithoutExtension() + ")");
+
+        // --- multiple files: first ACCEPTED one wins ----------------------
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::wavetable);
+        const auto sampleFile3 = writeRampSine (0.5, 48000.0);   // a .wav, wavetable-acceptable
+        juce::StringArray severalFiles { "/tmp/nope.txt", "/tmp/also-nope.exe",
+                                          sampleFile3.getFullPathName() };
+        oscA->filesDropped (severalFiles, 5, 5);
+        expect (proc.isWavetableLoading (0)
+                    || proc.getWavetableName (0) == sampleFile3.getFileNameWithoutExtension(),
+                "the first accepted file (third in the list) was picked, unacceptable ones skipped");
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 15000u;
+            while (proc.isWavetableLoading (0) && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        expect (proc.getWavetableName (0) == sampleFile3.getFileNameWithoutExtension(),
+                "the accepted file among several actually loaded ("
+                    + proc.getWavetableName (0) + " vs " + sampleFile3.getFileNameWithoutExtension() + ")");
+
+        // --- a drop never steals keyboard focus (the QWERTY rule) ---------
+        expect (! oscA->hasKeyboardFocus (false),
+                "the strip itself did not grab keyboard focus from the drop");
+
+        sampleFile.deleteFile();
+        sampleFile2.deleteFile();
+        sampleFile3.deleteFile();
+        editor->removeFromDesktop();
     }
 
     // A sample oscillator in LOOP mode with the default loop points
@@ -12634,6 +12776,7 @@ int main (int argc, char* argv[])
     chaosMatrixSourceTest();
     chaosTraceTest();
     samplePlaybackTest();
+    oscStripFileDropTest();
     samplePlayerWholeFileLoopTest();
     tempoDetectionTest();
     sampleSyncStretchTest();

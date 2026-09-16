@@ -2,8 +2,9 @@
 
 Paste-ready launch posts for X and Instagram. House style: no em dashes. X keeps
 the link inline; Instagram uses "Link in bio" (IG captions are not clickable).
-Sound count is 11,474 where cited; feature claims match the full shipping
-feature set (FX chain, voice modes, oversampling, on-screen keyboard included).
+Where a sound count is cited, use "more than 11,000 sounds" (no precise total
+is currently verifiable); feature claims match the full shipping feature set
+(FX chain, voice modes, oversampling, on-screen keyboard included).
 Companion to `docs/launch-email.md` and `docs/shopify-listings.md`.
 
 ## X / Twitter

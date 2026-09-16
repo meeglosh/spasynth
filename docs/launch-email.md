@@ -3,9 +3,10 @@
 Paste-ready launch email for the Silverplatter Audio mailing list. House style:
 no em dashes. Prices live in `[PRICE]` placeholders so the copy does not need
 editing when the intro period ends (current values in the pricing note below,
-and in `docs/shopify-listings.md`). Sound count is 11,474 (verified WAV count).
-Feature claims match the full shipping feature set (FX chain, voice modes,
-oversampling, on-screen keyboard included).
+and in `docs/shopify-listings.md`). Sound count is stated as "more than
+11,000 sounds" (no precise total is currently verifiable). Feature claims
+match the full shipping feature set (FX chain, voice modes, oversampling,
+on-screen keyboard included).
 
 ## Subject line options (pick one)
 
@@ -47,18 +48,19 @@ this one for a long time, and today you can play it too.
 - A twelve-mode arpeggiator with swing, latch, and real probability controls.
 - RANDOMIZE ALL: a genuine patch generator with a wildness knob and per-section locks, not a gimmick. Every roll makes sound, and it will not blow out your ears doing it.
 - An on-screen keyboard, playable with the mouse or your computer keyboard, so you can audition sounds without a MIDI controller connected.
-- 264 factory presets to start from.
+- 270 factory presets to start from.
 
 **Two editions**
 
-**SPASynth Standard** is the complete synth with a 440-sound starter library
+**SPASynth Standard** is the complete synth with a 450-sound starter library
 drawn from every pack. Everything is here except the full library, and you can
 add that any time.
 Introductory price [PRICE], regularly [PRICE].
 
-**SPASynth Pro** is the same synth with the complete Silverplatter Audio
-collection: 88 packs, 11,474 production-ready sounds, 37 GB, cleared for film
-and television.
+**SPASynth Pro** is the same synth plus our Everything Bundle entitlement: the
+complete Silverplatter Audio collection, 90 packs, more than 11,000
+production-ready sounds, our original masters at 24-bit / 96 kHz, cleared for
+film and television.
 Launch price [PRICE], regularly [PRICE].
 
 Already own Standard? Upgrade to Pro for the difference. Download, extract, done.
@@ -132,12 +134,13 @@ A few things it does:
 - A twelve-mode arpeggiator with real probability controls
 - One button that generates a whole new patch, and actually works
 - An on-screen keyboard, so you can play without a MIDI controller
-- 264 factory presets to start from
+- 270 factory presets to start from
 
-Two editions. Standard is the full synth with a 440-sound starter
-library. Pro is the same synth with the complete collection: 88 packs,
-11,474 sounds, cleared for film and television. If you start with
-Standard, you can upgrade to Pro later for the difference.
+Two editions. Standard is the full synth with a 450-sound starter
+library. Pro is the same synth with the complete collection: 90 packs,
+more than 11,000 sounds, our original masters at 24-bit / 96 kHz,
+cleared for film and television. If you start with Standard, you can
+upgrade to Pro later for the difference.
 
 You can see both here:
 [STORE LINK]

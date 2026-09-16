@@ -27,6 +27,11 @@
   the sound will land, and dropping onto an oscillator that is not already
   playing a file switches it to Sample for you. The Convolve effect takes a
   dropped impulse response the same way.
+- A new modulation route now arrives with its depth already set to half, so
+  connecting a source to a destination does something straight away instead
+  of staying silent until you also turn the depth up. Routes you have already
+  dialled in, including ones you deliberately set to zero, are never changed,
+  and loading a preset never alters the depths it was saved with.
 
 ## 1.0.15
 

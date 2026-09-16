@@ -2,9 +2,73 @@
 
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
+#include <utility>
 
 namespace spa::ui
 {
+
+// "None" is choice index 0 for BOTH the source and destination route choice
+// lists -- checked directly against ParameterRegistry.cpp, not assumed:
+// modSourceNames() starts { "None", "Env 1 (Amp)", ... } and
+// ParameterRegistry::all()'s destNames is built starting from
+// juce::StringArray destNames { "None" } before any real destination is
+// appended.
+inline constexpr int kNoneRouteChoiceIndex = 0;
+
+// Single source of truth for "is this matrix row actually wired" (source AND
+// destination both something other than None) -- shared by AssignOverlay
+// (which uses it to decide when a one-shot ASSIGN session is done) and the
+// auto-depth-fill below, so the two can't ever disagree about what counts as
+// a complete route.
+inline bool routeIsComplete (juce::AudioProcessorValueTreeState& apvts, int route)
+{
+    if (route < 0)
+        return false;
+
+    auto* sourceP = apvts.getParameter (params::id::routeParam (route, params::id::route::source));
+    auto* destP = apvts.getParameter (params::id::routeParam (route, params::id::route::dest));
+    if (sourceP == nullptr || destP == nullptr)
+        return false;
+
+    const int sourceChoice = (int) sourceP->convertFrom0to1 (sourceP->getValue());
+    const int destChoice = (int) destP->convertFrom0to1 (destP->getValue());
+    return sourceChoice != kNoneRouteChoiceIndex && destChoice != kNoneRouteChoiceIndex;
+}
+
+// Depth is bipolar (-1..+1), defaults to 0, and 0 is its correct centre/
+// host-reset/double-click-reset value -- so this must NEVER become a general
+// "depth==0 looks wrong, fix it" rule. It exists purely to answer the
+// tester complaint that a freshly-made route is silent until Depth is also
+// turned up: the moment a row's source+dest BOTH become real (routeIsComplete)
+// AND its depth is still exactly the untouched default, nudge it to +0.5.
+//
+// CALLER CONTRACT, the load-bearing part: this must be invoked ONLY from a
+// call site that is itself provably reachable exclusively from a genuine
+// user edit -- never from anything a preset load, host session restore,
+// reset-to-default or RANDOMIZE ALL can reach (all of those write parameters
+// via apvts.replaceState()/setValueNotifyingHost() directly, with no user
+// gesture involved, and a saved/rolled route deliberately sitting at 0 must
+// survive unchanged). See AssignOverlay::setRouteChoice (called only from
+// the overlay's own click handling) and MatrixPanel::Row's GestureGate
+// (gated on RouteComboBox::consumeUserGesture(), see its comment) for the
+// two call sites that satisfy this.
+inline void maybeAutoFillRouteDepth (juce::AudioProcessorValueTreeState& apvts, int route)
+{
+    if (! routeIsComplete (apvts, route))
+        return;
+
+    auto* depthP = apvts.getParameter (params::id::routeParam (route, params::id::route::depth));
+    if (depthP == nullptr)
+        return;
+
+    const auto zeroNorm = depthP->convertTo0to1 (0.0f);
+    if (! juce::approximatelyEqual (depthP->getValue(), zeroNorm))
+        return;   // user (or the preset) already put a real value here -- leave it alone.
+
+    depthP->beginChangeGesture();
+    depthP->setValueNotifyingHost (depthP->convertTo0to1 (0.5f));
+    depthP->endChangeGesture();
+}
 
 // The mod matrix as a compact routing table: 16 rows of source -> dest with
 // a bipolar depth slider, inside a viewport.
@@ -51,7 +115,7 @@ public:
         return AssignMode::latched;
     }
 
-    explicit MatrixPanel (juce::AudioProcessorValueTreeState& apvts)
+    explicit MatrixPanel (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (apvtsIn)
     {
         for (int r = 0; r < params::numModRoutes; ++r)
         {
@@ -86,6 +150,22 @@ public:
                 juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, destID, row->dest);
             row->depthAttachment = std::make_unique<
                 juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, depthID, row->depth);
+
+            // Auto-fill Depth to +0.5 the moment THIS row's own dropdowns make
+            // it a complete route, but ONLY on a genuine user pick -- see
+            // RouteComboBox and GestureGate below. Wired after the attachments
+            // above so the attachment's own ComboBox::Listener (added first,
+            // inside the attachment's constructor) has already applied the
+            // resulting parameter value by the time these gates run (JUCE
+            // calls listeners in add order), so routeIsComplete() sees the
+            // up-to-date choice.
+            row->sourceGate.box = &row->source;
+            row->sourceGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); };
+            row->source.addListener (&row->sourceGate);
+
+            row->destGate.box = &row->dest;
+            row->destGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); };
+            row->dest.addListener (&row->destGate);
 
             content.addAndMakeVisible (row->source);
             content.addAndMakeVisible (row->dest);
@@ -148,6 +228,38 @@ public:
         applyMode (nextModeOnDoubleClick (assignMode));
     }
 
+    // Test hook: applies exactly what picking `choiceIndex` from row
+    // `route`'s real source/dest dropdown popup would do, INCLUDING marking
+    // the box's own "a real popup just closed" flag (see RouteComboBox) --
+    // without needing to drive real PopupMenu mouse timing headlessly (same
+    // rationale as simulateClick/simulateDoubleClick above). Goes through
+    // the actual ComboBox (setSelectedId, JUCE's own item-id-is-index+1
+    // convention from addItemList's base id of 1), so it exercises the
+    // identical GestureGate path a live click would.
+    void simulateUserComboPick (int route, bool isSourceCombo, int choiceIndex)
+    {
+        if (route < 0 || route >= (int) rows.size())
+            return;
+        auto& row = *rows[(size_t) route];
+        auto& box = isSourceCombo ? row.source : row.dest;
+        box.markUserGestureForTest();
+        box.setSelectedId (choiceIndex + 1, juce::sendNotificationSync);
+    }
+
+    // Test hook: opens row `route`'s source/dest dropdown and dismisses it
+    // WITHOUT picking anything -- see RouteComboBox's guard against exactly
+    // this leaving a stale pending gesture behind for some later,
+    // unrelated, purely programmatic change to that same box to misread.
+    void simulateUserOpensThenAbandonsCombo (int route, bool isSourceCombo)
+    {
+        if (route < 0 || route >= (int) rows.size())
+            return;
+        auto& row = *rows[(size_t) route];
+        auto& box = isSourceCombo ? row.source : row.dest;
+        box.markUserGestureForTest();
+        box.simulatePopupClosedWithoutSelectionForTest();
+    }
+
     void paint (juce::Graphics& g) override
     {
         draw::panel (g, getLocalBounds().toFloat());
@@ -192,13 +304,114 @@ public:
     }
 
 private:
+    // A juce::ComboBox that remembers, one-shot, whether ITS OWN dropdown was
+    // just opened by a real user gesture. showPopup() is virtual and, per
+    // JUCE's own ComboBox source, is reachable ONLY from mouseDown/mouseUp/
+    // mouseDrag, keyPressed (Return/arrow-open), showPopupIfNotActive(), and
+    // the accessibility press/showMenu actions -- every one of them a live
+    // user action. Nothing in ComboBoxParameterAttachment's programmatic
+    // sync path (setSelectedItemIndex(), called from setValue() whenever the
+    // underlying parameter changes -- preset load, host restore, reset,
+    // randomize) ever calls showPopup(); it writes the selection directly.
+    // So consumeUserGesture() answers "did a person just pick something from
+    // this box's own popup" with no false positives from any programmatic
+    // write, however that write reaches the box (sync or the attachment's
+    // AsyncUpdater). A plain juce::ComboBox::Listener can't make this
+    // distinction on its own -- both paths end up calling the exact same
+    // comboBoxChanged() -- which is why this subclass exists.
+    //
+    // IMPORTANT: a pending gesture must not outlive its popup. showPopup()
+    // alone is not enough -- opening a dropdown, looking at it, and
+    // dismissing it with Esc or an outside click (no selection at all) is
+    // completely ordinary use, and juce::ComboBox gives no notification for
+    // that case (comboBoxChanged only ever fires from a real setSelectedId,
+    // which a cancelled popup never calls). Left unguarded, the flag would
+    // sit there indefinitely; the NEXT time this exact box is synced
+    // programmatically for any reason (a preset load landing on this row,
+    // say) it would be misread as a fresh user pick and silently rewrite
+    // that preset's deliberately-zero Depth. hidePopup() -- called the
+    // instant the popup closes, selection or not -- is not virtual, so it
+    // can't be overridden directly; isPopupActive() (which hidePopup() is
+    // what flips false) is public, so a short poll while the popup is open
+    // is the only observable signal available. The poll interval is a
+    // deliberate trade-off: generous enough that a genuine selection's own
+    // (asynchronous) comboBoxChanged -- posted essentially the instant the
+    // popup closes -- always has time to consume the flag first, so a real
+    // pick is never missed; short enough that nothing else a person could
+    // possibly do next (open the preset browser, click a preset) can land
+    // inside the window. The failure mode if this margin were ever somehow
+    // too tight is a missed auto-fill nudge (cosmetic), never a wrongly
+    // rewritten value -- the guard only ever makes consumeUserGesture()
+    // return false early, never true when it shouldn't.
+    struct RouteComboBox : public juce::ComboBox, private juce::Timer
+    {
+        void showPopup() override
+        {
+            userGesturePending = true;
+            startTimer (40);
+            juce::ComboBox::showPopup();
+        }
+
+        bool consumeUserGesture()
+        {
+            return std::exchange (userGesturePending, false);
+        }
+
+        // Test hook only: sets exactly the flag a real showPopup() call
+        // would, so a test can exercise the GestureGate path via
+        // setSelectedId() without driving real PopupMenu mouse timing
+        // headlessly (see MatrixPanel::simulateUserComboPick).
+        void markUserGestureForTest() { userGesturePending = true; }
+
+        // Test hook only: applies exactly what timerCallback() below does
+        // the instant it observes the popup has closed -- lets a test
+        // exercise "opened, then dismissed without picking anything"
+        // deterministically and synchronously, the same way
+        // MatrixPanel::simulateClick()/simulateDoubleClick() apply exactly
+        // what a real click does without needing real popup-menu timing.
+        void simulatePopupClosedWithoutSelectionForTest() { clearPendingGesture(); }
+
+    private:
+        void clearPendingGesture()
+        {
+            userGesturePending = false;
+            stopTimer();
+        }
+
+        void timerCallback() override
+        {
+            if (! isPopupActive())
+                clearPendingGesture();
+        }
+
+        bool userGesturePending = false;
+    };
+
+    // Thin juce::ComboBox::Listener that only forwards to onUserChange when
+    // the box it watches reports a real user pick (see RouteComboBox above);
+    // a programmatic sync of the same box still calls comboBoxChanged() (JUCE
+    // notifies every listener on the box, not just the attachment's own) but
+    // is silently dropped here because consumeUserGesture() returns false.
+    struct GestureGate : public juce::ComboBox::Listener
+    {
+        RouteComboBox* box = nullptr;
+        std::function<void()> onUserChange;
+
+        void comboBoxChanged (juce::ComboBox*) override
+        {
+            if (box != nullptr && box->consumeUserGesture() && onUserChange)
+                onUserChange();
+        }
+    };
+
     struct Row
     {
-        juce::ComboBox source, dest;
+        RouteComboBox source, dest;
         juce::Slider depth;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> sourceAttachment,
                                                                                 destAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> depthAttachment;
+        GestureGate sourceGate, destGate;
     };
 
     // Plain TextButton has no virtual double-click hook of its own; this adds
@@ -232,6 +445,7 @@ private:
             onAssignToggled (assignMode);
     }
 
+    juce::AudioProcessorValueTreeState& apvts;
     juce::Component content;
     juce::Viewport viewport;
     std::vector<std::unique_ptr<Row>> rows;

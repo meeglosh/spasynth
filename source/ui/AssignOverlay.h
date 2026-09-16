@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 #include "Controls.h"
+#include "MatrixPanel.h"   // for the shared routeIsComplete/maybeAutoFillRouteDepth
 #include "../params/ParameterRegistry.h"
 
 namespace spa::ui
@@ -461,36 +462,28 @@ private:
         p->endChangeGesture();
         repaint();
 
+        // ASSIGN's click handling is the one call path here: this only ever
+        // runs in direct response to handleTargetClick(), itself only called
+        // from mouseDown()/handleClickAt() (a real click) -- never from a
+        // preset load, host restore, reset or randomize, none of which touch
+        // the overlay at all. That is what makes it safe to fill Depth here;
+        // see maybeAutoFillRouteDepth's own comment for the full contract.
+        maybeAutoFillRouteDepth (apvts, route);
         maybeCompleteOneShot (route);
     }
 
-    // "None" is choice index 0 for BOTH the source and destination route
-    // choice lists -- checked directly against ParameterRegistry.cpp, not
-    // assumed: modSourceNames() starts { "None", "Env 1 (Amp)", ... } and
-    // ParameterRegistry::all()'s destNames is built starting from
-    // juce::StringArray destNames { "None" } before any real destination is
-    // appended.
-    static constexpr int kNoneChoiceIndex = 0;
-
     // One-shot mode only: after writing a route choice, check whether the
-    // row just touched now has both a real source AND a real destination; if
-    // so the row is "complete" and the product-owner spec says assign mode
-    // exits immediately, same as clicking the button off.
+    // row just touched now has both a real source AND a real destination
+    // (routeIsComplete, shared with the auto-depth-fill above so the two
+    // definitions of "complete" can't drift apart); if so the row is
+    // "complete" and the product-owner spec says assign mode exits
+    // immediately, same as clicking the button off.
     void maybeCompleteOneShot (int route)
     {
         if (! oneShotActive || onOneShotComplete == nullptr)
             return;
 
-        const auto sourceID = params::id::routeParam (route, params::id::route::source);
-        const auto destID = params::id::routeParam (route, params::id::route::dest);
-        auto* sourceP = apvts.getParameter (sourceID);
-        auto* destP = apvts.getParameter (destID);
-        if (sourceP == nullptr || destP == nullptr)
-            return;
-
-        const int sourceChoice = (int) sourceP->convertFrom0to1 (sourceP->getValue());
-        const int destChoice = (int) destP->convertFrom0to1 (destP->getValue());
-        if (sourceChoice != kNoneChoiceIndex && destChoice != kNoneChoiceIndex)
+        if (routeIsComplete (apvts, route))
             onOneShotComplete();
     }
 

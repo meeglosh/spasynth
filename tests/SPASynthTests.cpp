@@ -11085,6 +11085,323 @@ namespace
         }
     }
 
+    // Tester complaint: a freshly-made mod matrix row is silent until Depth
+    // is ALSO turned up (bipolar, -1..+1, defaults to 0 -- its correct
+    // centre/host-reset/double-click-reset value, never touched by the
+    // default itself). Fix: the instant a row's source+dest BOTH become real
+    // AND its depth is still exactly 0, nudge depth to +0.5 -- but only for
+    // a genuine user edit (an ASSIGN click, or a real dropdown pick), never
+    // for a preset load, host session restore, reset-to-default or
+    // RANDOMIZE ALL, all of which write parameters directly and must be able
+    // to leave (or restore) a deliberately-zero depth on a wired route
+    // untouched.
+    static void modRouteAutoDepthTest()
+    {
+        std::cout << "modRouteAutoDepthTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto readDepth = [] (spa::SPASynthProcessor& proc, int route) -> float
+        {
+            auto* p = proc.getAPVTS().getParameter (id::routeParam (route, id::route::depth));
+            return p == nullptr ? -999.0f : p->convertFrom0to1 (p->getValue());
+        };
+
+        const auto makeFixture = [] (spa::SPASynthProcessor& proc,
+                                      std::unique_ptr<juce::AudioProcessorEditor>& editor,
+                                      spa::ui::MatrixPanel*& matrixPanel,
+                                      spa::ui::AssignOverlay*& overlay)
+        {
+            proc.prepareToPlay (48000.0, 512);
+            editor.reset (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+            {
+                if (matrixPanel == nullptr)
+                    matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+                if (overlay == nullptr)
+                    overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+                for (auto* child : c.getChildren())
+                    findParts (*child);
+            };
+            findParts (*editor);
+        };
+
+        const auto clickAt = [] (spa::ui::AssignOverlay& ov, juce::Component& target)
+        {
+            const auto p = ov.getLocalArea (&target, target.getLocalBounds()).getCentre();
+            ov.handleClickAt (p);
+        };
+
+        const auto findLfo2Tab = [] (juce::Component& root) -> juce::Component*
+        {
+            juce::Component* found = nullptr;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (found == nullptr && c.getProperties().contains ("modSource")
+                    && (int) c.getProperties()["modSource"] == (int) params::ModSource::lfo2)
+                    found = &c;
+                for (auto* child : c.getChildren())
+                    walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+
+        const int cutoffDestChoice = params::modDestIndex (id::filter1Cutoff) + 1;
+
+        // --- 1. ASSIGN path: completing a route with depth at 0 -> 0.5. ---
+        // Reverts if the fill is dropped entirely (depth would stay 0) or if
+        // it fires on the dest-only step (depth would already be 0.5 before
+        // the source is even assigned).
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "fixture found (assign, zero depth)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            matrixPanel->simulateClick();   // one-shot
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            expect (cutoffKnob != nullptr && row0Dest != nullptr && row0Source != nullptr && lfo2Tab != nullptr,
+                    "assign targets found (1)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
+                return;
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "depth untouched with dest-only (source still None)");
+
+            clickAt (*overlay, *lfo2Tab);
+            clickAt (*overlay, *row0Source);
+            expect (std::abs (readDepth (proc, 0) - 0.5f) < 1.0e-6f,
+                    "ASSIGN completing a route with depth at 0 sets it to 0.5");
+        }
+
+        // --- 2. ASSIGN path: completing when depth is already non-zero
+        // (including negative) leaves it alone. Reverts if the "still at 0"
+        // guard inside maybeAutoFillRouteDepth is dropped.
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::depth), -0.35f);
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "fixture found (assign, negative depth)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            matrixPanel->simulateClick();
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            expect (cutoffKnob != nullptr && row0Dest != nullptr && row0Source != nullptr && lfo2Tab != nullptr,
+                    "assign targets found (2)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
+                return;
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            clickAt (*overlay, *lfo2Tab);
+            clickAt (*overlay, *row0Source);
+            expect (std::abs (readDepth (proc, 0) - (-0.35f)) < 1.0e-6f,
+                    "ASSIGN completing a route with a pre-set negative depth leaves it alone");
+        }
+
+        // --- 3. Dropdown path: a genuine user pick (RouteComboBox's
+        // showPopup()-gated gesture flag) fills depth the same way. Reverts
+        // if the dropdown path isn't wired at all, or if it fires from a
+        // plain listener that can't tell a user pick from a programmatic
+        // sync (see case 6 below, which would then also fail).
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr, "fixture found (dropdown, zero depth)");
+            if (matrixPanel == nullptr)
+                return;
+
+            matrixPanel->simulateUserComboPick (0, false /* dest */, cutoffDestChoice);
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "dropdown: dest-only pick leaves depth at 0 (source still None)");
+
+            matrixPanel->simulateUserComboPick (0, true /* source */, (int) params::ModSource::lfo2);
+            expect (std::abs (readDepth (proc, 0) - 0.5f) < 1.0e-6f,
+                    "dropdown: completing the route via a genuine user pick sets depth to 0.5");
+        }
+
+        // --- 4. Dropdown path: completing with a pre-set non-zero depth
+        // leaves it alone.
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::depth), 0.62f);
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr, "fixture found (dropdown, nonzero depth)");
+            if (matrixPanel == nullptr)
+                return;
+
+            matrixPanel->simulateUserComboPick (0, false, cutoffDestChoice);
+            matrixPanel->simulateUserComboPick (0, true, (int) params::ModSource::lfo2);
+            expect (std::abs (readDepth (proc, 0) - 0.62f) < 1.0e-6f,
+                    "dropdown: completing a route with a pre-set depth leaves it alone");
+        }
+
+        // --- 5. A row with only a source, or only a destination, never
+        // gets its depth touched (separate rows so one completion can't
+        // leak into the other's check).
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr, "fixture found (partial rows)");
+            if (matrixPanel == nullptr)
+                return;
+
+            matrixPanel->simulateUserComboPick (1, true, (int) params::ModSource::lfo2);   // source only
+            expect (std::abs (readDepth (proc, 1) - 0.0f) < 1.0e-6f,
+                    "source-only pick never touches depth");
+
+            matrixPanel->simulateUserComboPick (2, false, cutoffDestChoice);   // dest only
+            expect (std::abs (readDepth (proc, 2) - 0.0f) < 1.0e-6f,
+                    "dest-only pick never touches depth");
+        }
+
+        // --- 6. GUARD (the important one): a state tree with a wired route
+        // deliberately left at depth 0 must survive a normal state-restore
+        // path unchanged. restoreStateTree() writes parameters via
+        // apvts.replaceState() -- setValueNotifyingHost() under the hood,
+        // never ComboBox::showPopup() -- so a correct implementation can't
+        // react to it at all. A naive "listen for source+dest both real"
+        // parameter listener WOULD fire here and corrupt this preset.
+        {
+            spa::SPASynthProcessor seed;
+            seed.prepareToPlay (48000.0, 512);
+            setParam (seed, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            setParam (seed, id::routeParam (0, id::route::dest), (float) cutoffDestChoice);
+            setParam (seed, id::routeParam (0, id::route::depth), 0.0f);
+            const auto state = seed.buildStateTree();
+
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            proc.restoreStateTree (state);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+
+            expect (spa::ui::routeIsComplete (proc.getAPVTS(), 0),
+                    "restored route reads as wired (guard setup sane)");
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "GUARD: restoreStateTree leaves a wired route's deliberately-zero depth at 0");
+        }
+
+        // --- 6b. GUARD, the abandoned-popup case: a user opens row 0's
+        // SOURCE dropdown (a completely ordinary thing to do) and dismisses
+        // it with Esc or an outside click WITHOUT picking anything -- then,
+        // with no further UI interaction at all, a preset containing a
+        // wired route at that SAME row, depth deliberately 0, gets restored.
+        // If the "just opened a popup" flag survived the abandoned popup,
+        // the preset's own load (routing through this exact ComboBox via
+        // ComboBoxParameterAttachment's programmatic sync) would be
+        // misattributed to a fresh user pick and Depth would get rewritten
+        // to 0.5. Reverts to failing if RouteComboBox's showPopup() sets its
+        // pending flag but nothing ever clears it on an abandoned popup.
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr, "fixture found (abandoned popup)");
+            if (matrixPanel == nullptr)
+                return;
+
+            // Open row 0's SOURCE dropdown, then dismiss without picking.
+            matrixPanel->simulateUserOpensThenAbandonsCombo (0, true /* source */);
+
+            // No further UI interaction at all -- go straight to a state
+            // restore, the same real path a preset click or host session
+            // reload uses, landing a wired route at that same row with
+            // depth deliberately 0.
+            spa::SPASynthProcessor seed;
+            seed.prepareToPlay (48000.0, 512);
+            setParam (seed, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            setParam (seed, id::routeParam (0, id::route::dest), (float) cutoffDestChoice);
+            setParam (seed, id::routeParam (0, id::route::depth), 0.0f);
+            const auto state = seed.buildStateTree();
+
+            proc.restoreStateTree (state);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+
+            expect (spa::ui::routeIsComplete (proc.getAPVTS(), 0),
+                    "restored route reads as wired (abandoned-popup guard setup sane)");
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "GUARD: a preset restore after an abandoned (unpicked) popup on the same row still leaves depth at 0");
+        }
+
+        // --- 7. GUARD: reset-to-default runs through the exact same
+        // restoreStateTree()/apvts.replaceState() path (PresetManager::
+        // resetToDefault -> applyState, wired to restoreStateTree in the
+        // processor ctor) -- must not leave depth nudged off its own
+        // default either.
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            setParam (proc, id::routeParam (0, id::route::dest), (float) cutoffDestChoice);
+            setParam (proc, id::routeParam (0, id::route::depth), 0.0f);
+
+            proc.getPresetManager().resetToDefault();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "GUARD: reset-to-default lands depth back at its own default (0), not nudged to 0.5");
+        }
+
+        // --- 8. GUARD: RANDOMIZE ALL. Lock the matrix group first so the
+        // roll is deterministic (a locked group is skipped entirely by
+        // params::randomizeAll) -- this is exactly "a RANDOMIZE ALL that
+        // leaves a wired route at 0": the route was wired with depth 0
+        // beforehand, the roll runs, and the locked matrix must come out
+        // byte-identical, proving RANDOMIZE ALL's parameter writes (all
+        // direct setValueNotifyingHost calls, never a ComboBox popup) can't
+        // reach the fill either.
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            setParam (proc, id::routeParam (0, id::route::dest), (float) cutoffDestChoice);
+            setParam (proc, id::routeParam (0, id::route::depth), 0.0f);
+            proc.setLockGroupLocked ((int) params::LockGroup::matrix, true);
+
+            juce::Random::getSystemRandom() = juce::Random ((juce::int64) 4242);
+            proc.randomizeAll();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            expect (spa::ui::routeIsComplete (proc.getAPVTS(), 0),
+                    "route still wired after RANDOMIZE ALL with the matrix locked");
+            expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
+                    "GUARD: RANDOMIZE ALL (matrix locked) leaves a wired route's zero depth at 0");
+        }
+    }
+
     // Regression for a bug Mike hit in Logic: the ENV/LFO tab bars rendered
     // with generous, evenly-spaced default widths, then snapped to a
     // condensed/bunched-left layout the instant another tab was clicked.
@@ -12866,6 +13183,7 @@ int main (int argc, char* argv[])
     modAssignFocusTest();
     assignGlowShapeTest();
     assignModeTest();
+    modRouteAutoDepthTest();
     tabLayoutInvarianceTest();
     editorFitsScreenTest();
     presetBrowserWidensWindowTest();

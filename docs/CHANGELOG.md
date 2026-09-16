@@ -16,6 +16,11 @@
 - If we cannot find a sound library at all, we now say so the first time you
   open SPASynth and offer to take you straight to the folder picker, instead
   of leaving you with an empty preset browser and no explanation.
+- The mod matrix ASSIGN button now switches itself back off once a route is
+  complete, so a quick connection takes one click and no cleanup. Double
+  click it instead to lock it on, the way caps lock works, and it stays on
+  through as many assignments as you want. A small padlock on the button
+  shows when it is locked, and Esc still leaves either mode.
 
 ## 1.0.15
 

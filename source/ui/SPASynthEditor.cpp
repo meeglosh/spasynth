@@ -1237,11 +1237,18 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     popupFocusAnchor.setInterceptsMouseClicks (false, false);
     popupFocusAnchor.setBounds (0, 0, 1, 1);
     addAndMakeVisible (popupFocusAnchor);
-    matrixPanel.onAssignToggled = [this] (bool on)
+    matrixPanel.onAssignToggled = [this] (spa::ui::MatrixPanel::AssignMode mode)
     {
-        assignOverlay->setAssignMode (on, *this, matrixPanel.assignButton().getBounds()
-            .translated (matrixPanel.getX(), matrixPanel.getY()));
+        assignOverlay->setOneShotMode (mode == spa::ui::MatrixPanel::AssignMode::oneShot);
+        assignOverlay->setAssignMode (mode != spa::ui::MatrixPanel::AssignMode::off, *this,
+            matrixPanel.assignButton().getBounds()
+                .translated (matrixPanel.getX(), matrixPanel.getY()));
     };
+    // One-shot mode's self-exit (see MatrixPanel::AssignMode::oneShot and
+    // AssignOverlay::maybeCompleteOneShot): route it through the SAME exit
+    // path a manual click-off uses, so the button/overlay/property all stay
+    // in sync via MatrixPanel::applyMode.
+    assignOverlay->onOneShotComplete = [this] { matrixPanel.setAssignOn (false); };
 
     processor.addChangeListener (this);
     processor.getPresetManager().addChangeListener (this);

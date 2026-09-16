@@ -504,10 +504,18 @@ void SPASynthLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b
         return;
     }
 
+    // The mod matrix's ASSIGN button shows the same small padlock, beside
+    // the label, while latched (MatrixPanel::AssignMode::latched -- see
+    // MatrixPanel::applyMode, which is the only place that sets/clears the
+    // "assignLatched" property). One-shot mode lights the button the same
+    // way ordinary toggle-on does, with no glyph.
+    const bool showAssignLock = button.getComponentID() == "matrixAssign" && button.getToggleState()
+                               && (bool) button.getProperties().getWithDefault ("assignLatched", false);
+
     // Locked section buttons show a small padlock beside the label so the
     // locked state reads as "locked", not just a colour change. Everything
     // else uses the default text rendering.
-    if (button.getComponentID() != "lock" || ! button.getToggleState())
+    if ((button.getComponentID() != "lock" || ! button.getToggleState()) && ! showAssignLock)
     {
         LookAndFeel_V4::drawButtonText (g, button, highlighted, down);
         return;

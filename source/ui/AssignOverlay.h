@@ -103,6 +103,20 @@ public:
     bool isAssignActive() const { return active; }
     bool isFadingOut() const { return fadingOut; }
 
+    // Told by MatrixPanel (via ContentComponent's wiring) whether the CURRENT
+    // assign session is one-shot (MatrixPanel::AssignMode::oneShot) rather
+    // than latched. Only affects whether a completed route calls
+    // onOneShotComplete -- everything else about assigning is identical in
+    // both modes.
+    void setOneShotMode (bool on) { oneShotActive = on; }
+
+    // Fired from setRouteChoice, one-shot mode only, when the matrix row just
+    // written now has BOTH its source and its destination set to something
+    // other than "None" (see kNoneChoiceIndex). The owner (ContentComponent)
+    // wires this to matrixPanel.setAssignOn(false), which exits assign mode
+    // exactly as if the user had clicked the button off.
+    std::function<void()> onOneShotComplete;
+
     void paint (juce::Graphics& g) override
     {
         if (! active && ! fadingOut)
@@ -446,6 +460,38 @@ private:
         p->setValueNotifyingHost (norm);
         p->endChangeGesture();
         repaint();
+
+        maybeCompleteOneShot (route);
+    }
+
+    // "None" is choice index 0 for BOTH the source and destination route
+    // choice lists -- checked directly against ParameterRegistry.cpp, not
+    // assumed: modSourceNames() starts { "None", "Env 1 (Amp)", ... } and
+    // ParameterRegistry::all()'s destNames is built starting from
+    // juce::StringArray destNames { "None" } before any real destination is
+    // appended.
+    static constexpr int kNoneChoiceIndex = 0;
+
+    // One-shot mode only: after writing a route choice, check whether the
+    // row just touched now has both a real source AND a real destination; if
+    // so the row is "complete" and the product-owner spec says assign mode
+    // exits immediately, same as clicking the button off.
+    void maybeCompleteOneShot (int route)
+    {
+        if (! oneShotActive || onOneShotComplete == nullptr)
+            return;
+
+        const auto sourceID = params::id::routeParam (route, params::id::route::source);
+        const auto destID = params::id::routeParam (route, params::id::route::dest);
+        auto* sourceP = apvts.getParameter (sourceID);
+        auto* destP = apvts.getParameter (destID);
+        if (sourceP == nullptr || destP == nullptr)
+            return;
+
+        const int sourceChoice = (int) sourceP->convertFrom0to1 (sourceP->getValue());
+        const int destChoice = (int) destP->convertFrom0to1 (destP->getValue());
+        if (sourceChoice != kNoneChoiceIndex && destChoice != kNoneChoiceIndex)
+            onOneShotComplete();
     }
 
     float pulsePhase01() const
@@ -485,6 +531,7 @@ private:
     Target* selectedDest = nullptr;
     Target* selectedSource = nullptr;
     bool active = false;
+    bool oneShotActive = false;
     bool fadingOut = false;
     float fadeAlpha = 0.0f;
     juce::uint32 fadeStartMs = 0;

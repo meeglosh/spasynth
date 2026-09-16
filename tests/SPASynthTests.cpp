@@ -10314,13 +10314,6 @@ namespace
         namespace params = spa::params;
         namespace id = spa::params::id;
 
-        const auto pumpFor = [] (int ms)
-        {
-            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
-            while (juce::Time::getMillisecondCounter() < deadline)
-                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-        };
-
         spa::SPASynthProcessor proc;
         proc.prepareToPlay (48000.0, 512);
 
@@ -10329,6 +10322,7 @@ namespace
 
         spa::ui::ContentComponent* content = nullptr;
         spa::ui::AssignOverlay* overlay = nullptr;
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
         juce::Button* assignBtn = nullptr;
         std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
         {
@@ -10336,6 +10330,8 @@ namespace
                 content = dynamic_cast<spa::ui::ContentComponent*> (&c);
             if (overlay == nullptr)
                 overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
             if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
                 assignBtn = dynamic_cast<juce::Button*> (&c);
             for (auto* child : c.getChildren())
@@ -10343,25 +10339,24 @@ namespace
         };
         findParts (*editor);
 
-        expect (content != nullptr && overlay != nullptr && assignBtn != nullptr,
-                "ContentComponent/AssignOverlay/ASSIGN button all found");
-        if (content == nullptr || overlay == nullptr || assignBtn == nullptr)
+        expect (content != nullptr && overlay != nullptr && matrixPanel != nullptr && assignBtn != nullptr,
+                "ContentComponent/AssignOverlay/MatrixPanel/ASSIGN button all found");
+        if (content == nullptr || overlay == nullptr || matrixPanel == nullptr || assignBtn == nullptr)
             return;
 
         expect (! overlay->isAssignActive() && ! overlay->isVisible(),
                 "overlay starts inactive/invisible");
 
-        // Button::triggerClick() posts an async command message
-        // (Component::postCommandMessage -> MessageManager::callAsync) --
-        // wait on the actual state change rather than a fixed pump, which
-        // was flaky under CPU load in this headless harness (no real run
-        // loop cadence).
-        assignBtn->triggerClick();
-        {
-            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
-            while (! overlay->isAssignActive() && juce::Time::getMillisecondCounter() < deadline)
-                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-        }
+        // This test exercises the old always-on ASSIGN behaviour (assign
+        // several routes, overwrite one, stay on throughout) -- that is now
+        // LATCH mode (see assignModeTest for one-shot's self-exit-on-
+        // complete-route behaviour, which a single click would trigger
+        // partway through this sequence). simulateDoubleClick() applies
+        // synchronously (no async command-message post like a real
+        // Button::triggerClick), so no wait loop is needed here.
+        matrixPanel->simulateDoubleClick();
+        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched,
+                "entered latch mode for this test");
         expect (overlay->isAssignActive() && overlay->isVisible(),
                 "ASSIGN toggled on: overlay active + visible");
 
@@ -10445,11 +10440,18 @@ namespace
         }
 
         // Esc exits assign mode; after the ~300ms fade the overlay stops
-        // painting/intercepting entirely.
+        // painting/intercepting entirely. Wait on the actual state change
+        // (the fade runs off a 30Hz juce::Timer serviced by the message
+        // loop) rather than a fixed pump -- flaky under CPU load in this
+        // headless harness, same reasoning as the triggerClick waits above.
         content->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
         expect (! overlay->isAssignActive(), "Esc turns assign mode off immediately");
 
-        pumpFor (400);
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+            while (overlay->isVisible() && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
         expect (! overlay->isVisible(), "overlay hidden after the fade completes");
         expect (! overlay->hitTest (
                     overlay->getLocalArea (cutoffKnob, cutoffKnob->getLocalBounds()).getCentreX(),
@@ -10730,6 +10732,214 @@ namespace
             const auto near = sample (2.0f);
             const auto far = sample (10.0f);
             expect (near >= far, "DEST combo halo alpha decreases with distance from the edge (blurred)");
+        }
+    }
+
+    // ASSIGN gains two modes (product-owner spec): one-shot (single click
+    // from off) self-exits the instant the matrix row just written becomes
+    // fully populated (source AND dest both non-"None"); latch (double
+    // click from off) behaves like the old always-on ASSIGN. Covers the
+    // pure state machine (MatrixPanel::nextModeOnClick/nextModeOnDoubleClick,
+    // no real mouse timing involved) plus the actual one-shot/latch
+    // behaviour through a real editor + AssignOverlay fixture.
+    static void assignModeTest()
+    {
+        std::cout << "assignModeTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using AssignMode = spa::ui::MatrixPanel::AssignMode;
+
+        // --- Pure state machine -----------------------------------------
+        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::off) == AssignMode::oneShot,
+                "single click from off -> one-shot");
+        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::oneShot) == AssignMode::off,
+                "single click from one-shot -> off");
+        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::latched) == AssignMode::off,
+                "single click from latched -> off");
+
+        // A double click is, at the JUCE level, click 1's onClick + click
+        // 2's onClick (each independently a plain nextModeOnClick step)
+        // followed by mouseDoubleClick's nextModeOnDoubleClick -- see
+        // MatrixPanel::nextModeOnDoubleClick's comment for why click 2's
+        // own onClick fires BEFORE mouseDoubleClick. Per the product owner,
+        // a double click ALWAYS means latch, unconditionally -- "the same
+        // way caps lock does not care what the shift key was doing" -- so
+        // this must hold no matter what the two individual clicks landed on.
+        const auto simulateDouble = [] (AssignMode start)
+        {
+            const auto afterClick1 = spa::ui::MatrixPanel::nextModeOnClick (start);
+            const auto afterClick2 = spa::ui::MatrixPanel::nextModeOnClick (afterClick1);
+            return spa::ui::MatrixPanel::nextModeOnDoubleClick (afterClick2);
+        };
+        expect (simulateDouble (AssignMode::off) == AssignMode::latched,
+                "double click from off ends in latch");
+        // A user who armed one-shot and then decides they want several
+        // assignments double-clicks to upgrade -- this must land in latch,
+        // not silently stay in one-shot (that was the bug: the old
+        // nextModeOnDoubleClick only promoted when the two clicks' naive
+        // result happened to be off, which a starting mode of one-shot
+        // never produces: oneShot->off->oneShot).
+        expect (simulateDouble (AssignMode::oneShot) == AssignMode::latched,
+                "double click from one-shot ends in latch");
+        // Double-clicking an already-latched button is a no-op in effect,
+        // but must still resolve to latched, not fall through to whatever
+        // the two intermediate clicks landed on.
+        expect (simulateDouble (AssignMode::latched) == AssignMode::latched,
+                "double click from latched stays latched");
+
+        // A double click must never land in a contradictory state: MatrixPanel
+        // has no separate "visually on" flag (applyMode always derives the
+        // button's toggle from the mode itself -- see applyMode). With the
+        // unconditional rule above this is now a stronger, exact check (every
+        // starting mode resolves to the SAME mode -- latched) rather than
+        // just "some well-defined mode".
+        for (auto start : { AssignMode::off, AssignMode::oneShot, AssignMode::latched })
+        {
+            expect (simulateDouble (start) == AssignMode::latched,
+                    "double click from every starting mode lands in latched, never a contradictory state");
+        }
+
+        // --- One-shot / latch behaviour, real editor + overlay fixture ---
+        const auto makeFixture = [] (spa::SPASynthProcessor& proc,
+                                      std::unique_ptr<juce::AudioProcessorEditor>& editor,
+                                      spa::ui::MatrixPanel*& matrixPanel,
+                                      spa::ui::AssignOverlay*& overlay)
+        {
+            proc.prepareToPlay (48000.0, 512);
+            editor.reset (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+            {
+                if (matrixPanel == nullptr)
+                    matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+                if (overlay == nullptr)
+                    overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+                for (auto* child : c.getChildren())
+                    findParts (*child);
+            };
+            findParts (*editor);
+        };
+
+        const auto clickAt = [] (spa::ui::AssignOverlay& ov, juce::Component& target)
+        {
+            const auto p = ov.getLocalArea (&target, target.getLocalBounds()).getCentre();
+            ov.handleClickAt (p);
+        };
+
+        const auto findLfo2Tab = [] (juce::Component& root) -> juce::Component*
+        {
+            namespace params = spa::params;
+            juce::Component* found = nullptr;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (found == nullptr && c.getProperties().contains ("modSource")
+                    && (int) c.getProperties()["modSource"] == (int) params::ModSource::lfo2)
+                    found = &c;
+                for (auto* child : c.getChildren())
+                    walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+
+        // Case 1: one-shot, assign a DEST into a row with no source yet ->
+        // must stay on; then assign a SOURCE into the SAME row -> completes
+        // it, must turn off. Reverts if the completion check is dropped
+        // entirely (mode would stay one-shot the whole time) OR if it fires
+        // too early (mode would already be off after the first assignment).
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 1)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            matrixPanel->simulateClick();
+            expect (matrixPanel->getAssignMode() == AssignMode::oneShot, "entered one-shot (case 1)");
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            expect (cutoffKnob != nullptr && row0Dest != nullptr && row0Source != nullptr
+                        && lfo2Tab != nullptr,
+                    "all targets found (case 1)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
+                return;
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            expect (matrixPanel->isAssignOn(),
+                    "one-shot STAYS ON: row has a dest but no source yet");
+
+            clickAt (*overlay, *lfo2Tab);
+            clickAt (*overlay, *row0Source);
+            expect (! matrixPanel->isAssignOn(),
+                    "one-shot turns OFF once the row is complete (dest, then source)");
+        }
+
+        // Case 2: one-shot, row's source pre-set before assign mode even
+        // starts; assigning only a DEST into it must complete + exit
+        // immediately. Reverts if completion is only checked for the field
+        // just written rather than the whole row.
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 2)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            matrixPanel->simulateClick();
+            expect (matrixPanel->isAssignOn(), "one-shot armed (case 2)");
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            expect (cutoffKnob != nullptr && row0Dest != nullptr, "targets found (case 2)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr)
+                return;
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            expect (! matrixPanel->isAssignOn(),
+                    "one-shot exits IMMEDIATELY: writing a dest into an already-sourced row completes it");
+        }
+
+        // Case 3: latch mode, the same completed-route case as case 2 --
+        // must NOT exit. Reverts if the one-shot exit fires regardless of
+        // mode (i.e. the oneShotActive gate is dropped).
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 3)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            matrixPanel->simulateDoubleClick();
+            expect (matrixPanel->getAssignMode() == AssignMode::latched, "entered latched mode (case 3)");
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            expect (cutoffKnob != nullptr && row0Dest != nullptr, "targets found (case 3)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr)
+                return;
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            expect (matrixPanel->isAssignOn() && matrixPanel->getAssignMode() == AssignMode::latched,
+                    "latch mode does NOT exit on a completed route");
         }
     }
 
@@ -12512,6 +12722,7 @@ int main (int argc, char* argv[])
     modAssignModeTest();
     modAssignFocusTest();
     assignGlowShapeTest();
+    assignModeTest();
     tabLayoutInvarianceTest();
     editorFitsScreenTest();
     presetBrowserWidensWindowTest();

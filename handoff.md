@@ -236,6 +236,41 @@ listing. Next: any further 1.0.16 findings, then build + send.
   after construction, pump, assert the pack + its presets appear without a
   manual rescan. Do not bump the version until a build is sent.
 
+## Product decisions of record: editions (2026-09-16)
+
+- **One binary, forever.** Mike considered splitting Standard and Pro by
+  FEATURE (Standard = factory presets only, no user audio, 48 kHz; Pro =
+  user audio, drag and drop, 96 kHz) and decided against it after review.
+  Reasons, so this does not get relitigated: the no-DRM decision means
+  nothing stops a Standard buyer running a Pro binary, so the gate is
+  unenforceable while content differentiation is self-enforcing; both
+  editions share a plugin identity, so upgraders would face
+  uninstall/reinstall and cross-edition sessions and shared presets would
+  break; it doubles every release (two signings, notarizations,
+  installers, staging folders, test matrices) on the machine that is
+  already the bottleneck; and the sample-rate axis needs no code at all,
+  since Standard gets the 24/48 starter and Pro the 24/96 originals by
+  content alone. **Editions stay differentiated by content only.**
+- If feature tiers are ever wanted, the only credible path is SPAStation
+  writing a signed entitlement file that the plugin reads, since SPAStation
+  already verifies real Shopify entitlements. That conflicts with
+  "SPAStation recommended, never required" and would be a deliberate 1.1+
+  conversation.
+- **Direct Audio Input (Phil's request) is PARKED for 1.1.** SPASynth is a
+  pure instrument: one stereo output, no input bus, `IS_SYNTH TRUE`,
+  `AU_MAIN_TYPE kAudioUnitType_MusicDevice`. Live input means changing bus
+  topology, which is the exact class of change that has repeatedly cost us
+  Logic validation days (see the 2026-09-04 saga). Options when it is
+  picked up, cheapest first: (1) optional sidechain input bus + "capture
+  to slot" recording a few seconds into an oscillator's sample buffer,
+  which reuses granular/stretch/loop/filters/chaos unchanged and is by far
+  the best value; (2) a live rolling ring buffer the granular engine reads
+  behind the write head, which breaks the static-buffer assumption through
+  the sample engine; (3) shipping an audio-effect build alongside the
+  instrument, cleanest conceptually but a second plugin identity, payload,
+  validation and store decision. Drag and drop shipped in 1.0.16 instead as
+  the cheap, zero-topology-risk answer to most of the same need.
+
 ## What's actually left before launch
 
 1. Mike installs 1.0.15 (`sudo installer -pkg

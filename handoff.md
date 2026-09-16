@@ -339,6 +339,32 @@ listing. Next: any further 1.0.16 findings, then build + send.
   validation and store decision. Drag and drop shipped in 1.0.16 instead as
   the cheap, zero-topology-risk answer to most of the same need.
 
+## Library figures: the numbers are automated, do not hand-edit them
+
+`~/spasynth-landing/scripts/update-library-stats.py` is the source of truth.
+It sums a per-pack `fileCount` out of SPAStation's `catalog-releases.json`
+under Mike's 2026-09-13 inclusion rule (count only what is currently sold;
+retired packs like Wood Impacts do not count), adds the Vault bonus
+recordings from `vault-stats.json`, and rewrites every `data-stat` span and
+the meta descriptions in the site's `index.html`. It also derives starter =
+5 x packs and presets = 3 x packs. Run it after every pack release.
+Current, 2026-09-16: **90 packs, 11,479 pack sounds, 339 Vault bonus,
+11,818 total, 450 starter, 270 presets, 76 GB.**
+
+**The two sound figures are not interchangeable.** 11,479 live in the
+packs; the other 339 are Vault bonus recordings. "90 packs, 11,818 sounds"
+is false. Use the packs figure for inventory claims and "up to 11,818" for
+what a Pro owner can play; `docs/shopify-listings.md`'s "How many sounds"
+FAQ reconciles them.
+
+The repo's marketing copy (`docs/shopify-listings.md`,
+`docs/launch-email.md`, `docs/social-posts.md`, `docs/marketing-brief.md`)
+is still HAND-maintained, which is why it drifted on four separate figures
+at once and needed `6c4885b` + `4c65476` to fix. Anything derived from the
+pack count drifts together: pack count, starter size, preset count, totals.
+Worth pointing the same script at these files, or at minimum running it and
+diffing before any release.
+
 ## What's actually left before launch
 
 1. Mike installs 1.0.15 (`sudo installer -pkg

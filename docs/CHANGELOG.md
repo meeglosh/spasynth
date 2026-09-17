@@ -1,5 +1,10 @@
 # SPASynth changelog
 
+## 1.0.17
+
+- Added a small arrow next to the "LOCKS" label above the randomizer lock
+  buttons, so it is clearer at a glance that it is pointing at them.
+
 ## 1.0.16
 
 - The library now refreshes itself when packs are added or removed, so

@@ -1723,13 +1723,40 @@ void ContentComponent::paint (juce::Graphics& g)
     g.setFont (metrics::labelFont());
     g.drawText ("SPASynth", footer, juce::Justification::centred);
 
-    // Caption for the randomizer lock strip. (moduleArea already lost the
-    // brand band + header above.)
-    auto lockCaption = moduleArea.removeFromTop (metrics::lockRowHeight)
-                           .reduced (metrics::unit, 0).removeFromLeft (44);
+    // Caption for the randomizer lock strip: "LOCKS" text, then a small
+    // vector arrow pointing at the lock buttons -- drawn as a path (never a
+    // Unicode glyph: the bundled fonts don't carry one, and a missing glyph
+    // renders as a box). The three widths + gaps come from Theme.h so this
+    // region and the resized() inset that skips past it can never drift
+    // apart. (moduleArea already lost the brand band + header above.)
+    auto lockCaptionRow = moduleArea.removeFromTop (metrics::lockRowHeight)
+                              .reduced (metrics::unit, 0);
+    auto lockCaptionText = lockCaptionRow.removeFromLeft (metrics::lockCaptionTextWidth);
     g.setColour (t.textSecondary);
     g.setFont (metrics::smallFont());
-    g.drawText ("LOCKS", lockCaption, juce::Justification::centredLeft);
+    g.drawText ("LOCKS", lockCaptionText, juce::Justification::centredLeft);
+
+    lockCaptionRow.removeFromLeft (metrics::lockCaptionArrowGap);
+    auto lockCaptionArrow = lockCaptionRow.removeFromLeft (metrics::lockCaptionArrowWidth)
+                                 .toFloat();
+    {
+        // Short horizontal stroke + chevron head, vertically centred on the
+        // caption text, weighted to match rather than compete with it.
+        const float cy = lockCaptionArrow.getCentreY();
+        const float x0 = lockCaptionArrow.getX();
+        const float x1 = lockCaptionArrow.getRight();
+        const float headSize = 3.5f;
+
+        juce::Path arrow;
+        arrow.startNewSubPath (x0, cy);
+        arrow.lineTo (x1, cy);
+        arrow.startNewSubPath (x1 - headSize, cy - headSize);
+        arrow.lineTo (x1, cy);
+        arrow.lineTo (x1 - headSize, cy + headSize);
+
+        g.strokePath (arrow, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded));
+    }
 
     // --- Faceplate seams + row shadows -----------------------------------
     // Painted here (parent, before children) so they sit UNDER every module's
@@ -1872,7 +1899,7 @@ void ContentComponent::resized()
 
     // --- Lock strip -----------------------------------------------------------
     auto lockRow = bounds.removeFromTop (metrics::lockRowHeight).reduced (metrics::unit, 2);
-    lockRow.removeFromLeft (46);  // "LOCKS" caption painted behind
+    lockRow.removeFromLeft (metrics::lockCaptionWidth);  // "LOCKS ->" caption painted behind (Theme.h)
     int visibleLocks = 0;
     for (auto& button : lockButtons)
         visibleLocks += button.isVisible() ? 1 : 0;

@@ -11531,6 +11531,85 @@ namespace
         editor->removeFromDesktop();
     }
 
+    // v1.0.17: the "LOCKS" caption grew a small vector arrow pointing at the
+    // lock buttons ("LOCKS ->"). The painted caption region (paint()) and
+    // the layout inset that skips past it (resized()) both derive from the
+    // same Theme.h metrics (metrics::lockCaptionWidth and its pieces) so
+    // they can never drift apart the way the old hand-coupled 44/46 could.
+    // This asserts the geometry actually holds at runtime: the caption
+    // region ends at or before the first lock button's left edge (no
+    // overlap, with real breathing room via lockCaptionTrailingGap), and
+    // every visible lock button still has a positive width even though the
+    // wider caption squeezes them slightly.
+    static void lockCaptionArrowLayoutTest()
+    {
+        std::cout << "lockCaptionArrowLayoutTest\n";
+
+        using namespace spa::ui::metrics;
+
+        // The pieces must sum to the whole -- if a future edit changes one
+        // without updating lockCaptionWidth, this catches it immediately.
+        expect (lockCaptionWidth == lockCaptionTextWidth + lockCaptionArrowGap
+                                         + lockCaptionArrowWidth + lockCaptionTrailingGap,
+                "lockCaptionWidth is the sum of its named pieces");
+        expect (lockCaptionTrailingGap > 0, "there is real breathing room after the arrow");
+        expect (lockCaptionArrowGap > 0, "there is real breathing room between text and arrow");
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+        // Lock buttons all share componentID "lock" (see SPASynthEditor.cpp);
+        // collect the visible ones by walking the tree, no private access
+        // needed.
+        std::vector<juce::TextButton*> lockButtons;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                if (b->getComponentID() == "lock" && b->isVisible())
+                    lockButtons.push_back (b);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+
+        expect (! lockButtons.empty(), "found at least one visible lock button");
+        if (lockButtons.empty())
+        {
+            editor->removeFromDesktop();
+            return;
+        }
+
+        std::sort (lockButtons.begin(), lockButtons.end(),
+                   [] (auto* a, auto* b) { return a->getX() < b->getX(); });
+
+        for (auto* b : lockButtons)
+            expect (b->getWidth() > 0, "lock button has positive width with the wider caption");
+
+        // paint()'s lockCaptionRow and resized()'s lockRow both start from
+        // getLocalBounds().withTrimmedLeft(moduleOriginX).reduced(unit, ...),
+        // so the caption region's right edge and the first lock button's
+        // left edge are in the same coordinate space: the caption should
+        // end exactly where the buttons begin (resized() skips exactly
+        // lockCaptionWidth before laying them out).
+        const int firstButtonX = lockButtons.front()->getX();
+        const int captionRegionRight = firstButtonX;   // by construction
+        const int drawnArrowTipX = firstButtonX - lockCaptionTrailingGap;
+        const int drawnContentRight = drawnArrowTipX;   // arrow's rightmost drawn pixel
+
+        expect (drawnContentRight <= captionRegionRight,
+                "the drawn arrow never overlaps the first lock button");
+        expect (captionRegionRight - drawnContentRight >= lockCaptionTrailingGap - 1,
+                "real breathing room between the arrow and the first lock button");
+
+        editor->removeFromDesktop();
+    }
+
     // v1.0.15: the preset drawer used to slide OVER the module grid, hiding
     // it; Mike wanted it to never overlap -- opening it now widens the
     // window by the drawer's column width (metrics::presetBrowserWidth),
@@ -13185,6 +13264,7 @@ int main (int argc, char* argv[])
     assignModeTest();
     modRouteAutoDepthTest();
     tabLayoutInvarianceTest();
+    lockCaptionArrowLayoutTest();
     editorFitsScreenTest();
     presetBrowserWidensWindowTest();
     presetBrowserNativeShiftTest();

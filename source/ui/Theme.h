@@ -93,6 +93,20 @@ namespace metrics
     inline constexpr int unit = 8;
     inline constexpr float cornerRadius = 7.0f;  // softer, elevated panels
 
+    // Randomizer lock strip caption ("LOCKS ->"). Three named pieces so the
+    // painted caption region (ContentComponent::paint) and the layout inset
+    // that skips past it (ContentComponent::resized) can never drift apart --
+    // they used to be two hand-coupled magic numbers (44 painted / 46 skipped).
+    inline constexpr int lockCaptionTextWidth = 44;   // room for the "LOCKS" text itself
+    inline constexpr int lockCaptionArrowGap = 6;     // air between the text and the arrow
+    inline constexpr int lockCaptionArrowWidth = 14;  // the arrow glyph's own footprint
+    inline constexpr int lockCaptionTrailingGap = 8;  // air between the arrow and the first lock button
+    // Total width of the caption region resized() must skip before laying
+    // out the lock buttons -- derived from the three pieces above so paint()
+    // and resized() can never disagree about where the caption ends.
+    inline constexpr int lockCaptionWidth = lockCaptionTextWidth + lockCaptionArrowGap
+                                             + lockCaptionArrowWidth + lockCaptionTrailingGap;
+
     // Section-title row (draw::sectionHeader) reserved from the top of every
     // module panel's bounds. Shared so any site that needs to know where the
     // header ends and content begins -- OscStrip's headerNameRect click/popup

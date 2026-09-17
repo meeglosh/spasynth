@@ -366,6 +366,26 @@ them in older notes: "1.0.2" and "1.2" were both misspoken; 1.0.2 shipped
     high-value extras such as delay feedback and reverb decay. Do not add
     every FX parameter; the cap and the per-voice cost both argue against it.
   - Sits naturally beside the granular effect, since both touch the FX chain.
+- **ASIO support on Windows** (Mike, 2026-09-17, from Windows beta testers).
+  The code side is trivial: JUCE enables it with a single build flag. The
+  obstacles are elsewhere, which is why it is here and not in 1.0.17:
+  - **Licensing.** It needs Steinberg's ASIO SDK, which CANNOT be committed
+    to this repo. Ours is PUBLIC so the Windows CI can build, and the SDK's
+    licence does not permit redistribution. Mike must register with
+    Steinberg and accept their agreement, then the headers have to reach
+    the GitHub Actions Windows job some other way (a private submodule, an
+    encrypted secret, or a self-hosted step). That plumbing is the real
+    work.
+  - **It only affects the STANDALONE.** Plugins take audio from the host,
+    so a tester running the VST3 in a DAW already gets the DAW's driver.
+    **Before building this, confirm the testers hit the problem in the
+    standalone and not in a DAW**, because if it is in a DAW then ASIO is
+    not their problem.
+  - **Neither Mike nor the agent can test it**: it needs a Windows machine
+    with a real ASIO interface. Paul or Phil would have to verify.
+  - Windows standalone currently uses WASAPI/DirectSound; WASAPI exclusive
+    mode is already respectable, so measure the actual latency complaint
+    before assuming ASIO is the fix.
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

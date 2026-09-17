@@ -445,10 +445,34 @@ public:
         g.setColour (t.accent);
         g.strokePath (top, juce::PathStrokeType (1.2f));
 
-        if (gapFrac > 0.001f)   // pre-delay marker
+        if (gapFrac > 0.001f)   // pre-delay marker: a gap of silence before the wet signal
         {
             g.setColour (t.textSecondary.withAlpha (0.5f));
             g.drawVerticalLine ((int) x0, area.getY(), area.getBottom());
+        }
+
+        // START marker: distinct from pre-delay -- this doesn't add silence,
+        // it shows how much was trimmed off the FRONT of the impulse itself
+        // (the envelope already reflects the trimmed+reshaped IR, so the
+        // waveform alone can look identical to a shorter untrimmed one; a
+        // hatched wedge plus the percentage makes the trim legible at a glance).
+        const float startTrim = processor.getConvolutionStartTrim();
+        if (startTrim > 0.001f)
+        {
+            const float wedgeW = juce::jmin (w * 0.3f, 10.0f + startTrim * 30.0f);
+            {
+                juce::Graphics::ScopedSaveState save (g);
+                g.reduceClipRegion (juce::Rectangle<float> (x0, area.getY(),
+                                                            wedgeW, area.getHeight()).getSmallestIntegerContainer());
+                g.setColour (t.textSecondary.withAlpha (0.28f));
+                for (float hx = x0 - area.getHeight(); hx < x0 + wedgeW; hx += 5.0f)
+                    g.drawLine (hx, area.getBottom(), hx + area.getHeight(), area.getY(), 1.0f);
+            }
+            g.setColour (t.textSecondary.withAlpha (0.75f));
+            g.setFont (metrics::smallFont());
+            g.drawText ("START -" + juce::String (juce::roundToInt (startTrim * 100.0f)) + "%",
+                       juce::Rectangle<float> (x0 + 2.0f, area.getY(), 90.0f, 11.0f),
+                       juce::Justification::left);
         }
     }
 
@@ -469,6 +493,7 @@ public:
           enable   (p.getAPVTS(), params::id::fx::convEnable, "ON"),
           mix      (p.getAPVTS(), params::id::fx::convMix, "Mix"),
           predelay (p.getAPVTS(), params::id::fx::convPreDelay, "Pre"),
+          start    (p.getAPVTS(), params::id::fx::convStart, "Start"),
           decay    (p.getAPVTS(), params::id::fx::convDecay, "Decay"),
           damping  (p.getAPVTS(), params::id::fx::convDamping, "Damp"),
           width    (p.getAPVTS(), params::id::fx::convWidth, "Width")
@@ -488,7 +513,7 @@ public:
         addAndMakeVisible (irButton);
         addAndMakeVisible (display);
         for (auto* c : std::initializer_list<juce::Component*> {
-                 &enable, &mix, &predelay, &decay, &damping, &width })
+                 &enable, &mix, &predelay, &start, &decay, &damping, &width })
             addAndMakeVisible (*c);
         processor.addChangeListener (this);
     }
@@ -578,9 +603,9 @@ public:
 
         enable.setBounds (strip.removeFromLeft (54).reduced (2, 20));
         strip.removeFromLeft (4);
-        for (auto* k : { &mix, &predelay, &decay, &damping, &width })
+        for (auto* k : { &mix, &predelay, &start, &decay, &damping, &width })
         {
-            k->setBounds (strip.removeFromLeft (juce::jmin (60, strip.getWidth() / 5)));
+            k->setBounds (strip.removeFromLeft (juce::jmin (60, strip.getWidth() / 6)));
             strip.removeFromLeft (2);
         }
     }
@@ -683,7 +708,7 @@ private:
     juce::TextButton irButton { "browser" };
     ConvolveDisplay display;
     Toggle enable;
-    Knob mix, predelay, decay, damping, width;
+    Knob mix, predelay, start, decay, damping, width;
     std::unique_ptr<juce::FileChooser> fileChooser;
     bool dragHighlight = false;
 };

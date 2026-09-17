@@ -897,6 +897,19 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::choiceParam, {}, 6.0f /* 1/4 */, "",
                    false, { .enabled = false }, lfoDivisionNames() });
 
+    // Convolve start position -- appended at the end of the registry (keyed
+    // by ID like every other param, so this doesn't disturb the append-only
+    // mod-destination/choice-order rules). Trims from the front of the raw
+    // impulse before decay/damping reshape it (see FXChain::reshapeConvolutionIR).
+    // Deliberately NOT a mod destination (dest budget is tight -- see
+    // ParameterRegistry.h's maxModDests comment -- and FX params as mod
+    // destinations are a separate planned piece of work). Past the halfway
+    // point the impulse gets progressively thinner, so RANDOMIZE ALL is
+    // capped there (maxNorm); the user still gets the full range.
+    p.push_back ({ fx::convStart, "Conv Start", Section::fxConvolve,
+                   ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
+                   false, { .enabled = true, .maxNorm = 0.5f } });
+
     return p;
 }
 

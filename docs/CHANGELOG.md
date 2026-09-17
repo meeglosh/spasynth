@@ -26,6 +26,15 @@
   depth slider. This is separate from your accent color choice and is not
   affected by it, so it stays a clear, consistent signal no matter what
   colors you have picked.
+- Convolve now has a START knob for its impulse. Turning it up skips further
+  into the loaded sound before the wet signal begins, so you can leave the
+  direct hit and early reflections behind and keep only the long diffuse
+  tail, a texture you could not reach before. It also opens up what you can
+  do with a long recording used as an impulse: dial in to a later section of
+  it instead of always starting at the very beginning. The knob never goes
+  silent, even pushed all the way over, and RANDOMIZE ALL keeps it in the
+  first half of its range so it stays musical on a random patch; drag it
+  yourself for the rest.
 
 ## 1.0.16
 

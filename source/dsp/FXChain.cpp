@@ -377,13 +377,15 @@ void FXChain::loadConvolutionIR (const juce::File& irFile)
     reshapeConvolutionIR();
 }
 
-void FXChain::setConvolutionShaping (float decay, float damping)
+void FXChain::setConvolutionShaping (float decay, float damping, float start)
 {
     if (juce::approximatelyEqual (decay, convDecayApplied)
-        && juce::approximatelyEqual (damping, convDampingApplied))
+        && juce::approximatelyEqual (damping, convDampingApplied)
+        && juce::approximatelyEqual (start, convStartApplied))
         return;
     convDecayApplied = decay;
     convDampingApplied = damping;
+    convStartApplied = start;
     if (haveRawIR) reshapeConvolutionIR();
 }
 
@@ -397,9 +399,26 @@ void FXChain::reshapeConvolutionIR()
         return;
     }
 
-    const int n = rawIR.getNumSamples();
+    const int rawN = rawIR.getNumSamples();
     const int ch = rawIR.getNumChannels();
     const double sr = rawIRSampleRate > 0.0 ? rawIRSampleRate : sampleRate;
+
+    // Start position trims from the FRONT of the raw impulse -- removing the
+    // direct hit and early reflections to leave only the diffuse tail -- and
+    // runs before decay/damping, which then reshape whatever remains. This is
+    // independent of pre-delay (which inserts silence before the wet signal
+    // rather than removing anything from the impulse itself).
+    //
+    // Never let the effect go silent: however far start is dragged, at least
+    // kConvStartMinTailSeconds of the raw IR survives the trim. A start of 0
+    // always trims nothing, matching pre-start-position behaviour exactly.
+    const int minTailSamples = juce::jmax (1, (int) (kConvStartMinTailSeconds * sr));
+    const int maxTrim = juce::jmax (0, rawN - minTailSamples);
+    const int trimSamples = juce::jlimit (0, maxTrim,
+                                          (int) (juce::jlimit (0.0f, 1.0f, convStartApplied) * (float) rawN));
+    convStartTrimApplied = rawN > 0 ? (float) trimSamples / (float) rawN : 0.0f;
+
+    const int n = juce::jmax (1, rawN - trimSamples);
     irLengthSeconds.store ((double) n / sr, std::memory_order_relaxed);
 
     const float decay = juce::jlimit (0.05f, 1.0f, convDecayApplied);
@@ -415,7 +434,7 @@ void FXChain::reshapeConvolutionIR()
 
     for (int c = 0; c < ch; ++c)
     {
-        const float* src = rawIR.getReadPointer (c);
+        const float* src = rawIR.getReadPointer (c) + trimSamples;
         float* dst = shaped.getWritePointer (c);
         float lp = 0.0f;
         for (int i = 0; i < n; ++i)

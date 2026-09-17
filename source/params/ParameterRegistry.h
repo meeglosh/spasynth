@@ -427,6 +427,9 @@ namespace id
         inline constexpr const char* convPreDelay = "fxConv.predelay";
         inline constexpr const char* convDecay    = "fxConv.decay";
         inline constexpr const char* convDamping  = "fxConv.damping";
+        // Appended at the end of the registry (see ParameterRegistry.cpp) --
+        // not a mod destination, so this doesn't disturb dest-index order.
+        inline constexpr const char* convStart    = "fxConv.start";
     }
 
     // Matrix route parameter IDs: routeParam(0, "source") -> "matrix.route1.source"

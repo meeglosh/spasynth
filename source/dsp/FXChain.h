@@ -144,6 +144,7 @@ public:
         float convPreDelay = 0.0f;   // ms, wet pre-delay
         float convDecay = 1.0f;      // 0..1 IR tail length (shorter = tighter)
         float convDamping = 0.0f;    // 0..1 HF damping of the IR
+        float convStart = 0.0f;      // 0..1 proportion of the raw IR trimmed off the front
 
         // Runtime FX processing order (drag-reorderable, saved per preset).
         Module order[numModules] {
@@ -187,8 +188,17 @@ public:
     // decay/damping reshape it and it is (re)loaded into juce::dsp::Convolution
     // on a background thread. All of these run on the message thread.
     void loadConvolutionIR (const juce::File& irFile);
-    void setConvolutionShaping (float decay, float damping);   // reshapes if changed
+    // start = proportion (0..1) of the raw IR trimmed off the front, applied
+    // before decay/damping. Reshapes (and reloads into the convolution
+    // engine) only when any of the three actually changed.
+    void setConvolutionShaping (float decay, float damping, float start);
     bool hasConvolutionIR() const { return convIrLoaded.load (std::memory_order_relaxed); }
+
+    // Proportion of the raw IR actually trimmed by the last reshape (after
+    // the minimum-tail clamp below), 0..1 -- lets the UI draw the trimmed
+    // region even when it differs slightly from the raw parameter value
+    // (e.g. a short IR near the min-tail floor).
+    float convolutionStartTrim() const { return convStartTrimApplied; }
 
     // Downsampled magnitude envelope of the shaped IR for the UI waveform.
     static constexpr int convEnvPoints = 256;
@@ -230,7 +240,16 @@ private:
     juce::AudioBuffer<float> rawIR;
     double rawIRSampleRate = 0.0;
     bool haveRawIR = false;
-    float convDecayApplied = 1.0f, convDampingApplied = 0.0f;
+    float convDecayApplied = 1.0f, convDampingApplied = 0.0f, convStartApplied = 0.0f;
+    // Actual trim fraction after the minimum-tail clamp (see reshapeConvolutionIR);
+    // read by the UI via convolutionStartTrim(). Message-thread only, like the
+    // rest of the convolve-reshape state above.
+    float convStartTrimApplied = 0.0f;
+    // A start position that trimmed away the whole IR would leave Convolve
+    // silent -- which reads as a bug, not a creative extreme -- so the reshape
+    // always keeps at least this much of the tail, however early the start
+    // position is set.
+    static constexpr float kConvStartMinTailSeconds = 0.15f;
     // Written on the message thread (reshapeConvolutionIR), read from
     // tailSeconds() on the audio thread (getTailLengthSeconds).
     std::atomic<double> irLengthSeconds { 0.0 };

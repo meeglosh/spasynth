@@ -4105,6 +4105,243 @@ namespace
         irFile.deleteFile();
     }
 
+    // fxConv.start: trims the FRONT of the raw impulse before decay/damping
+    // reshape it, so Convolve can be pointed at the diffuse tail of a long
+    // reverb/recording instead of always starting at its direct hit. Must
+    // never silence the effect, must not be a mod destination, and RANDOMIZE
+    // ALL must never roll it past the halfway point (see the comment on
+    // fx::convStart's RandomSpec and the hard clamp in
+    // SPASynthProcessor::randomizeAll()).
+    static void convolveStartPositionTest()
+    {
+        std::cout << "convolveStartPositionTest\n";
+
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+        constexpr double irSeconds = 2.0;
+        constexpr double spikeSeconds = 0.1;   // "direct hit" region, loud
+        constexpr float spikeAmp = 0.9f;
+        constexpr float tailAmp = 0.05f;       // quiet "diffuse tail" region
+
+        // A deterministic two-region impulse: a loud spike at the front (the
+        // direct hit) followed by a much quieter constant tail (the diffuse
+        // part) -- lets the test tell "front trimmed away" from "front kept"
+        // just by looking at the shaped envelope's leading samples.
+        const auto irFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getNonexistentChildFile ("spasynth-conv-start-test", ".wav");
+        {
+            const int numSamples = (int) (irSeconds * sampleRate);
+            const int spikeSamples = (int) (spikeSeconds * sampleRate);
+            juce::AudioBuffer<float> irBuffer (1, numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                irBuffer.setSample (0, i, i < spikeSamples ? spikeAmp : tailAmp);
+
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> stream = irFile.createOutputStream();
+            auto writer = wav.createWriterFor (stream,
+                                               juce::AudioFormatWriterOptions()
+                                                   .withSampleRate (sampleRate)
+                                                   .withNumChannels (1)
+                                                   .withBitsPerSample (24));
+            expect (writer != nullptr, "test IR WAV writer created");
+            if (writer != nullptr)
+            {
+                writer->writeFromAudioSampleBuffer (irBuffer, 0, numSamples);
+                writer.reset();
+            }
+        }
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        // The convolve reshape (setConvolutionShaping -> reshapeConvolutionIR)
+        // runs off SPASynthProcessor's 150ms timer, not processBlock -- pump
+        // both so a changed decay/damping/start value actually lands.
+        const auto pump = [&]
+        {
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+        };
+
+        proc.loadConvolutionIR (irFile);
+        setParam (proc, id::fx::convEnable, 1.0f);
+        setParam (proc, id::fx::convDecay, 1.0f);      // no extra tapering from decay
+        setParam (proc, id::fx::convDamping, 0.0f);    // no HF rolloff to muddy the read
+        setParam (proc, id::fx::convPreDelay, 0.0f);
+
+        const auto leadingMag = [&]
+        {
+            const auto& env = proc.getConvolutionEnvelope();
+            float m = 0.0f;
+            for (int i = 0; i < 4; ++i) m = juce::jmax (m, env[(size_t) i]);
+            return m;
+        };
+
+        // --- start = 0: guard existing (pre-start-position) behaviour -----
+        setParam (proc, id::fx::convStart, 0.0f);
+        pump();
+        expect (proc.getConvolutionStartTrim() < 1.0e-6f,
+                "start=0 trims nothing (" + juce::String (proc.getConvolutionStartTrim()) + ")");
+        const auto leadingAtZero = leadingMag();
+        expect (leadingAtZero > 0.5f * spikeAmp,
+                "start=0 keeps the direct-hit spike at the front (leading mag "
+                + juce::String (leadingAtZero) + ")");
+        // REVERT CHECK: reverting the front-trim (e.g. always trimming 0
+        // regardless of convStart, or never applying it) would make every
+        // assertion below indistinguishable from this one -- the leadingMag
+        // comparisons against leadingAtZero are what actually catch that.
+
+        // --- start = 0.5: actually trims the front -------------------------
+        setParam (proc, id::fx::convStart, 0.5f);
+        pump();
+        expect (std::abs (proc.getConvolutionStartTrim() - 0.5f) < 0.02f,
+                "start=0.5 trims ~half the raw IR (trim "
+                + juce::String (proc.getConvolutionStartTrim()) + ")");
+        const auto leadingAtHalf = leadingMag();
+        expect (leadingAtHalf < 0.3f * spikeAmp,
+                "start=0.5 trims the spike away -- leading samples read as the "
+                "quiet tail, not the direct hit (leading mag "
+                + juce::String (leadingAtHalf) + " vs spike " + juce::String (spikeAmp) + ")");
+        // REVERT CHECK: if the trim were applied AFTER decay/damping (or not
+        // applied at all), the spike would still lead and this would fail
+        // exactly like the start=0 case above.
+
+        // --- start = 1.0: never silent, keeps a usable minimum tail -------
+        setParam (proc, id::fx::convStart, 1.0f);
+        pump();
+        const double tailAtMax = proc.getTailLengthSeconds();
+        expect (tailAtMax > 0.05 && tailAtMax < 0.35,
+                "start=1.0 still leaves a short, non-zero, minimum-tail impulse "
+                "(reported tail " + juce::String (tailAtMax) + "s)");
+        expect (proc.hasConvolutionIR(), "start=1.0 still has a loaded IR, not silence");
+        const auto& envAtMax = proc.getConvolutionEnvelope();
+        float envPeakAtMax = 0.0f;
+        for (auto v : envAtMax) envPeakAtMax = juce::jmax (envPeakAtMax, v);
+        expect (envPeakAtMax > 0.0f,
+                "start=1.0's shaped impulse is non-empty (peak " + juce::String (envPeakAtMax) + ")");
+        // REVERT CHECK: a naive "trim = start * length" with no floor would
+        // drive tailAtMax to ~0 and envPeakAtMax to 0 here -- both would fail.
+
+        // The effect must actually produce wet signal at start=1.0, not just
+        // report a non-zero tail. Play a note through Convolve on vs. off.
+        const auto convolveEnergy = [&] (bool convOn)
+        {
+            spa::SPASynthProcessor p2;
+            p2.prepareToPlay (sampleRate, blockSize);
+            p2.loadConvolutionIR (irFile);
+            setParam (p2, id::ampRelease, 0.02f);
+            setParam (p2, id::chaos::enable, 0.0f);
+            setParam (p2, id::fx::convStart, 1.0f);
+            setParam (p2, id::fx::convDecay, 1.0f);
+            setParam (p2, id::fx::convDamping, 0.0f);
+            setParam (p2, id::fx::convPreDelay, 0.0f);
+            setParam (p2, id::fx::convMix, 1.0f);
+            setParam (p2, id::fx::convEnable, convOn ? 1.0f : 0.0f);
+            setParam (p2, id::fx::delayEnable, 0.0f);
+            setParam (p2, id::fx::reverbEnable, 0.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);   // let the reshape timer fire
+
+            juce::AudioBuffer<float> buf (2, blockSize);
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            m.addEvent (juce::MidiMessage::noteOff (1, 60), blockSize - 1);
+
+            // With start=1.0 the shaped IR is only kConvStartMinTailSeconds
+            // long, so the convolution ring dies out well before 0.3s -- the
+            // skip window has to sit inside that short tail, not after it.
+            double energy = 0.0;
+            const int blocksTotal = (int) (0.3 * sampleRate / blockSize);
+            const int blocksSkip = (int) (0.05 * sampleRate / blockSize);
+            bool allFinite = true;
+            for (int b = 0; b < blocksTotal; ++b)
+            {
+                p2.processBlock (buf, m);
+                m.clear();
+                for (int ch = 0; ch < buf.getNumChannels() && allFinite; ++ch)
+                    for (int i = 0; i < buf.getNumSamples() && allFinite; ++i)
+                        if (! std::isfinite (buf.getSample (ch, i)))
+                            allFinite = false;
+                if (b >= blocksSkip)
+                    energy += buf.getRMSLevel (0, 0, buf.getNumSamples());
+            }
+            // One assertion for the whole render, not one per sample -- an
+            // aggregated per-sample loop like that would inflate the suite's
+            // assertion count without adding real coverage (see CLAUDE.md's
+            // "agent management lessons").
+            expect (allFinite, juce::String ("no NaN/Inf across the render (convOn=")
+                                + (convOn ? "true)" : "false)"));
+            return energy;
+        };
+        const auto energyOff = convolveEnergy (false);
+        const auto energyOn = convolveEnergy (true);
+        expect (energyOn > energyOff * 1.5 + 1.0e-5,
+                "start=1.0 produces audible wet signal, not silence (off "
+                + juce::String (energyOff) + " vs on " + juce::String (energyOn) + ")");
+
+        // --- combines correctly with pre-delay, decay and damping ---------
+        {
+            spa::SPASynthProcessor p3;
+            p3.prepareToPlay (sampleRate, blockSize);
+            p3.loadConvolutionIR (irFile);
+            setParam (p3, id::fx::convEnable, 1.0f);
+            setParam (p3, id::fx::convStart, 0.5f);
+            setParam (p3, id::fx::convPreDelay, 50.0f);
+            setParam (p3, id::fx::convDecay, 0.3f);
+            setParam (p3, id::fx::convDamping, 0.6f);
+            juce::AudioBuffer<float> buf (2, blockSize);
+            juce::MidiBuffer m;
+            buf.clear();
+            p3.processBlock (buf, m);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);   // let the reshape timer fire
+
+            expect (p3.hasConvolutionIR(), "start+predelay+decay+damping combo still loads an IR");
+            const double tailCombo = p3.getTailLengthSeconds();
+            // Pre-delay (silence before the wet signal) must still add its own
+            // 50 ms on top of whatever the trimmed+decayed IR reports -- if
+            // pre-delay's contribution were dropped when start > 0, this tail
+            // would be shorter than 50ms alone.
+            expect (tailCombo >= 0.05,
+                    "pre-delay's 50ms still counts toward the tail alongside "
+                    "start/decay/damping (tail " + juce::String (tailCombo) + "s)");
+            expect (std::abs (p3.getConvolutionStartTrim() - 0.5f) < 0.02f,
+                    "start still trims ~half when combined with predelay/decay/damping");
+        }
+
+        // --- not a mod destination -----------------------------------------
+        expect (spa::params::modDestIndex (id::fx::convStart) == -1,
+                "fxConv.start is not a mod matrix destination");
+
+        // --- randomiser never rolls past the halfway point -----------------
+        // wildness > 0.5 is the case that matters: sampleRandomValue() opens
+        // a param's sampled range toward 1.0 as wildness rises past 0.5 (see
+        // Randomizer.cpp), so RandomSpec::maxNorm alone would NOT cap this at
+        // high wildness without the explicit clamp in randomizeAll()'s
+        // musicality post-pass -- this sweep is what catches that clamp being
+        // removed or the maxNorm value being loosened without it.
+        {
+            spa::SPASynthProcessor p4;
+            p4.prepareToPlay (sampleRate, blockSize);
+            p4.setRandomWildness (1.0f);
+            float maxRolled = 0.0f;
+            for (int seed = 0; seed < 60; ++seed)
+            {
+                p4.randomizeAll();
+                const auto v = p4.getAPVTS().getParameter (id::fx::convStart)->getValue();
+                maxRolled = juce::jmax (maxRolled, v);
+            }
+            expect (maxRolled <= 0.5f + 1.0e-4f,
+                    "RANDOMIZE ALL at max wildness never rolls fxConv.start past "
+                    "halfway over 60 tries (max seen " + juce::String (maxRolled) + ")");
+        }
+
+        irFile.deleteFile();
+    }
+
     static void fxEQDistortionTest()
     {
         std::cout << "fxEQDistortionTest\n";
@@ -13612,6 +13849,7 @@ int main (int argc, char* argv[])
     sfxFollowerTest();
     fxDelayReverbTest();
     convolveTailLengthTest();
+    convolveStartPositionTest();
     reverbMixTest();
     reverbStabilityTest();
     plateReverbCharacterTest();

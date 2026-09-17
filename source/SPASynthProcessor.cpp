@@ -231,6 +231,7 @@ SPASynthProcessor::SPASynthProcessor()
         rf.convPreDelay   = apvts.getRawParameterValue (fx::convPreDelay);
         rf.convDecay      = apvts.getRawParameterValue (fx::convDecay);
         rf.convDamping    = apvts.getRawParameterValue (fx::convDamping);
+        rf.convStart      = apvts.getRawParameterValue (fx::convStart);
     }
 
     factoryTable = std::make_shared<const dsp::Wavetable> (dsp::Wavetable::createBasicShapes());
@@ -357,7 +358,8 @@ void SPASynthProcessor::timerCallback()
     // Convolution IR shaping (decay/damping) reshapes + reloads the IR; do it
     // here (message thread), debounced to the timer, only when the values move.
     if (raw.fx.convDecay != nullptr)
-        fxChain.setConvolutionShaping (raw.fx.convDecay->load(), raw.fx.convDamping->load());
+        fxChain.setConvolutionShaping (raw.fx.convDecay->load(), raw.fx.convDamping->load(),
+                                       raw.fx.convStart->load());
 
     // Fallback safety net for the lazy Pluck-buffer allocation normally done
     // synchronously in parameterChanged(): catches a slot that was already in
@@ -870,6 +872,15 @@ void SPASynthProcessor::randomizeAll()
         resetToDefault (fx::limTruePeak);
         resetToDefault (fx::limLookahead);
         resetToDefault (fx::limAutoGain);
+
+        // Hard cap on top of RandomSpec's maxNorm=0.5: sampleRandomValue()
+        // deliberately opens a param's range toward 1.0 as wildness rises
+        // past 0.5 (see Randomizer.cpp), so maxNorm alone is only a soft
+        // bias, not a ceiling. Past the halfway point the Convolve impulse
+        // gets progressively thinner, so RANDOMIZE ALL must never land there
+        // regardless of wildness -- the user still has the full range by hand.
+        if (realValue (fx::convStart) > 0.5f)
+            setNorm (fx::convStart, 0.5f);
     }
 
     // --- Audibility floor -----------------------------------------------------
@@ -1457,6 +1468,7 @@ void SPASynthProcessor::updateFXParams()
     p.convPreDelay = rf.convPreDelay->load();
     p.convDecay    = rf.convDecay->load();
     p.convDamping  = rf.convDamping->load();
+    p.convStart    = rf.convStart->load();
 
     desiredLatency.store (fxChain.limiterLatencySamples (p), std::memory_order_relaxed);
     p.bpm            = shared.bpm;

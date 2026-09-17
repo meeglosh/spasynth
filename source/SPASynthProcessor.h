@@ -181,6 +181,10 @@ public:
         return fxChain.convolutionEnvelope();
     }
     bool hasConvolutionIR() const { return fxChain.hasConvolutionIR(); }
+    // Actual fraction of the raw IR trimmed by fxConv.start, after the
+    // never-silent minimum-tail clamp -- used by the display to draw the
+    // trimmed region against the real shaped IR rather than the raw param.
+    float getConvolutionStartTrim() const { return fxChain.convolutionStartTrim(); }
 
     // RANDOMIZE ALL (message thread). Wildness and lock state live as state
     // properties so they persist with the session but stay non-automatable.
@@ -641,6 +645,7 @@ private:
             std::atomic<float>* convPreDelay = nullptr;
             std::atomic<float>* convDecay = nullptr;
             std::atomic<float>* convDamping = nullptr;
+            std::atomic<float>* convStart = nullptr;
         } fx {};
     } raw;
 

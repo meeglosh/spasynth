@@ -10,6 +10,14 @@
   and reloading the sound by hand. Copying or swapping carries the loaded
   sound or wavetable along with the settings; it does not touch anything you
   have wired up in the mod matrix.
+- Organic Chaos can now lock to your tempo. Switch on SYNC and each drifting
+  parameter still wanders at its own pace, but those paces become musical
+  divisions of your song's tempo and every new wander lands on the beat, so
+  pitch might settle into a new spot once a bar while amplitude resettles
+  once a beat, all of it moving together rather than turning into a stepped,
+  everything-at-once wobble. The section renames itself to Organized Chaos
+  while this is on. Depth, mix and the six per-target amounts still work
+  exactly as before; only the rate is tempo-driven now.
 
 ## 1.0.16
 

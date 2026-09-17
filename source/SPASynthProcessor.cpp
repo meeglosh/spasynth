@@ -117,6 +117,8 @@ SPASynthProcessor::SPASynthProcessor()
         raw.chaos.saturation     = apvts.getRawParameterValue (ch::saturation);
         raw.chaos.distOn         = apvts.getRawParameterValue (ch::distOn);
         raw.chaos.distortion     = apvts.getRawParameterValue (ch::distortion);
+        raw.chaos.syncToBpm      = apvts.getRawParameterValue (ch::syncToBpm);
+        raw.chaos.division       = apvts.getRawParameterValue (ch::division);
     }
 
     {
@@ -1621,6 +1623,8 @@ void SPASynthProcessor::updateSharedState (int blockLength)
     ch.saturation       = raw.chaos.saturation->load();
     ch.distOn           = raw.chaos.distOn->load() >= 0.5f;
     ch.distortion       = raw.chaos.distortion->load();
+    ch.syncToBpm        = raw.chaos.syncToBpm->load() >= 0.5f;
+    ch.division         = (int) raw.chaos.division->load();
 }
 
 void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)

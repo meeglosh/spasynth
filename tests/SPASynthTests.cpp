@@ -4,6 +4,7 @@
 #include <cstring>
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
+#include "dsp/ChaosGenerator.h"
 #include "dsp/FXChain.h"
 #include "dsp/MidiClockSync.h"
 #include "dsp/SamplePlayer.h"
@@ -8425,6 +8426,163 @@ namespace
         proc.setPlayHead (nullptr);
     }
 
+    // Organic/Organized Chaos tempo sync (1.0.17). Sync locks each walker's
+    // speed to a whole power-of-two ratio of a tempo-derived base division
+    // and aligns target renewals to the absolute host beat position, rather
+    // than each walker's own free-running phase -- a real (if loose)
+    // polyrhythm, not a hard lock or a loose tempo-following rate. See
+    // ChaosGenerator::processSynced.
+    static void chaosSyncTest()
+    {
+        std::cout << "chaosSyncTest\n";
+        using Chaos = spa::dsp::ChaosGenerator;
+
+        // --- 1. Sync OFF must reproduce today's free-running output --------
+        // exactly (bit-for-bit): a golden value frozen from the shipped,
+        // pre-sync process() with this exact seed/rate/dt/iteration count.
+        // If the sync work touches process()'s existing phase/target/alpha
+        // math -- e.g. sharing state with the new synced path, reordering
+        // the phase increment, changing the alpha formula -- this drifts.
+        {
+            Chaos gen;
+            juce::Random rnd (777);
+            gen.prepare (rnd);
+
+            constexpr float rateHz = 3.0f;
+            constexpr double dt = 0.02;
+            float last = 0.0f;
+            for (int i = 0; i < 200; ++i)
+            {
+                gen.process (rateHz, dt, rnd);
+                last = gen.value (Chaos::amp);
+            }
+
+            constexpr float expectedUnsyncedAmp = -0.468499f;
+            expect (std::abs (last - expectedUnsyncedAmp) < 1.0e-4f,
+                   "chaosSyncTest: sync OFF reproduces today's free-running output exactly ("
+                   + juce::String (last, 6) + " vs " + juce::String (expectedUnsyncedAmp, 6) + ")");
+        }
+
+        // --- 2. Sync ON, known tempo/division: renewals land on the grid,
+        //        and two walkers' periods are whole-number related --------
+        {
+            Chaos gen;
+            juce::Random rnd (99);
+            gen.prepare (rnd);
+
+            constexpr double bpm = 120.0;
+            constexpr float divisionBeats = 1.0f;      // lfoDivisionBeats(6), "1/4"
+            constexpr double dt = 64.0 / 48000.0;      // one 64-sample chunk
+
+            const auto speedAmp = gen.syncSpeedMulForTest (Chaos::amp);
+            const auto speedSat = gen.syncSpeedMulForTest (Chaos::saturation);
+            const auto periodAmp = (double) divisionBeats / (double) speedAmp;
+            const auto periodSat = (double) divisionBeats / (double) speedSat;
+
+            // Whole-number-related periods: the ratio between any two
+            // walkers' periods is itself a power of two (both speed
+            // multipliers were quantised to powers of two in prepare()).
+            const auto ratioLog2 = std::log2 (periodAmp / periodSat);
+            expect (std::abs (ratioLog2 - std::round (ratioLog2)) < 1.0e-4,
+                   "chaosSyncTest: two walkers' synced periods are whole-number related, not arbitrary");
+
+            double hostBeatsNow = 0.0;
+            const int numChunks = 3000;   // ~4s @ 120bpm, several periods either way
+            for (int i = 0; i < numChunks; ++i)
+            {
+                gen.processSynced (divisionBeats, bpm, true, hostBeatsNow, dt, rnd);
+                hostBeatsNow += (bpm / 60.0) * dt;
+            }
+
+            const auto expectedCycleAmp = (int64_t) std::floor (hostBeatsNow / periodAmp);
+            const auto expectedCycleSat = (int64_t) std::floor (hostBeatsNow / periodSat);
+            expect (gen.syncCycleIndexForTest (Chaos::amp) == expectedCycleAmp,
+                   "chaosSyncTest: synced walker renewal count matches the beat grid exactly");
+            expect (gen.syncCycleIndexForTest (Chaos::saturation) == expectedCycleSat,
+                   "chaosSyncTest: second synced walker (different ratio) also matches its own grid");
+        }
+
+        // --- 3. Transport alignment: the FIRST renewal lands exactly where
+        //        the grid says, not at an arbitrary offset from wherever the
+        //        walker's own phase happened to be ---------------------------
+        {
+            Chaos gen;
+            juce::Random rnd (5);
+            gen.prepare (rnd);
+
+            constexpr float divisionBeats = 1.0f;
+            const auto speed = gen.syncSpeedMulForTest (Chaos::amp);
+            const auto periodBeats = (double) divisionBeats / (double) speed;
+
+            // Just below a grid line: still the earlier cycle.
+            const auto belowLine = periodBeats * 4.0 - 0.001;
+            gen.processSynced (divisionBeats, 120.0, true, belowLine, 0.001, rnd);
+            expect (gen.syncCycleIndexForTest (Chaos::amp) == 3,
+                   "chaosSyncTest: just below a grid line is still the previous cycle");
+
+            // Exactly on the next grid line in a fresh instance: lands on
+            // that instant, not fudged by an off-by-one.
+            Chaos gen2;
+            juce::Random rnd2 (5);
+            gen2.prepare (rnd2);
+            const auto onLine = periodBeats * 4.0;
+            gen2.processSynced (divisionBeats, 120.0, true, onLine, 0.001, rnd2);
+            expect (gen2.syncCycleIndexForTest (Chaos::amp) == 4,
+                   "chaosSyncTest: exactly on a grid line lands on that instant");
+        }
+
+        // --- 4. Host stopped / no ppq: free-run fallback, not frozen --------
+        {
+            Chaos gen;
+            juce::Random rnd (321);
+            gen.prepare (rnd);
+
+            constexpr float divisionBeats = 1.0f;
+            constexpr double dt = 0.01;
+            const auto before = gen.value (Chaos::amp);
+            bool moved = false;
+            for (int i = 0; i < 500; ++i)
+            {
+                gen.processSynced (divisionBeats, 180.0 /* fast, so it wraps quickly */,
+                                   false /* transportValid */, 0.0, dt, rnd);
+                if (std::abs (gen.value (Chaos::amp) - before) > 1.0e-4f)
+                    moved = true;
+            }
+            expect (moved, "chaosSyncTest: with no host transport, chaos still free-runs at the synced rate");
+            expect (gen.syncCycleIndexForTest (Chaos::amp) == -1,
+                   "chaosSyncTest: the grid-cycle counter is untouched while free-running (fallback truly is the phase path)");
+        }
+
+        // --- 5. The section label switches with the toggle ------------------
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            spa::ui::ChaosPanel* chaosPanel = nullptr;
+            std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+            {
+                if (chaosPanel == nullptr)
+                    chaosPanel = dynamic_cast<spa::ui::ChaosPanel*> (&c);
+                for (auto* child : c.getChildren())
+                    if (chaosPanel == nullptr)
+                        find (*child);
+            };
+            find (*editor);
+
+            expect (chaosPanel != nullptr, "chaosSyncTest: ChaosPanel found");
+            if (chaosPanel != nullptr)
+            {
+                expect (! chaosPanel->isSyncEngagedForTest(), "chaosSyncTest: label starts as Organic (sync off by default)");
+                setParam (proc, spa::params::id::chaos::syncToBpm, 1.0f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                expect (chaosPanel->isSyncEngagedForTest(), "chaosSyncTest: label switches to Organized once sync is engaged");
+            }
+        }
+    }
+
     // Logic reports NEGATIVE ppq during a record count-in (and pre-roll before
     // bar 1). The arp syncs stepCounter to that ppq on transport start, and a
     // negative counter fed through C++ `%` indexed the pattern arrays with a
@@ -13349,6 +13507,7 @@ int main (int argc, char* argv[])
     arpZeroSampleBlockTest();
     arpNonFinitePpqTest();
     arpNegativePpqTest();
+    chaosSyncTest();
     arpChanceTest();
     extraEnginesTest();
     analogSubOscTest();

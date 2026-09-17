@@ -769,13 +769,22 @@ ChaosPanel::ChaosPanel (SPASynthProcessor& p)
       enable (p.getAPVTS(), id::chaos::enable, "ON"),
       depth (p.getAPVTS(), id::chaos::depth, "DEPTH", true),
       rate (p.getAPVTS(), id::chaos::rate, "RATE", true),
-      mix (p.getAPVTS(), id::chaos::mix, "MIX", true)
+      mix (p.getAPVTS(), id::chaos::mix, "MIX", true),
+      sync (p.getAPVTS(), id::chaos::syncToBpm, "SYNC"),
+      division (p.getAPVTS(), id::chaos::division),
+      rateEnable (p.getAPVTS(), id::chaos::syncToBpm,
+                 [] (float v) { return v < 0.5f; }, { &rate }),
+      divisionEnable (p.getAPVTS(), id::chaos::syncToBpm,
+                      [] (float v) { return v >= 0.5f; }, { &division }),
+      syncTracker (p.getAPVTS(), { { "sync", { id::chaos::syncToBpm } } }, *this)
 {
     addAndMakeVisible (display);
     addAndMakeVisible (enable);
     addAndMakeVisible (depth);
     addAndMakeVisible (rate);
     addAndMakeVisible (mix);
+    addAndMakeVisible (sync);
+    addAndMakeVisible (division);
 
     const std::array<std::tuple<const char*, const char*, const char*>, 6> defs = { {
         { id::chaos::pitchOn, id::chaos::pitchAmount, "PITCH" },
@@ -799,7 +808,11 @@ ChaosPanel::ChaosPanel (SPASynthProcessor& p)
 void ChaosPanel::paint (juce::Graphics& g)
 {
     draw::panel (g, getLocalBounds().toFloat());
-    draw::sectionHeader (g, getLocalBounds(), "Organic Chaos", {},
+    // The section renames itself while synced -- polyrhythmic-but-quantised
+    // movement earns "Organized", free drift stays "Organic" (product
+    // owner's call). syncTracker keeps this repainting on toggle.
+    const auto isSynced = syncTracker.isEngaged ("sync");
+    draw::sectionHeader (g, getLocalBounds(), isSynced ? "Organized Chaos" : "Organic Chaos", {},
                          currentTheme().accentMod);
 }
 
@@ -813,9 +826,14 @@ void ChaosPanel::resized()
 
     enable.setBounds (top.removeFromLeft (50).withSizeKeepingCentre (50, 20));
     auto masters = top.withSizeKeepingCentre (top.getWidth(), juce::jmin (top.getHeight(), 72));
-    const auto masterW = juce::jmax (1, masters.getWidth() / 3);
+    const auto masterW = juce::jmax (1, masters.getWidth() / 4);
     depth.setBounds (masters.removeFromLeft (masterW));
-    rate.setBounds (masters.removeFromLeft (masterW));
+    // Rate/division share one cell (rate on top, division below), same
+    // idea as LFOPanel -- whichever the sync toggle disables just dims.
+    auto rateCell = masters.removeFromLeft (masterW);
+    division.setBounds (rateCell.removeFromBottom (20).withSizeKeepingCentre (rateCell.getWidth() - 4, 18));
+    rate.setBounds (rateCell);
+    sync.setBounds (masters.removeFromLeft (masterW).withSizeKeepingCentre (44, 18));
     mix.setBounds (masters);
 
     // Drift strip: toggle above each amount knob.

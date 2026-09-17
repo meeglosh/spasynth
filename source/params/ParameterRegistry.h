@@ -325,6 +325,10 @@ namespace id
         inline constexpr const char* satOn          = "chaos.satOn";
         inline constexpr const char* saturation     = "chaos.saturation";
         inline constexpr const char* distOn         = "chaos.distOn";
+        // Tempo sync (polyrhythmic lock -- see ChaosGenerator::processSynced).
+        // Appended at the end of the registry, not a mod destination.
+        inline constexpr const char* syncToBpm      = "chaos.syncToBpm";
+        inline constexpr const char* division       = "chaos.division";
         inline constexpr const char* distortion     = "chaos.distortion";
     }
 

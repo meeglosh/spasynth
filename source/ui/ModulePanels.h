@@ -174,10 +174,23 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Exposed for chaosSyncTest -- same idea as DraggableTabs::isTabEngaged.
+    bool isSyncEngagedForTest() const { return syncTracker.isEngaged ("sync"); }
+
 private:
     ChaosDisplay display;
     Toggle enable;
     Knob depth, rate, mix;
+    Toggle sync;
+    Choice division;
+
+    // Rate only means anything when free-running; division only means
+    // anything when synced -- same pattern as LFOPanel's rateEnable/
+    // divisionEnable.
+    DependentEnable rateEnable, divisionEnable;
+    // Repaints the header when sync toggles, so paint() can switch the
+    // title between "Organic Chaos" and "Organized Chaos".
+    TabEngagementTracker syncTracker;
 
     struct Drift
     {

@@ -296,7 +296,31 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     const auto chaosScale = chaosActive ? chaosDepth * chaosMix : 0.0f;
 
     if (chaosActive)
-        chaosGen.process (chaosRate, (double) chunkLen / sampleRate, random);
+    {
+        if (ch.syncToBpm)
+        {
+            // ORGANIZED CHAOS: rate modulation (chaosRate, which already
+            // carries the chaos::rate mod destination) is deliberately
+            // ignored here -- once synced, rate is a musical/division choice,
+            // not a modulation target. divisionBeats is the base grid period
+            // in beats; ChaosGenerator::processSynced spreads each walker
+            // across whole multiples/fractions of it (the polyrhythm) and
+            // aligns target changes to the absolute host beat position, with
+            // the same free-run fallback the arp/sample-sync use when the
+            // host gives no advancing ppq (shared.hostTransportValid) or the
+            // transport isn't playing (shared.hostPlaying).
+            const auto divisionBeats = params::lfoDivisionBeats (ch.division);
+            const auto hostBeatsNow = shared.hostPpqBeats
+                + (double) blockOffset * (shared.bpm / 60.0) / juce::jmax (1.0, sampleRate);
+            const auto transportValid = shared.hostPlaying && shared.hostTransportValid;
+            chaosGen.processSynced (divisionBeats, shared.bpm, transportValid, hostBeatsNow,
+                                    (double) chunkLen / sampleRate, random);
+        }
+        else
+        {
+            chaosGen.process (chaosRate, (double) chunkLen / sampleRate, random);
+        }
+    }
 
     // --- Modulation sources -------------------------------------------------
     float src[params::numModSources] {};

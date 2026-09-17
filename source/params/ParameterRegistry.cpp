@@ -887,6 +887,16 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    false, { .enabled = true, .maxNorm = 0.6f } });
 
+    // Organic Chaos tempo sync -- appended at the end, keyed by ID like every
+    // other param, so this doesn't disturb mod-destination or choice-order
+    // append-only rules. Neither is a mod destination.
+    p.push_back ({ ch::syncToBpm, "Chaos Sync", Section::chaos,
+                   ParamKind::boolParam, {}, 0.0f, "",
+                   false, { .enabled = false } });
+    p.push_back ({ ch::division, "Chaos Division", Section::chaos,
+                   ParamKind::choiceParam, {}, 6.0f /* 1/4 */, "",
+                   false, { .enabled = false }, lfoDivisionNames() });
+
     return p;
 }
 

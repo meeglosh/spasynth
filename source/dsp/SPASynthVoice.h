@@ -167,6 +167,15 @@ struct SharedState
         float saturation = 0.3f;
         bool distOn = false;
         float distortion = 0.2f;
+
+        // Tempo sync ("ORGANIZED CHAOS"). When on, the walkers' speeds lock
+        // to whole divisions of the host tempo and target changes land on
+        // the beat/bar grid instead of drifting freely; the chaos::rate mod
+        // destination is deliberately ignored while synced (see
+        // computeChunk) -- rate is meant to be a musical choice (division),
+        // not a modulatable one, once synced.
+        bool syncToBpm = false;
+        int division = 6;   // choice index into lfoDivisionNames() ("1/4")
     } chaos;
 };
 

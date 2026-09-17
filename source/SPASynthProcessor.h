@@ -500,6 +500,8 @@ private:
         std::atomic<float>* saturation = nullptr;
         std::atomic<float>* distOn = nullptr;
         std::atomic<float>* distortion = nullptr;
+        std::atomic<float>* syncToBpm = nullptr;
+        std::atomic<float>* division = nullptr;
     };
 
     struct RawArp

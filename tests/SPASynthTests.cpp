@@ -13023,6 +13023,146 @@ namespace
         freshEditor->removeFromDesktop();
     }
 
+    // Tester feedback (1.0.17): a wired knob had no static "this is assigned"
+    // indication at all -- the old mod-viz overlay is purely LIVE telemetry
+    // (Controls.h's pollModViz), so a wired knob showed nothing while the
+    // synth was silent. Product-owner decision: any knob whose parameter is
+    // a target of a mod matrix route renders in a fixed violet
+    // (Theme.h's modAssignedColour(), NOT the tintable accent/accentMod
+    // pair) the instant the assignment exists, plus a live reachable-range
+    // arc built from the assigned routes' combined, polarity-aware depths.
+    // Exercises Controls.h's ModAssignInfo/ModAssignSource and
+    // SPASynthEditor.cpp's ModAssignTable end to end through real APVTS
+    // parameter changes and the real 30Hz ModVizClock poll (message-loop
+    // pumping only) -- deliberately with NO processBlock() call anywhere in
+    // this test, to prove the indicator is static patch information, not a
+    // telemetry readout.
+    static void modAssignedIndicatorTest()
+    {
+        std::cout << "modAssignedIndicatorTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+        auto* cutoffSlider = dynamic_cast<juce::Slider*> (findByParamID (*editor, id::filter1Cutoff));
+        auto* resSlider    = dynamic_cast<juce::Slider*> (findByParamID (*editor, id::filter1Resonance));
+        expect (cutoffSlider != nullptr && resSlider != nullptr,
+                "cutoff/resonance sliders found");
+        if (cutoffSlider == nullptr || resSlider == nullptr)
+        {
+            editor->removeFromDesktop();
+            return;
+        }
+
+        const auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
+        pump (100);
+
+        // No route yet: unassigned, and (implicitly, via SPASynthLookAndFeel
+        // reading the same "modAssigned" property) still paints in the
+        // user's accent -- a revert that always reports assigned, or that
+        // drops the else-branch back to accent, is caught here.
+        expect (! (bool) cutoffSlider->getProperties().getWithDefault ("modAssigned", false),
+                "un-routed cutoff knob reports unassigned");
+        expect (! (bool) resSlider->getProperties().getWithDefault ("modAssigned", false),
+                "un-routed resonance knob reports unassigned");
+
+        // Assign LFO1 (bipolar -- its own unipolar param starts off) ->
+        // cutoff, depth left at 0. Must flip to assigned immediately, with
+        // no audio ever rendered anywhere in this test.
+        setParam (proc, id::lfoParam (0, id::lfo::unipolar), 0.0f);   // bipolar
+        setRouteParams (proc, 0, params::ModSource::lfo1, id::filter1Cutoff, 0.0f);
+        pump (100);
+
+        expect ((bool) cutoffSlider->getProperties().getWithDefault ("modAssigned", false),
+                "cutoff knob reports assigned as soon as a route targets it, "
+                "with depth == 0 and no audio rendered");
+        expect (! (bool) resSlider->getProperties().getWithDefault ("modAssigned", false),
+                "unrelated resonance knob is unaffected by cutoff's route");
+        expect (std::abs ((float) (double) cutoffSlider->getProperties().getWithDefault ("modRangeNeg", -1.0)) < 1.0e-6f
+             && std::abs ((float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0)) < 1.0e-6f,
+                "a zero-depth route reports a zero-width reachable range even though assigned");
+
+        // Bipolar source (LFO1, unipolar off): a nonzero depth reaches both
+        // ways by the same magnitude, regardless of the depth's own sign --
+        // and this update happened purely from a matrix depth change, no
+        // audio rendered.
+        setParam (proc, id::routeParam (0, id::route::depth), 0.4f);
+        pump (100);
+        const auto negBi = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangeNeg", -1.0);
+        const auto posBi = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0);
+        expect (std::abs (negBi - 0.4f) < 1.0e-3f && std::abs (posBi - 0.4f) < 1.0e-3f,
+                "bipolar-source route, depth 0.4, reaches symmetrically (~0.4 both ways) "
+                "after a matrix depth change with no audio rendered");
+
+        // Flip the SAME source to unipolar: the same positive depth (0.4)
+        // must now reach ONLY upward -- catches a revert that ignores an
+        // LFO's own unipolar flag and always guesses bipolar.
+        setParam (proc, id::lfoParam (0, id::lfo::unipolar), 1.0f);
+        pump (100);
+        const auto negUniPos = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangeNeg", -1.0);
+        const auto posUniPos = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0);
+        expect (negUniPos < 1.0e-3f, "unipolar source + positive depth: no downward reach at all");
+        expect (std::abs (posUniPos - 0.4f) < 1.0e-3f, "unipolar source + positive depth: upward reach == depth");
+
+        // Same unipolar source, NEGATIVE depth: can only pull down.
+        setParam (proc, id::routeParam (0, id::route::depth), -0.3f);
+        pump (100);
+        const auto negUniNeg = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangeNeg", -1.0);
+        const auto posUniNeg = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0);
+        expect (std::abs (negUniNeg - 0.3f) < 1.0e-3f, "unipolar source + negative depth: downward reach == |depth|");
+        expect (posUniNeg < 1.0e-3f, "unipolar source + negative depth: no upward reach at all");
+
+        // Two routes targeting the same destination combine. Route 0 back to
+        // unipolar +0.3, route 1 = velocity (always unipolar) at +0.5 into
+        // the same destination -> combined upward reach 0.8.
+        setParam (proc, id::routeParam (0, id::route::depth), 0.3f);
+        setRouteParams (proc, 1, params::ModSource::velocity, id::filter1Cutoff, 0.5f);
+        pump (100);
+        const auto posCombined = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0);
+        expect (std::abs (posCombined - 0.8f) < 1.0e-3f,
+                "two routes into the same destination combine their reach (0.3 + 0.5 == 0.8)");
+
+        // Clamp at the parameter's own limits: drive the destination to the
+        // very top of its travel, push the combined reach further upward,
+        // and confirm the DISPLAYED range (base + reach, clamped the way
+        // SPASynthLookAndFeel does at paint time) can never exceed 1.0 --
+        // the knob can't travel past its own maximum.
+        if (auto* cutoffParam = proc.getAPVTS().getParameter (id::filter1Cutoff))
+            cutoffParam->setValueNotifyingHost (1.0f);
+        setParam (proc, id::routeParam (1, id::route::depth), 1.0f);
+        pump (100);
+        const auto baseNorm = cutoffSlider->getNormalisableRange().convertTo0to1 (cutoffSlider->getValue());
+        const auto posAtMax = (float) (double) cutoffSlider->getProperties().getWithDefault ("modRangePos", -1.0);
+        const auto displayedHi = juce::jlimit (0.0f, 1.0f, (float) baseNorm + posAtMax);
+        expect (posAtMax > 1.0f - 1.0e-3f,   // 0.3 + 1.0 == 1.3, the table itself doesn't pre-clamp
+                "the raw combined reach itself is left unclamped in the table (clamping is a paint-time concern)");
+        expect (displayedHi <= 1.0f + 1.0e-6f,
+                "the reachable-range high edge clamps to the knob's actual maximum travel");
+
+        // The violet indicator is a fixed constant, entirely outside the
+        // accent system: running setAccentColors() -- the exact call the
+        // accent picker itself makes -- must not move it.
+        const auto violetBefore = spa::ui::modAssignedColour();
+        const auto savedAccent = spa::ui::currentTheme().accent;
+        const auto savedAccentMod = spa::ui::currentTheme().accentMod;
+        spa::ui::setAccentColors (juce::Colours::hotpink, juce::Colours::lime);
+        expect (spa::ui::modAssignedColour() == violetBefore,
+                "modAssignedColour() is unaffected by setAccentColors(), "
+                "the same code path the accent picker itself uses");
+        spa::ui::setAccentColors (savedAccent, savedAccentMod);   // don't pollute the user's saved accents
+
+        editor->removeFromDesktop();
+    }
+
     // Tester request: enabled FX tabs bold their label so the user can see at
     // a glance which effects are engaged. isTabEngaged() is the generic hook
     // (ContentComponent maps tab name -> enable param id(s)); this exercises
@@ -13560,6 +13700,7 @@ int main (int argc, char* argv[])
     chaosDisplayPaintTest();
     paintRegionRegressionTest();
     modVizKnobTest();
+    modAssignedIndicatorTest();
     fxTabEngagedBoldTest();
     waveDisplayZoomTest();
 

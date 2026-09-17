@@ -18,6 +18,14 @@
   everything-at-once wobble. The section renames itself to Organized Chaos
   while this is on. Depth, mix and the six per-target amounts still work
   exactly as before; only the rate is tempo-driven now.
+- Any knob wired into the mod matrix now shows it at a glance: it turns a
+  soft violet the moment a route targets it, whether or not a note is
+  playing and whether or not that route's depth is set to zero yet. A new
+  travel arc also shows how far the assigned routes can actually push or
+  pull the knob from where it sits right now, updating live as you drag a
+  depth slider. This is separate from your accent color choice and is not
+  affected by it, so it stays a clear, consistent signal no matter what
+  colors you have picked.
 
 ## 1.0.16
 

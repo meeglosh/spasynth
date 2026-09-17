@@ -273,8 +273,20 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
             1.0f);
     };
 
+    // A knob whose parameter is assigned to any mod matrix slot renders in
+    // the fixed violet indicator colour everywhere it would otherwise use
+    // the accent -- as soon as the assignment exists, whether or not audio
+    // is playing and regardless of the route's depth. Controls.h's
+    // Knob::pollModViz publishes this once per tick from the per-editor
+    // ModAssignSource table (see Controls.h), so it's live even while
+    // dragging a matrix depth slider with the transport stopped. This is
+    // deliberately NOT the same colour as the live modActive overlay below
+    // (t.accentMod, user-tintable) -- modAssignedColour() is fixed and
+    // never touched by the accent picker.
+    const auto modAssigned = slider.getProperties().getWithDefault ("modAssigned", false);
     const auto accent  = slider.getComponentID() == "wild" ? wildHeat (sliderPos)
                        : slider.getComponentID() == "mod"  ? t.accentMod
+                       : (bool) modAssigned                ? modAssignedColour()
                                                            : t.accent;
     const auto enabled = slider.isEnabled();
     const auto hot     = slider.isMouseOverOrDragging() && enabled;
@@ -314,6 +326,36 @@ void SPASynthLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     const auto dot  = centre.getPointOnCircumference (arcRadius, angle);
     g.setColour (enabled ? accent.brighter (0.15f) : t.textSecondary.withAlpha (0.4f));
     g.fillEllipse (dot.x - dotR, dot.y - dotR, dotR * 2.0f, dotR * 2.0f);
+
+    // Static reachable-range arc for matrix-assigned knobs: how far the
+    // assigned routes' combined depths (Controls.h's ModAssignInfo,
+    // polarity-aware -- a unipolar source only pulls one way) can move this
+    // knob from its current base setting, clamped to the knob's own travel.
+    // Updates live as a matrix depth slider is dragged, with no audio
+    // required (see ModAssignTable in SPASynthEditor.cpp) -- this answers
+    // "is this wired" and "how far can it go", independent of the moving
+    // dot below which answers "is it moving right now". Drawn BEFORE the
+    // live overlay so that overlay always paints on top of it.
+    if (enabled && (bool) modAssigned)
+    {
+        const auto negReach = (float) (double) slider.getProperties().getWithDefault ("modRangeNeg", 0.0);
+        const auto posReach = (float) (double) slider.getProperties().getWithDefault ("modRangePos", 0.0);
+        if (negReach > 0.0f || posReach > 0.0f)
+        {
+            const auto lo = juce::jlimit (0.0f, 1.0f, sliderPos - negReach);
+            const auto hi = juce::jlimit (0.0f, 1.0f, sliderPos + posReach);
+            const auto loAngle = rotaryStartAngle + lo * (rotaryEndAngle - rotaryStartAngle);
+            const auto hiAngle = rotaryStartAngle + hi * (rotaryEndAngle - rotaryStartAngle);
+
+            juce::Path reach;
+            reach.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                                 loAngle, hiAngle, true);
+            g.setColour (modAssignedColour().withAlpha (0.32f));
+            g.strokePath (reach, juce::PathStrokeType (lineW * 2.2f,
+                                                       juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+        }
+    }
 
     // Modulation-viz overlay (Controls.h's Knob::pollModViz publishes these
     // slider properties at 30 Hz for mod-destination knobs): a translucent

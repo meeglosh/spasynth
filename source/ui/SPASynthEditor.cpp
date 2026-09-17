@@ -849,8 +849,157 @@ static juce::Image makeFaceplateNoiseTexture()
 }
 } // namespace
 
+// --- ModAssignTable ---------------------------------------------------------
+// See the class comment in SPASynthEditor.h. Listens on every matrix route
+// param (source/dest/depth x numModRoutes) plus each LFO's unipolar flag
+// (an LFO's polarity affects the reach of any route sourced from it), and
+// rebuilds a dense per-mod-dest table of {assigned, negReach, posReach} any
+// time one of those changes -- including preset load/reset, which go
+// through apvts.replaceState() and fire the same listener callbacks, so the
+// display always follows whatever patch is actually loaded.
+ContentComponent::ModAssignTable::ModAssignTable (juce::AudioProcessorValueTreeState& s)
+    : state (s)
+{
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        state.addParameterListener (params::id::routeParam (r, params::id::route::source), this);
+        state.addParameterListener (params::id::routeParam (r, params::id::route::dest), this);
+        state.addParameterListener (params::id::routeParam (r, params::id::route::depth), this);
+    }
+    for (int i = 0; i < params::numLFOs; ++i)
+        state.addParameterListener (params::id::lfoParam (i, params::id::lfo::unipolar), this);
+
+    rebuild();
+}
+
+ContentComponent::ModAssignTable::~ModAssignTable()
+{
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        state.removeParameterListener (params::id::routeParam (r, params::id::route::source), this);
+        state.removeParameterListener (params::id::routeParam (r, params::id::route::dest), this);
+        state.removeParameterListener (params::id::routeParam (r, params::id::route::depth), this);
+    }
+    for (int i = 0; i < params::numLFOs; ++i)
+        state.removeParameterListener (params::id::lfoParam (i, params::id::lfo::unipolar), this);
+}
+
+ModAssignInfo ContentComponent::ModAssignTable::get (int destIndex) const
+{
+    if (destIndex < 0 || destIndex >= (int) table.size())
+        return {};
+    return table[(size_t) destIndex];
+}
+
+void ContentComponent::ModAssignTable::parameterChanged (const juce::String&, float)
+{
+    // AudioProcessorValueTreeState::Listener callbacks are dispatched on the
+    // message thread (via an internal AsyncUpdater), never the audio thread
+    // -- rebuild() below only touches juce::AudioParameter objects and a
+    // small heap vector, so this is safe UI-thread work, same as the
+    // existing processor-side listeners this codebase already has.
+    rebuild();
+}
+
+void ContentComponent::ModAssignTable::rebuild()
+{
+    // Bipolar sources (an LFO with "unipolar" off, envelopes are always
+    // unipolar so never land here, etc.) can push a knob both ways
+    // regardless of the route depth's own sign, so their reach is symmetric:
+    // |depth| in both directions. A unipolar source can only push one way,
+    // and WHICH way depends on the depth's sign (a negative depth on a
+    // source that only ever reads 0..1 can only ever pull the destination
+    // down, never up) -- see the depth-sign branch below.
+    const auto sourceIsBipolar = [this] (int sourceId) -> bool
+    {
+        using MS = params::ModSource;
+        if (sourceId < 0 || sourceId >= params::numModSources)
+            return true;
+        switch ((MS) sourceId)
+        {
+            case MS::env1: case MS::env2: case MS::env3:
+                return false;   // amp/aux envelopes are unipolar by design
+            case MS::lfo1: case MS::lfo2: case MS::lfo3:
+            {
+                const int i = sourceId - (int) MS::lfo1;
+                if (auto* raw = state.getRawParameterValue (
+                        params::id::lfoParam (i, params::id::lfo::unipolar)))
+                    return raw->load() < 0.5f;
+                return true;   // couldn't resolve -- see class comment, bipolar is the safe default
+            }
+            case MS::macro1: case MS::macro2: case MS::macro3: case MS::macro4:
+                return false;   // registered 0..1 (ParameterRegistry.cpp), no bipolar macro exists
+            case MS::velocity: case MS::modWheel: case MS::aftertouch:
+                return false;   // raw MIDI-derived, always 0..1
+            case MS::sfxAmpA: case MS::sfxAmpB: case MS::sfxAmpC:
+                return false;   // SampleData::ampAt is an envelope-follower curve, 0..1
+            case MS::sfxPitchA: case MS::sfxPitchB: case MS::sfxPitchC:
+                // SampleData::pitchAt tracks a deviation around the sample's
+                // own pitch with no documented sign convention -- genuinely
+                // can't tell which way it goes, so treat it as bipolar.
+                return true;
+            case MS::chaos:
+                // ChaosGenerator's matrix-source walker has no documented
+                // sign convention either -- same reasoning, bipolar.
+                return true;
+            case MS::none:
+            case MS::count:
+            default:
+                return true;
+        }
+    };
+
+    std::vector<ModAssignInfo> next (
+        (size_t) juce::jmax (0, juce::jmin (params::numModDests(), params::maxModDests)));
+
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        auto* sourceRaw = state.getRawParameterValue (params::id::routeParam (r, params::id::route::source));
+        auto* destRaw   = state.getRawParameterValue (params::id::routeParam (r, params::id::route::dest));
+        auto* depthRaw  = state.getRawParameterValue (params::id::routeParam (r, params::id::route::depth));
+        if (sourceRaw == nullptr || destRaw == nullptr || depthRaw == nullptr)
+            continue;
+
+        const int sourceId    = (int) sourceRaw->load();
+        const int destChoice  = (int) destRaw->load();
+        const float depth     = depthRaw->load();
+
+        if (destChoice <= 0)   // choice 0 == "None"
+            continue;
+        const int destIndex = destChoice - 1;   // matches destNames()/modDestinations() order
+        if (destIndex < 0 || destIndex >= (int) next.size())
+            continue;
+
+        auto& info = next[(size_t) destIndex];
+        info.assigned = true;
+
+        if (sourceIsBipolar (sourceId))
+        {
+            const auto reach = std::abs (depth);
+            info.negReach += reach;
+            info.posReach += reach;
+        }
+        else if (depth >= 0.0f)
+        {
+            info.posReach += depth;
+        }
+        else
+        {
+            info.negReach += -depth;
+        }
+    }
+
+    table = std::move (next);
+}
+
+ModAssignInfo ContentComponent::getModAssignInfo (int destIndex) const
+{
+    return modAssignTable.get (destIndex);
+}
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
+      modAssignTable (p.getAPVTS()),
       keyboard (p.getKeyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard),
       chaosPanel (p),
       arpPanel (p.getAPVTS()),

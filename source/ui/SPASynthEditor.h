@@ -36,7 +36,8 @@ public:
 // this whole component for resizing.
 class ContentComponent : public juce::Component,
                          private juce::ChangeListener,
-                         private juce::Timer
+                         private juce::Timer,
+                         public ModAssignSource
 {
 public:
     ContentComponent (SPASynthProcessor&, std::function<void()> onThemeChanged);
@@ -106,6 +107,12 @@ public:
     // currently shows, getBounds()/getFont() are for the fits-inside-the-
     // band assertion, and the threshold setter lets a test collapse the
     // real 3s no-CC wait to something instant.
+    // ModAssignSource: per-instance table of which mod-destination params
+    // are currently assigned in the matrix and how far the assigned routes
+    // can move them. See Controls.h's ModAssignSource/ModAssignInfo and the
+    // ModAssignTable definition below.
+    ModAssignInfo getModAssignInfo (int destIndex) const override;
+
     void pollMidiLearnBadgeNow() { timerCallback(); }
     juce::String getMidiLearnBadgeText() const { return midiLearnBadge.getText(); }
     juce::Rectangle<int> getMidiLearnBadgeBounds() const { return midiLearnBadge.getBounds(); }
@@ -161,8 +168,36 @@ private:
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     };
 
+    // Per-instance cache backing getModAssignInfo() above: which mod-dest
+    // parameters are assigned in the matrix, and the polarity-aware
+    // reachable range their routes' combined depths imply. Recomputed
+    // whenever any matrix route (source/dest/depth) or an LFO's unipolar
+    // flag changes -- via an AudioProcessorValueTreeState::Listener, so it
+    // also follows preset load/reset (desirable here: the display should
+    // always match whatever is loaded). Message-thread only; rebuild()
+    // allocates a small std::vector, never on the audio thread. One
+    // instance per ContentComponent -- never a process-wide singleton, so
+    // separate SPASynth instances in one host session never bleed into
+    // each other's indicator state.
+    class ModAssignTable : private juce::AudioProcessorValueTreeState::Listener
+    {
+    public:
+        explicit ModAssignTable (juce::AudioProcessorValueTreeState&);
+        ~ModAssignTable() override;
+
+        ModAssignInfo get (int destIndex) const;
+
+    private:
+        void parameterChanged (const juce::String&, float) override;
+        void rebuild();
+
+        juce::AudioProcessorValueTreeState& state;
+        std::vector<ModAssignInfo> table;
+    };
+
     SPASynthProcessor& processor;
     std::function<void()> onThemeChanged;   // LnF palette refresh + repaint
+    ModAssignTable modAssignTable;
 
     std::unique_ptr<juce::Drawable> logoDark, logoLight;
     SettingsButton settingsButton;   // over the top-left logo

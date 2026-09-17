@@ -77,6 +77,17 @@ const Theme& currentTheme();
 void setAccentColors (juce::Colour audio, juce::Colour mod);
 void resetAccentColors();
 
+// Fixed "this parameter is assigned in the mod matrix" indicator colour.
+// This is patch information, not decoration -- unlike accent/accentMod
+// above, it is NOT part of the user's tintable accent system: the accent
+// picker, LINK, and setAccentColors()/resetAccentColors() must never read
+// or write it, and no library:: settings path stores it. Put in exactly
+// one place so the product owner can retune the shade by editing this one
+// line. Starting value: a soft violet, chosen to read clearly against the
+// charcoal faceplate while staying visibly distinct from both the teal
+// accent/accentMod pair and the blue ASSIGN-mode glow (Theme::assignGlow).
+inline juce::Colour modAssignedColour() { return juce::Colour (0xff9d84f0); }
+
 namespace metrics
 {
     inline constexpr int baseWidth = 1380;

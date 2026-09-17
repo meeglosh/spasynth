@@ -10,6 +10,38 @@ namespace spa::ui
 
 class Knob;
 
+// Per-destination static mod-assignment info a Knob needs to paint the
+// violet "assigned" indicator and the reachable-range arc. destIndex is the
+// dense mod-destination index (params::modDestIndex). Reach values are
+// normalized destination-range deltas (0..1), already summed across every
+// route targeting this destination, but NOT yet clamped against the knob's
+// current position -- that clamp happens at paint time against the live
+// base value (see SPASynthLookAndFeel::drawRotarySlider), since the base
+// moves independently of the routes and clamping here would go stale the
+// moment the user drags the knob itself.
+struct ModAssignInfo
+{
+    bool assigned = false;
+    float negReach = 0.0f;   // 0..1, how far the routes can pull the knob down
+    float posReach = 0.0f;   // 0..1, how far the routes can push the knob up
+};
+
+// Implemented by ContentComponent (SPASynthEditor.h/.cpp) so a Knob can find
+// its owning editor's per-instance mod-assignment table via
+// findParentComponentOfClass, the same pattern Knob::pollModViz already uses
+// to resolve its owning processor's Telemetry below -- without Controls.h
+// needing SPASynthEditor.h's full type (circular: ModulePanels.h/
+// AssignOverlay.h already include this file). Mirrors the
+// VoicePanelDetachProbe interface-only pattern in SPASynthEditor.h. One
+// table per editor instance, never a process-wide singleton -- Mike
+// routinely runs several SPASynth instances in one Logic session.
+class ModAssignSource
+{
+public:
+    virtual ~ModAssignSource() = default;
+    virtual ModAssignInfo getModAssignInfo (int destIndex) const = 0;
+};
+
 // One shared 30 Hz timer polling every live Knob for its modulation-viz
 // state, instead of each of the 100+ knobs on screen owning its own Timer.
 // Message-thread only (registration and the callback both run there), so no
@@ -185,6 +217,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     int modDestIdx = -1;
     dsp::Telemetry* modTelemetry = nullptr;   // resolved lazily, then cached -- see pollModViz()
+    const ModAssignSource* modAssignSrc = nullptr;   // resolved lazily, then cached -- see pollModViz()
 };
 
 inline void detail::ModVizClock::timerCallback()
@@ -208,6 +241,33 @@ inline void Knob::pollModViz()
             if (auto* proc = dynamic_cast<SPASynthProcessor*> (&editor->processor))
                 modTelemetry = &proc->getTelemetry();
     }
+    // The mod-assignment table lives on ContentComponent, not the processor
+    // -- resolved the same lazy-once way, via ancestor search rather than
+    // the processor, since it's purely a UI-side cache (see ModAssignSource
+    // above). A knob constructed before it's parented just tries again next
+    // tick; once found it never changes for the knob's lifetime.
+    if (modAssignSrc == nullptr)
+        modAssignSrc = findParentComponentOfClass<ModAssignSource>();
+
+    if (modAssignSrc != nullptr)
+    {
+        const auto info = modAssignSrc->getModAssignInfo (modDestIdx);
+        auto& props = slider.getProperties();
+        const bool wasAssigned = (bool) props.getWithDefault ("modAssigned", false);
+        const float wasNeg = (float) (double) props.getWithDefault ("modRangeNeg", 0.0);
+        const float wasPos = (float) (double) props.getWithDefault ("modRangePos", 0.0);
+        constexpr float epsilon = 1.0f / 512.0f;
+        if (info.assigned != wasAssigned
+            || std::abs (info.negReach - wasNeg) > epsilon
+            || std::abs (info.posReach - wasPos) > epsilon)
+        {
+            props.set ("modAssigned", info.assigned);
+            props.set ("modRangeNeg", (double) info.negReach);
+            props.set ("modRangePos", (double) info.posReach);
+            slider.repaint();
+        }
+    }
+
     if (modTelemetry == nullptr)
         return;
 

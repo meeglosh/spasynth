@@ -339,6 +339,33 @@ them in older notes: "1.0.2" and "1.2" were both misspoken; 1.0.2 shipped
     already on the tab-width floor.
   - The live ring buffer this needs is the same machinery Direct Audio
     Input's rolling-buffer option would want, so build them in that order.
+- **FX parameters as mod matrix destinations** (Mike, 2026-09-17). His
+  example: an oscillator's amp follower driving reverb wet/dry. Bigger than
+  it looks, for three reasons:
+  - **Capacity.** `maxModDests = 96` and we are already at roughly 90 (the
+    listings say "more than 90 destinations"). One mix control per FX module
+    overflows it. Raising the cap is SAFE for serialization because
+    destination indices are appended, never reordered, but every voice
+    carries per-destination state, so the cap costs memory and per-voice
+    work. Raise it deliberately and measure.
+  - **Per-voice sources driving a global effect is the hard case, and it is
+    the case he asked for.** Modulation is per-voice (own envelopes, own SFX
+    follower, own chaos); FX are global and post-mix. With a chord down,
+    eight amp followers compete for one reverb mix. **Decided rule: the
+    maximum across sounding voices** (the loudest note opens the reverb),
+    which behaves musically for followers and envelopes alike. Free-running
+    LFOs are already global (`lfoPhaseAccum` lives on the processor, see
+    SPASynthProcessor.h) and need no reduction at all.
+  - **It is a second modulation path, not more list entries.** Voice
+    modulation is computed inside the voice in 64-sample chunks and applied
+    to voice params; FX params live on the processor and are read per block.
+    Routing to them means computing modulated FX values processor-side from
+    the reduced source value.
+  - **Scope to start with:** the MIX/amount of each FX module (covers his
+    example and is the most musically useful set), then a short list of
+    high-value extras such as delay feedback and reverb decay. Do not add
+    every FX parameter; the cap and the per-voice cost both argue against it.
+  - Sits naturally beside the granular effect, since both touch the FX chain.
 Phil's SPAStation-installed pack not appearing: asked him for (1) Mac or
 Windows + did he Rescan, (2) SPAStation's "SPASynth library:" path, (3)
 SPASynth's Set Library Folder path. If the paths differ it's the root

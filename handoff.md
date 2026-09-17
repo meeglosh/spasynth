@@ -267,7 +267,43 @@ start of the round, as usual. Items so far:
   as a box. The hand-coupled caption width and layout inset became named
   Theme metrics in the same change.
 
+- `df2036b` **oscillator copy/swap**: right-click an oscillator header for
+  "Copy to Oscillator B/C" and "Swap with Oscillator B/C". No clipboard, by
+  design: with three slots a direct destination is one action with no hidden
+  state. `copyOscSlot`/`swapOscSlots` on the processor enumerate the slot's
+  registry Section rather than a key list, so params added later are carried
+  automatically, and they reload the source's sample/wavetable into the
+  target (a slot is ~25 params PLUS content, and content is not a param).
+  Swap snapshots both slots before writing either; implementing it as two
+  copies clobbers its own source, and the test caught exactly that. Mod
+  matrix routes are deliberately NOT copied.
+- `84735d8` **chaos sync (ORGANIZED CHAOS)**: polyrhythmic lock, Mike's
+  explicit choice over both a hard lock (too stepped) and rate-only (does
+  not earn the name). Walkers keep individual speeds, quantised to whole
+  divisions of a tempo-derived base, with target changes landing on the beat
+  grid via the same host-position path the arp and sample SYNC use, and the
+  same free-run fallback when no advancing ppq exists. `chaos.syncToBpm` +
+  `chaos.division` appended at the registry end, reusing the LFO division
+  list, neither a mod destination. **Rate modulation is ignored while
+  synced** (rate becomes a division). Sync-off is guarded by a golden-value
+  test so refactors cannot drift it.
+
 More items expected; append them here as they land.
+
+### Open, awaiting Mike's answers
+- **Knob indicator for assigned mod destinations** (Phil: the current one is
+  not clear enough). Diagnosis: two separate causes. (1) `Theme::accentMod`
+  is `0xff51d0bf`, the SAME teal as the brand accent, so the mod arc reads
+  as more of the value arc rather than a different layer. (2) The indicator
+  is driven by live telemetry (`modDestActive`), so a wired knob shows
+  NOTHING while the synth is silent; the question a user asks is "is this
+  wired", but we only answer "is this moving". Proposed: mark assignment
+  statically from the matrix row params (no audio needed), give modulation
+  its own hue, and make the static mark the reachable range so it answers
+  "wired" and "by how much" at once. **Do NOT use a glow**: blue glow
+  already means "assignable" in ASSIGN mode and is reused by the drag-drop
+  highlight. Needs from Mike: the new hue, and whether a wired-but-zero-depth
+  route should still mark the knob.
 
 ## Planned for 1.1.0 (Mike, 2026-09-16, confirmed 2026-09-17)
 

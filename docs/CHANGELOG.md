@@ -4,6 +4,12 @@
 
 - Added a small arrow next to the "LOCKS" label above the randomizer lock
   buttons, so it is clearer at a glance that it is pointing at them.
+- Right-clicking an oscillator's title now offers Copy to Oscillator B/C or
+  Swap with Oscillator B/C, so building a matching pair of oscillators or
+  trying two sounds against each other no longer means re-dialing every knob
+  and reloading the sound by hand. Copying or swapping carries the loaded
+  sound or wavetable along with the settings; it does not touch anything you
+  have wired up in the mod matrix.
 
 ## 1.0.16
 

@@ -548,6 +548,111 @@ juce::String SPASynthProcessor::getSampleError (int slot) const
     return slotSamples[(size_t) slot].error;
 }
 
+void SPASynthProcessor::copyOscSlot (int fromSlot, int toSlot)
+{
+    if (fromSlot == toSlot)
+        return;
+
+    // Parameters: enumerate the source slot's Section from the registry --
+    // never a hand-written key list, so a new osc param is picked up for
+    // free. Both slots' definitions for the same key share identical
+    // ranges (they're the same ParamDef replicated per slot), so copying
+    // the normalised [0,1] value is exact and simplest.
+    const auto section = params::oscSection (fromSlot);
+    const auto destLetter = params::id::oscSlotLetter (toSlot);
+    for (auto& def : params::all())
+    {
+        if (def.section != section)
+            continue;
+        auto* src = apvts.getParameter (def.id);
+        if (src == nullptr)
+            continue;
+        const auto key = def.id.fromFirstOccurrenceOf (".", false, false);
+        const auto destId = "osc" + destLetter + "." + key;
+        if (auto* dst = apvts.getParameter (destId))
+            dst->setValueNotifyingHost (src->getValue());
+    }
+
+    // Content is not a parameter -- a slot with the right knob values but no
+    // reloaded file plays nothing. Reload through the normal async loaders
+    // (never a raw path/pointer copy) so this obeys the same threading
+    // contract as LOAD/drag-drop.
+    const auto sampleFile = getSampleFile (fromSlot);
+    if (sampleFile.existsAsFile())
+        loadSampleFromFile (toSlot, sampleFile);
+    const auto tableFile = getWavetableFile (fromSlot);
+    if (tableFile.existsAsFile())
+        loadWavetableFromFile (toSlot, tableFile);
+
+    // Deliberately NOT touching the mod matrix: routes name a specific
+    // slot's parameter as their destination, so copying them would mean
+    // hunting for free rows and rewriting destinations -- and would consume
+    // matrix rows the user never asked for. The oscillator copies, its
+    // wiring does not.
+}
+
+void SPASynthProcessor::swapOscSlots (int slotA, int slotB)
+{
+    if (slotA == slotB)
+        return;
+
+    // Snapshot BOTH slots' parameters and content paths completely before
+    // writing either one -- writing slotA from slotB while still reading
+    // slotA for the slotB write would overwrite the source mid-swap.
+    struct SlotSnapshot
+    {
+        std::vector<std::pair<juce::String, float>> paramValues;   // full id -> normalised value
+        juce::File sampleFile, tableFile;
+    };
+
+    const auto snapshot = [this] (int slot)
+    {
+        SlotSnapshot s;
+        const auto section = params::oscSection (slot);
+        for (auto& def : params::all())
+        {
+            if (def.section != section)
+                continue;
+            if (auto* p = apvts.getParameter (def.id))
+                s.paramValues.push_back ({ def.id, p->getValue() });
+        }
+        s.sampleFile = getSampleFile (slot);
+        s.tableFile = getWavetableFile (slot);
+        return s;
+    };
+
+    const auto a = snapshot (slotA);
+    const auto b = snapshot (slotB);
+
+    const auto letterA = params::id::oscSlotLetter (slotA);
+    const auto letterB = params::id::oscSlotLetter (slotB);
+
+    const auto applyTo = [this] (const SlotSnapshot& src, const juce::String& destLetter)
+    {
+        for (auto& entry : src.paramValues)
+        {
+            const auto key = entry.first.fromFirstOccurrenceOf (".", false, false);
+            const auto destId = "osc" + destLetter + "." + key;
+            if (auto* dst = apvts.getParameter (destId))
+                dst->setValueNotifyingHost (entry.second);
+        }
+    };
+
+    applyTo (a, letterB);
+    applyTo (b, letterA);
+
+    if (a.sampleFile.existsAsFile())
+        loadSampleFromFile (slotB, a.sampleFile);
+    if (a.tableFile.existsAsFile())
+        loadWavetableFromFile (slotB, a.tableFile);
+    if (b.sampleFile.existsAsFile())
+        loadSampleFromFile (slotA, b.sampleFile);
+    if (b.tableFile.existsAsFile())
+        loadWavetableFromFile (slotA, b.tableFile);
+
+    // Mod matrix left untouched -- see copyOscSlot()'s comment.
+}
+
 float SPASynthProcessor::getRandomWildness() const
 {
     return (float) (double) apvts.state.getProperty (wildnessProperty, 0.5);

@@ -85,12 +85,34 @@ public:
     {
         return juce::File (slotSamples[(size_t) slot].path);
     }
+    // Empty File for the factory table (no loaded file) or an unbuilt slot --
+    // same convention as getSampleFile().
+    juce::File getWavetableFile (int slot) const
+    {
+        return juce::File (slotTables[(size_t) slot].path);
+    }
 
     // Quick-swap: the WAV files in the currently loaded sample's pack (its
     // parent folder), name-sorted, but only when that sample lives under the
     // library root. Empty otherwise (no sample, or a user file loaded from
     // outside the library) — the UI hides the swap affordance in that case.
     juce::Array<juce::File> getPackSiblings (int slot) const;
+
+    // Right-click header menu on an oscillator strip (message thread only).
+    // Copies every parameter in the source slot's Section (registry-driven,
+    // see ParameterRegistry's oscSection()) onto the destination slot,
+    // including `enable`, plus whichever content is actually loaded there
+    // (sample or wavetable file, reloaded via the existing async loaders --
+    // never a raw path/pointer copy, or the destination slot would look
+    // right but play nothing). Deliberately does NOT touch the mod matrix:
+    // routes name a specific slot's parameter as a destination, and the
+    // product ask is "copy the oscillator", not "rewire modulation" -- see
+    // the CLAUDE.md brief for this feature.
+    void copyOscSlot (int fromSlot, int toSlot);
+    // Captures BOTH slots' parameters and content paths in full before
+    // writing either one, so a swap never overwrites its own source
+    // mid-operation (the bug a naive copy-copy implementation would have).
+    void swapOscSlots (int slotA, int slotB);
 
     // True while a background load for the slot is still in flight — the UI
     // shows a loading state instead of stale/empty content (big SFX files

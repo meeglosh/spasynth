@@ -24,6 +24,7 @@ bool oscContentAccepts (const juce::String& filePathOrName, bool wavetableMode);
 // reference synths do.
 class OscStrip : public juce::Component,
                  public juce::FileDragAndDropTarget,
+                 public juce::SettableTooltipClient,
                  private juce::AudioProcessorValueTreeState::Listener,
                  private juce::AsyncUpdater,
                  private juce::ChangeListener
@@ -60,6 +61,14 @@ private:
     bool sampleSwapAvailable() const;
     void paintSampleSwapper (juce::Graphics&);
     void openSampleMenu();
+
+    // Right-click on the header title (not the quick-swap name widget, not a
+    // knob, not the waveform display) offers Copy/Swap with the other two
+    // slots -- see CLAUDE.md's brief for this feature. No clipboard: with
+    // only three slots, naming a direct destination is one action instead
+    // of a copy-then-paste pair with hidden state.
+    juce::Rectangle<int> headerTitleRect() const;
+    void openCopySwapMenu();
 
     SPASynthProcessor& processor;
     const int slot;

@@ -2553,6 +2553,133 @@ namespace
         lib::setLibraryRoot (savedRoot);
     }
 
+    // Right-click header Copy/Swap (SPASynthProcessor::copyOscSlot /
+    // swapOscSlots). Iterates the registry rather than spot-checking a
+    // handful of params -- a revert to a hardcoded key list still passes a
+    // three-param spot check but fails the "checked > 20" count here.
+    static void oscSlotCopySwapTest()
+    {
+        std::cout << "oscSlotCopySwapTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        // --- Parameters, including enable and a choice + a continuous knob -
+        setParam (proc, id::oscSlot (0, id::osc::enable), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::fm);
+        setParam (proc, id::oscSlot (0, id::osc::coarse), 7.0f);
+        setParam (proc, id::oscSlot (0, id::osc::fine), 33.0f);
+        setParam (proc, id::oscSlot (0, id::osc::pan), -0.4f);
+
+        // Slot 1 starts DIFFERENT on every one of those, so a no-op copy
+        // (or one that misses a param) is caught rather than coincidentally
+        // matching.
+        setParam (proc, id::oscSlot (1, id::osc::enable), 0.0f);
+        setParam (proc, id::oscSlot (1, id::osc::mode), (float) (int) params::OscMode::noise);
+        setParam (proc, id::oscSlot (1, id::osc::coarse), -12.0f);
+        setParam (proc, id::oscSlot (1, id::osc::fine), 0.0f);
+        setParam (proc, id::oscSlot (1, id::osc::pan), 0.4f);
+
+        // A mod matrix route pointing at slot 0 -- must be untouched by a
+        // copy (see copyOscSlot's comment: the oscillator copies, its
+        // wiring does not).
+        setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo1);
+        setParam (proc, id::routeParam (0, id::route::dest), 3.0f);
+        setParam (proc, id::routeParam (0, id::route::depth), 0.6f);
+        auto* routeSource = proc.getAPVTS().getParameter (id::routeParam (0, id::route::source));
+        auto* routeDest = proc.getAPVTS().getParameter (id::routeParam (0, id::route::dest));
+        auto* routeDepth = proc.getAPVTS().getParameter (id::routeParam (0, id::route::depth));
+        const auto routeSourceBefore = routeSource->getValue();
+        const auto routeDestBefore = routeDest->getValue();
+        const auto routeDepthBefore = routeDepth->getValue();
+
+        proc.copyOscSlot (0, 1);
+
+        const auto section = params::oscSection (0);
+        int checked = 0;
+        bool allMatch = true;
+        for (auto& def : params::all())
+        {
+            if (def.section != section)
+                continue;
+            const auto key = def.id.fromFirstOccurrenceOf (".", false, false);
+            auto* a = proc.getAPVTS().getParameter (def.id);
+            auto* b = proc.getAPVTS().getParameter ("osc" + id::oscSlotLetter (1) + "." + key);
+            if (a == nullptr || b == nullptr)
+                continue;
+            ++checked;
+            if (std::abs (a->getValue() - b->getValue()) > 1.0e-6f)
+                allMatch = false;
+        }
+        expect (checked > 20, "iterated a realistic count of osc-section params ("
+                              + juce::String (checked) + ") rather than a hardcoded list");
+        expect (allMatch, "every osc-section parameter (incl. enable) matches after copyOscSlot");
+
+        expect (std::abs (routeSource->getValue() - routeSourceBefore) < 1.0e-6f
+                    && std::abs (routeDest->getValue() - routeDestBefore) < 1.0e-6f
+                    && std::abs (routeDepth->getValue() - routeDepthBefore) < 1.0e-6f,
+                "copyOscSlot leaves the mod matrix untouched");
+
+        // --- Content: a real generated WAV must actually be reloaded, not --
+        // --- just its parameters ------------------------------------------
+        const auto srcFile = writeRampSine (0.3, 48000.0);
+        proc.loadSampleFromFile (0, srcFile);
+        expect (waitForSample (proc, 0, 15000), "source sample loads for the copy test");
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+
+        const auto sourceName = proc.getSampleName (0);
+        proc.copyOscSlot (0, 1);
+        expect (waitForSampleName (proc, 1, sourceName, 15000),
+                "copyOscSlot reloads the destination's sample content, not just its parameters");
+        expect (proc.getSampleFile (1) == proc.getSampleFile (0),
+                "destination reports the same sample file as the source after copy");
+
+        srcFile.deleteFile();
+
+        // --- Swap: two slots with DISTINCT params AND content, verifying --
+        // --- the swap doesn't clobber its own source mid-operation --------
+        const auto fileA = writeRampSine (0.4, 48000.0);
+        const auto fileB = writeRampSine (0.6, 48000.0);
+
+        proc.loadSampleFromFile (0, fileA);
+        expect (waitForSampleName (proc, 0, fileA.getFileNameWithoutExtension(), 15000),
+                "slot 0 loads its distinct sample before the swap");
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::coarse), 5.0f);
+
+        proc.loadSampleFromFile (2, fileB);
+        expect (waitForSampleName (proc, 2, fileB.getFileNameWithoutExtension(), 15000),
+                "slot 2 loads its distinct sample before the swap");
+        setParam (proc, id::oscSlot (2, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (2, id::osc::coarse), -9.0f);
+
+        const auto slot0NameBefore = proc.getSampleName (0);
+        const auto slot2NameBefore = proc.getSampleName (2);
+
+        proc.swapOscSlots (0, 2);
+
+        // This is the assertion that catches a swap implemented as two
+        // sequential copies: writing slot 0 from slot 2 first would already
+        // have clobbered slot 0's sample before slot 2 could read it.
+        expect (waitForSampleName (proc, 0, slot2NameBefore, 15000),
+                "slot 0 ends up with slot 2's sample after swap");
+        expect (waitForSampleName (proc, 2, slot0NameBefore, 15000),
+                "slot 2 ends up with slot 0's sample after swap (catches a self-clobbering swap)");
+
+        auto* slot0Coarse = proc.getAPVTS().getParameter (id::oscSlot (0, id::osc::coarse));
+        auto* slot2Coarse = proc.getAPVTS().getParameter (id::oscSlot (2, id::osc::coarse));
+        expect (std::abs (slot0Coarse->convertFrom0to1 (slot0Coarse->getValue()) - (-9.0f)) < 0.01f,
+                "slot 0 picks up slot 2's parameter values after swap");
+        expect (std::abs (slot2Coarse->convertFrom0to1 (slot2Coarse->getValue()) - 5.0f) < 0.01f,
+                "slot 2 picks up slot 0's parameter values after swap");
+
+        fileA.deleteFile();
+        fileB.deleteFile();
+    }
+
     static void sfxFollowerTest()
     {
         std::cout << "sfxFollowerTest\n";
@@ -13183,6 +13310,7 @@ int main (int argc, char* argv[])
     sampleSyncUiTest();
     granularTest();
     quickSwapTest();
+    oscSlotCopySwapTest();
     sfxFollowerTest();
     fxDelayReverbTest();
     convolveTailLengthTest();

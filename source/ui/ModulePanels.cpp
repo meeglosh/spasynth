@@ -2,6 +2,7 @@
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
 #include "../dsp/SamplePlayer.h"
+#include "AssignOverlay.h"   // free spa::ui::showPopupAnchored -- see its declaration comment
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace spa::ui
@@ -43,6 +44,7 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     // from the on-screen keyboard's QWERTY note input -- see Controls.h's
     // Knob for the full explanation.
     setMouseClickGrabsKeyboardFocus (false);
+    setTooltip ("Right-click the header to copy or swap this oscillator with another slot.");
 
     auto& apvts = processor.getAPVTS();
     const auto pid = [this] (const char* key) { return id::oscSlot (slot, key); };
@@ -437,10 +439,34 @@ void OscStrip::paintSampleSwapper (juce::Graphics& g)
     g.fillPath (caret);
 }
 
+juce::Rectangle<int> OscStrip::headerTitleRect() const
+{
+    // The whole header band minus whatever the quick-swap widget claims on
+    // its right (headerNameRect(), only actually painted in sample/granular
+    // modes) -- i.e. the "Oscillator A" title area itself, never a knob or
+    // the waveform display below it.
+    auto header = getLocalBounds().removeFromTop (metrics::sectionHeaderHeight);
+    const auto m = currentMode();
+    if (m == params::OscMode::sample || m == params::OscMode::granular)
+        header.removeFromRight (headerNameRect().getWidth());
+    return header;
+}
+
 void OscStrip::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu())
-        return;   // right-click is routed to MIDI-Learn by the editor
+    {
+        // A plain PopupMenu here would also propagate up to
+        // ContentComponent::mouseDown (every mouseDown does, via its
+        // addMouseListener(this, true)) -- harmless, since this component
+        // carries no "paramID" property, so that handler no-ops. This is
+        // OUR menu, not MIDI Learn's, so it must go through the anchored
+        // helper itself (see AssignOverlay.h's declaration comment) or it
+        // will flash and close with no keyboard focus target to anchor to.
+        if (headerTitleRect().contains (e.getPosition()))
+            openCopySwapMenu();
+        return;
+    }
 
     const auto m = currentMode();
     if ((m != params::OscMode::sample && m != params::OscMode::granular)
@@ -449,6 +475,31 @@ void OscStrip::mouseDown (const juce::MouseEvent& e)
 
     if (headerNameRect().contains (e.getPosition()))
         openSampleMenu();
+}
+
+void OscStrip::openCopySwapMenu()
+{
+    // The other two slots, named by letter, whatever slot this is.
+    juce::Array<int> others;
+    for (int s = 0; s < params::numOscSlots; ++s)
+        if (s != slot)
+            others.add (s);
+
+    juce::Component::SafePointer<OscStrip> safe (this);
+    juce::PopupMenu menu;
+    for (auto other : others)
+        menu.addItem ("Copy to Oscillator " + params::id::oscSlotLetter (other),
+                      [safe, other]
+                      { if (safe != nullptr) safe->processor.copyOscSlot (safe->slot, other); });
+    menu.addSeparator();
+    for (auto other : others)
+        menu.addItem ("Swap with Oscillator " + params::id::oscSlotLetter (other),
+                      [safe, other]
+                      { if (safe != nullptr) safe->processor.swapOscSlots (safe->slot, other); });
+
+    showPopupAnchored (*this, menu,
+        juce::PopupMenu::Options().withTargetScreenArea (headerTitleRect() + getScreenPosition()),
+        nullptr);
 }
 
 void OscStrip::openSampleMenu()

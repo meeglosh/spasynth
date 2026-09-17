@@ -256,14 +256,27 @@ exercise that are new here: drag audio onto an oscillator, ASSIGN single vs
 double click, a freshly made mod route being audible immediately, and a
 saved preset with a deliberately zeroed route still loading at zero.
 
-## Planned for 1.1.0 (Mike, 2026-09-16)
+## 1.0.17 in progress (Mike, 2026-09-17): small pre-launch updates
+
+A round of small pre-launch polish items, batched so the bigger
+architecture work does not block launch. Version bumped to 1.0.17 at the
+start of the round, as usual. Items so far:
+- Arrow after the "LOCKS" caption pointing at the lock buttons, so the
+  relationship reads at a glance. Drawn as a vector chevron, not a Unicode
+  glyph, because the UI uses bundled fonts and a missing glyph would render
+  as a box. The hand-coupled caption width and layout inset became named
+  Theme metrics in the same change.
+
+More items expected; append them here as they land.
+
+## Planned for 1.1.0 (Mike, 2026-09-16, confirmed 2026-09-17)
 
 **Version: 1.1.0, not 1.0.17** (Mike's call). First minor bump since
 launch, because this round changes the plugin's SHAPE rather than its
 behaviour: an audio input bus and a new serialized FX module. Both items
-below ship together in it. (Note for anyone reading a stray reference to
-"1.0.2" in older notes: that was a slip, 1.0.2 shipped 2026-07 and is the
-build that first went to Paul and Phil.)
+below ship together in it. 1.0.17 slots in BEFORE this round. (Two version slips to ignore if you see
+them in older notes: "1.0.2" and "1.2" were both misspoken; 1.0.2 shipped
+2026-07 and is the build that first went to Paul and Phil.)
 
 - **Direct Audio Input** (Phil). See the parked write-up in the editions
   section above for why it waited and the three implementation paths;

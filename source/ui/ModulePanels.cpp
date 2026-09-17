@@ -765,7 +765,8 @@ void LFOPanel::resized()
 // ============================== ChaosPanel =================================
 
 ChaosPanel::ChaosPanel (SPASynthProcessor& p)
-    : display (p),
+    : apvts (p.getAPVTS()),
+      display (p),
       enable (p.getAPVTS(), id::chaos::enable, "ON"),
       depth (p.getAPVTS(), id::chaos::depth, "DEPTH", true),
       rate (p.getAPVTS(), id::chaos::rate, "RATE", true),
@@ -786,6 +787,13 @@ ChaosPanel::ChaosPanel (SPASynthProcessor& p)
     addAndMakeVisible (sync);
     addAndMakeVisible (division);
 
+    divisionLabel.setText ("RATE", juce::dontSendNotification);
+    divisionLabel.setFont (metrics::smallFont());
+    divisionLabel.setJustificationType (juce::Justification::centred);
+    divisionLabel.setInterceptsMouseClicks (false, false);
+    divisionLabel.setMinimumHorizontalScale (0.6f);
+    addChildComponent (divisionLabel);
+
     const std::array<std::tuple<const char*, const char*, const char*>, 6> defs = { {
         { id::chaos::pitchOn, id::chaos::pitchAmount, "PITCH" },
         { id::chaos::phaseOn, id::chaos::phaseAmount, "PHASE" },
@@ -803,6 +811,14 @@ ChaosPanel::ChaosPanel (SPASynthProcessor& p)
         addAndMakeVisible (*drifts[i].on);
         addAndMakeVisible (*drifts[i].amount);
     }
+
+    apvts.addParameterListener (id::chaos::syncToBpm, this);
+    handleAsyncUpdate();   // initial rate/division visibility, before the first layout
+}
+
+ChaosPanel::~ChaosPanel()
+{
+    apvts.removeParameterListener (id::chaos::syncToBpm, this);
 }
 
 void ChaosPanel::paint (juce::Graphics& g)
@@ -810,14 +826,38 @@ void ChaosPanel::paint (juce::Graphics& g)
     draw::panel (g, getLocalBounds().toFloat());
     // The section renames itself while synced -- polyrhythmic-but-quantised
     // movement earns "Organized", free drift stays "Organic" (product
-    // owner's call). syncTracker keeps this repainting on toggle.
+    // owner's call). syncTracker keeps this repainting on toggle. paint()
+    // only chooses what to draw -- the rate/division visibility swap is
+    // handled by handleAsyncUpdate() (see the parameterChanged/AsyncUpdater
+    // pair in the header), never here.
     const auto isSynced = syncTracker.isEngaged ("sync");
     draw::sectionHeader (g, getLocalBounds(), isSynced ? "Organized Chaos" : "Organic Chaos", {},
                          currentTheme().accentMod);
 }
 
+void ChaosPanel::handleAsyncUpdate()
+{
+    // Rate only means anything when free-running; division (plus its RATE
+    // caption) only means anything when synced -- shown, not just enabled,
+    // so the row keeps the same shape either way and the label row is never
+    // stolen from underneath a knob. Same param this fires off of also
+    // drives DependentEnable's enabled/disabled state on the attachments
+    // themselves; visibility here is purely cosmetic on top of that.
+    const auto isSynced = isSyncEngagedForTest();
+    rate.setVisible (! isSynced);
+    division.setVisible (isSynced);
+    divisionLabel.setVisible (isSynced);
+}
+
 void ChaosPanel::resized()
 {
+    // Sync toggle lives at the top right of the recessed header strip, next
+    // to the title it renames -- same idea as MatrixPanel's ASSIGN button.
+    {
+        auto headerArea = getLocalBounds().removeFromTop (metrics::sectionHeaderHeight);
+        sync.setBounds (headerArea.removeFromRight (62).reduced (2, 6));
+    }
+
     auto area = getLocalBounds().withTrimmedTop (metrics::sectionHeaderHeight).reduced (7, 3);
 
     auto top = area.removeFromTop (juce::jmax (78, area.getHeight() - 84));
@@ -826,14 +866,18 @@ void ChaosPanel::resized()
 
     enable.setBounds (top.removeFromLeft (50).withSizeKeepingCentre (50, 20));
     auto masters = top.withSizeKeepingCentre (top.getWidth(), juce::jmin (top.getHeight(), 72));
-    const auto masterW = juce::jmax (1, masters.getWidth() / 4);
+    const auto masterW = juce::jmax (1, masters.getWidth() / 3);
     depth.setBounds (masters.removeFromLeft (masterW));
-    // Rate/division share one cell (rate on top, division below), same
-    // idea as LFOPanel -- whichever the sync toggle disables just dims.
+    // Rate cell shows EITHER the rate knob (which draws its own label) OR
+    // the division dropdown plus divisionLabel, occupying the same rect --
+    // actual show/hide is handleAsyncUpdate()'s job, this only ever lays
+    // both out so whichever one handleAsyncUpdate() has made visible is
+    // already positioned correctly.
     auto rateCell = masters.removeFromLeft (masterW);
-    division.setBounds (rateCell.removeFromBottom (20).withSizeKeepingCentre (rateCell.getWidth() - 4, 18));
     rate.setBounds (rateCell);
-    sync.setBounds (masters.removeFromLeft (masterW).withSizeKeepingCentre (44, 18));
+    auto divisionArea = rateCell;
+    divisionLabel.setBounds (divisionArea.removeFromBottom (13));
+    division.setBounds (divisionArea.withSizeKeepingCentre (divisionArea.getWidth() - 6, 22));
     mix.setBounds (masters);
 
     // Drift strip: toggle above each amount knob.

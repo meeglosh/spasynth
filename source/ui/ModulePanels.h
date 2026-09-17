@@ -167,10 +167,13 @@ private:
 };
 
 // Organic Chaos: walker scope + master knobs + per-target drift strip.
-class ChaosPanel : public juce::Component
+class ChaosPanel : public juce::Component,
+                   private juce::AudioProcessorValueTreeState::Listener,
+                   private juce::AsyncUpdater
 {
 public:
     explicit ChaosPanel (SPASynthProcessor&);
+    ~ChaosPanel() override;
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -178,11 +181,25 @@ public:
     bool isSyncEngagedForTest() const { return syncTracker.isEngaged ("sync"); }
 
 private:
+    // Same idiom as OscStrip: the sync param gates which of rate/division is
+    // shown, so a change needs to reach the message thread (this can fire
+    // from the audio thread) before touching any Component -- never done
+    // from paint(), which must stay a pure "what to draw" pass.
+    void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
+    void handleAsyncUpdate() override;
+
+    juce::AudioProcessorValueTreeState& apvts;
+
     ChaosDisplay display;
     Toggle enable;
     Knob depth, rate, mix;
     Toggle sync;
     Choice division;
+    // Division has no built-in label the way Knob does -- caption it to
+    // match DEPTH/MIX's label row rather than leaving a gap under it. Named
+    // for what it controls (RATE), same as the knob it replaces, so the
+    // row's wording is stable between the two states.
+    juce::Label divisionLabel;
 
     // Rate only means anything when free-running; division only means
     // anything when synced -- same pattern as LFOPanel's rateEnable/

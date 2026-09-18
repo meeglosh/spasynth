@@ -5,8 +5,8 @@ is the short version.
 
 ## Where we are
 
-- **2026-09-18: v1.0.17 built + staged (main `b99beb9`), awaiting Mike's
-  install, then it goes to Paul and Phil.** Read the 1.0.17 section below
+- **2026-09-18: v1.0.18 built + staged (main `c65b2b2`), awaiting Mike's
+  install. v1.0.17 already went to Paul and Phil.** Read the 1.0.17 section below
   for what is in it and the lessons from the round. 1.0.15 and 1.0.16 both
   shipped to the testers. The next round is **1.1.0** (direct audio input,
   granular effect, FX params as mod destinations, ASIO), which changes the
@@ -264,7 +264,61 @@ exercise that are new here: drag audio onto an oscillator, ASSIGN single vs
 double click, a freshly made mod route being audible immediately, and a
 saved preset with a deliberately zeroed route still loading at zero.
 
-## 1.0.17 BUILT + STAGED (2026-09-18, main `b99beb9`), awaiting Mike's install
+## 1.0.18 BUILT + STAGED (2026-09-18, main `c65b2b2`), awaiting Mike's install
+
+**1.0.17 WAS SENT to Paul and Phil**, so this round became 1.0.18 rather
+than overwriting a shipped number (the versioning rule below). Watch for
+this: agents kept appending new work into the already-shipped `## 1.0.17`
+changelog section, which would have claimed 1.0.17 did things it never did.
+The sections are now split correctly and the shipped 1.0.17 pkg
+(`552e1392be1c2e4acb1da8f9a4019a8c`) is untouched on disk.
+
+Six items, all from Mike and Phil after 1.0.17 went out:
+- **Assigned-knob colour now DERIVES from the user's accents** (was a fixed
+  violet, which vanished for anyone whose own accent was violet). Linked
+  accents give the complement; two accents give the major-arc bisector,
+  holding a 90-degree minimum to the nearer one. Saturation and brightness
+  are clamped into a readable band rather than inherited, and a grey or
+  near-black accent falls back rather than doing hue maths on unstable
+  input.
+- **Panic button removed** from the header. `SPASynthProcessor::panic()`
+  STAYS: it still serves MIDI CC 120/123 and the hard reset on preset load.
+- **Tabs work while ASSIGN is on.** `AssignOverlay::hitTest` swallowed every
+  click, so only the visible tab's parameters were assignable. Tab bars are
+  found generically; a registered target wins over pass-through (ENV/LFO tab
+  buttons are themselves sources); switching a tab rebuilds the target list.
+- **Staged glow**: parameters first, then only the matching matrix side.
+  Derived from which of the two selections exists, not a new state machine.
+- **Waiting state** for a half-filled row: amber outline plus a ring on the
+  empty field. NO label, deliberately: the row's three controls span its
+  full width, so any text lands on one of them (the first attempt drew over
+  the depth slider). Mike chose to keep the one-shot completion rule and
+  show the state instead of changing the rule.
+- **Inert destinations dim** (chaos rate under sync), behind a table-driven
+  predicate. The destination stays in the list: indices are dense and
+  serialized into every preset.
+
+**Artifacts:** macOS pkg from `c65b2b2`, signed + notarized + stapled,
+`spctl` accepted, universal, minos 11.0, md5
+`18f65da5f87648a710bb8aaddf587290`. Windows exe from `ci-windows-c65b2b2`,
+md5 `d3400faf70d7ea02f58e6b4321845ac5`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.18/`. Suite
+**1572 ALL PASS** (Debug, Release, ASan). Note:
+`docs/tester-note-1.0.18.txt`.
+
+**Install:** `sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.18-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic.
+
+**Workflow change (Mike, 2026-09-18):** the suite is 5m12s and running it
+per trivial change was the round's biggest avoidable cost. `SPASynthTests
+--only <substring>` now runs a subset in seconds and `--list` names them; a
+pattern matching nothing is an error, so a filtered run cannot pass by
+running nothing. Agreement: targeted tests per item, full suite plus Release
+and ASan at batch boundaries or before a build. Do NOT reach for ASan on
+changes that touch no audio code.
+
+## 1.0.17 SENT to Paul and Phil (2026-09-18, main `b99beb9`)
 
 Small pre-launch polish, batched so the 1.1.0 architecture work does not
 block launch. Version bumped at the start of the round, as usual. Eight
@@ -512,13 +566,13 @@ diffing before any release.
 
 ## What's actually left before launch
 
-1. Mike installs 1.0.17 (`sudo installer -pkg
-   /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.17-macOS.pkg
+1. Mike installs 1.0.18 (`sudo installer -pkg
+   /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.18-macOS.pkg
    -target /`, Reset & Rescan, relaunch Logic), runs the gauntlet. The one
    check that matters most: open a preset saved in 1.0.16 and confirm it
    sounds the same, since two changes this round touch saved work.
-2. Send both 1.0.17 installers + `docs/tester-note-1.0.17.txt` to Paul and
-   Phil. Bump to 1.0.18 (or start 1.1.0) for anything after.
+2. Send both 1.0.18 installers + `docs/tester-note-1.0.18.txt` to Paul and
+   Phil. Bump to 1.0.19 (or start 1.1.0) for anything after.
 3. Decide: one more tester round after that, or send the announcement
    directly once Mike's happy.
 4. Shopify build-out per `docs/shopify-setup-guide.md`.

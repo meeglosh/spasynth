@@ -1,0 +1,20 @@
+SPASynth 1.0.18 - what's new since 1.0.17
+
+A short follow-up round, almost entirely from your notes on 1.0.17.
+
+- Wired knobs now take their colour from your own accent colours instead of a fixed shade, so the marking always contrasts with whatever you have picked rather than clashing with it or disappearing into it. It changes the moment you change your accents in the picker. If you use custom colours, your assigned knobs will look different than they did in 1.0.17. That is the fix, not a bug.
+- You can switch tabs while ASSIGN is on. Previously the overlay swallowed tab clicks, so you could only assign to whatever tab happened to be showing, which made a synth-wide assignment impossible. Filters, envelopes, LFOs and FX are all reachable mid-assignment now, and switching tabs immediately makes the newly shown controls assignable.
+- The glow now comes in stages instead of lighting everything at once. Turning ASSIGN on lights only the parameters you can pick; the matrix stays dark. Once you pick one, it shows as selected and only the matching side of the matrix lights up next.
+- Assigning only half a row now shows that row waiting for its other half: the row is outlined and a ring marks the exact field still to fill. This was always working as intended, it just never said so, which is why it looked stuck.
+- A matrix row aimed at Organic Chaos RATE now dims while chaos SYNC is on, since SYNC replaces the free-running rate with a tempo division and modulating it does nothing until SYNC goes off. The row is untouched and works again the moment you switch SYNC off.
+- The panic button is gone from the header. Your host already has its own way to stop stuck notes. Incoming MIDI panic messages are unaffected.
+
+Worth trying specifically
+- Turn ASSIGN on and switch tabs mid-assignment, which was impossible before.
+- Assign only a destination to an empty row and confirm the waiting state reads clearly rather than looking stuck.
+- Set a custom accent colour and confirm the wired-knob colour still stands out against it.
+- Open a preset saved in 1.0.17 and confirm it sounds the same.
+
+Install notes
+- macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

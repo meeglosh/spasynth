@@ -1,7 +1,42 @@
 # SPASynth changelog
 
-## 1.0.17
+## 1.0.18
 
+- The color that marks a knob as wired into the mod matrix is now chosen
+  automatically from your own accent color(s), so it always contrasts with
+  whatever you have picked instead of being a fixed shade that could clash
+  with, or disappear into, your own. It updates the moment you change your
+  accents in the picker. If you use custom colors, your assigned knobs will
+  look different than they did in 1.0.17.
+- Removed the panic button from the header. Every host already offers its
+  own way to stop stuck notes, and having a second one on our end was
+  redundant; incoming MIDI panic messages are unaffected.
+- ASSIGN mode improvements from tester feedback:
+  - You can now switch tabs while ASSIGN is on, so a synth-wide assignment no
+    longer means everything you want has to already be on the tab you
+    started from. Filters, envelopes, LFOs and FX all stay reachable
+    mid-assignment, and switching tabs immediately makes the newly shown
+    controls assignable.
+  - The blue highlighting now appears in stages instead of lighting up the
+    whole synth and the mod matrix at once, which was leading people to
+    click the matrix first, where nothing happens yet. Turning ASSIGN on now
+    lights up only the knobs and sources you can pick from; once you pick
+    one, it shows as selected and only the matching side of the matrix (the
+    source column or the destination column, whichever you just picked)
+    lights up next.
+  - Assigning only half of a matrix row (a destination with no source yet,
+    or vice versa) now clearly shows that row waiting for its other half:
+    the row is outlined and a ring marks the exact field still to be filled.
+    Previously this looked like ASSIGN mode had gotten stuck; it was always
+    working as intended, just silently.
+  - A matrix row aimed at Organic Chaos's RATE now dims while chaos SYNC is
+    on, since SYNC replaces the free-running rate with a tempo division and
+    modulating it does nothing until SYNC is switched off again. The row
+    itself is untouched and starts working again the moment SYNC goes off.
+
+
+
+## 1.0.17
 - Added a small arrow next to the "LOCKS" label above the randomizer lock
   buttons, so it is clearer at a glance that it is pointing at them. Tightened
   up the label itself too: "LOCKS" now sits with a bit more breathing room
@@ -26,12 +61,8 @@
   whether or not that route's depth is set to zero yet. A new travel arc
   also shows how far the assigned routes can actually push or pull the knob
   from where it sits right now, updating live as you drag a depth slider.
-  This indicator color is chosen automatically from your own accent color(s)
-  so it always stands out clearly against them, and it updates immediately
-  if you change your accent colors in the picker.
-- Removed the panic button from the header. Every host already offers its
-  own way to stop stuck notes, and having a second one on our end was
-  redundant; incoming MIDI panic messages are unaffected.
+  The indicator uses a distinct color so it reads apart from the rest of
+  the panel.
 - Convolve now has a START knob for its impulse. Turning it up skips further
   into the loaded sound before the wet signal begins, so you can leave the
   direct hit and early reflections behind and keep only the long diffuse
@@ -55,28 +86,6 @@
   put while you work on the row, and clears the moment you click anywhere
   else, press Esc, or switch on ASSIGN mode, whose own blue highlighting
   means something different and is unaffected by this.
-- ASSIGN mode improvements from tester feedback:
-  - You can now switch tabs while ASSIGN is on, so a synth-wide assignment no
-    longer means everything you want has to already be on the tab you
-    started from. Filters, envelopes, LFOs and FX all stay reachable
-    mid-assignment, and switching tabs immediately makes the newly shown
-    controls assignable.
-  - The blue highlighting now appears in stages instead of lighting up the
-    whole synth and the mod matrix at once, which was leading people to
-    click the matrix first, where nothing happens yet. Turning ASSIGN on now
-    lights up only the knobs and sources you can pick from; once you pick
-    one, it shows as selected and only the matching side of the matrix (the
-    source column or the destination column, whichever you just picked)
-    lights up next.
-  - Assigning only half of a matrix row (a destination with no source yet,
-    or vice versa) now clearly shows that row waiting for its other half:
-    the row is outlined and a ring marks the exact field still to be filled.
-    Previously this looked like ASSIGN mode had gotten stuck; it was always
-    working as intended, just silently.
-  - A matrix row aimed at Organic Chaos's RATE now dims while chaos SYNC is
-    on, since SYNC replaces the free-running rate with a tempo division and
-    modulating it does nothing until SYNC is switched off again. The row
-    itself is untouched and starts working again the moment SYNC goes off.
 
 ## 1.0.16
 

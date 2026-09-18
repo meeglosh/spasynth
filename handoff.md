@@ -6,8 +6,9 @@ is the short version.
 ## Where we are
 
 - **2026-09-18: v1.0.18 built + staged (main `c65b2b2`), awaiting Mike's
-  install. v1.0.17 already went to Paul and Phil.** Read the 1.0.17 section below
-  for what is in it and the lessons from the round. 1.0.15 and 1.0.16 both
+  install. v1.0.17 already went to Paul and Phil.** Read the 1.0.18 section
+  below for what is in it, and the 1.0.17 section under it for the round
+  before and its lessons. 1.0.15 and 1.0.16 both
   shipped to the testers. The next round is **1.1.0** (direct audio input,
   granular effect, FX params as mod destinations, ASIO), which changes the
   plugin's shape rather than its behaviour; see "Planned for 1.1.0".
@@ -390,11 +391,12 @@ code commits, all from Mike's and the testers' feedback:
 md5 `3b812f0bbdf70d9a4d20c115305b451e`. Both byte-identical across
 `dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.17/`. Dev
 plugin copies cleared. Suite **1532 ALL PASS** (Debug, Release, ASan).
-Tester note: `docs/tester-note-1.0.17.txt`.
+Tester note was `docs/tester-note-1.0.17.txt`, since replaced by the 1.0.18
+one (Paul and Phil already have this round).
 
-**Install:** `sudo installer -pkg
-/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.17-macOS.pkg
--target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic.
+**This build SHIPPED.** Its pkg stays on disk at
+`552e1392be1c2e4acb1da8f9a4019a8c`; do not overwrite or rebuild at this
+version number. Anything newer is 1.0.18 or later.
 
 **Lessons worth keeping from this round:**
 - **`RandomSpec::maxNorm` is a bias, NOT a ceiling.** The randomiser widens
@@ -421,7 +423,7 @@ Tester note: `docs/tester-note-1.0.17.txt`.
 **Version: 1.1.0, not 1.0.17** (Mike's call). First minor bump since
 launch, because this round changes the plugin's SHAPE rather than its
 behaviour: an audio input bus and a new serialized FX module. Both items
-below ship together in it. 1.0.17 slots in BEFORE this round. (Two version slips to ignore if you see
+below ship together in it. 1.0.17 and 1.0.18 both slot in BEFORE this round (both shipped or staged). (Two version slips to ignore if you see
 them in older notes: "1.0.2" and "1.2" were both misspoken; 1.0.2 shipped
 2026-07 and is the build that first went to Paul and Phil.)
 

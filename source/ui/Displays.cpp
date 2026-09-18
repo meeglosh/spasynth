@@ -665,9 +665,36 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         g.setColour (t.textPrimary.withAlpha (0.55f));
         g.drawLine (cx, area.getY(), cx, area.getBottom(), 1.0f);
     }
+    else if (mode == params::OscMode::sample)
+    {
+        // START point: always drawn, including while a note sounds -- it is
+        // a setting being dialled in, and the moment you play a note to hear
+        // the result is exactly when you still want to see where it is set.
+        // Before 1.0.19 this shared one line with the playhead below and so
+        // vanished during playback. Full height like the loop markers, in
+        // textSecondary (dimmer than the accentMod loop start/end markers
+        // and the bright textPrimary live playhead) so it stays visually
+        // distinguishable from both rather than competing.
+        const auto startX = markerX (value (params::id::oscSlot (slot, params::id::osc::sampleStart)));
+        g.setColour (t.textSecondary.withAlpha (0.9f));
+        g.drawLine (startX, area.getY(), startX, area.getBottom(), 1.0f);
+
+        // Live playhead on top, brighter, so the two stay tellable apart
+        // even when they coincide.
+        if (isLive())
+        {
+            const auto px = markerX (telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed));
+            g.setColour (t.textPrimary);
+            g.drawLine (px, area.getY(), px, area.getBottom(), 1.2f);
+        }
+    }
     else
     {
-        // Sample playhead (live) or, when idle / granular-idle, the knob.
+        // Granular (idle or live): a single marker, live playhead when
+        // sounding, the grainPos knob otherwise. (Every other mode returns
+        // earlier in paintDisplay() and never reaches this section; live
+        // granular is also already fully handled above.) Unchanged from
+        // before 1.0.19.
         const auto markerParam = mode == params::OscMode::granular
                                ? params::id::osc::grainPos : params::id::osc::sampleStart;
         const auto live = isLive();
@@ -675,23 +702,8 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
             ? telemetry->slotPosition[(size_t) slot].load (std::memory_order_relaxed)
             : value (params::id::oscSlot (slot, markerParam));
 
-        if (mode == params::OscMode::sample && ! live)
-        {
-            // Idle sample mode: this is the START point, not a moving
-            // playhead -- draw it full height like the loop markers so it
-            // reads clearly against the whole waveform, but keep it in
-            // textSecondary (dimmer than the accentMod loop start/end
-            // markers and the bright textPrimary live playhead) so it stays
-            // visually distinguishable from both rather than competing.
-            const auto sx = markerX (marker);
-            g.setColour (t.textSecondary.withAlpha (0.9f));
-            g.drawLine (sx, area.getY(), sx, area.getBottom(), 1.0f);
-        }
-        else
-        {
-            g.setColour (t.textPrimary);
-            g.drawLine (markerX (marker), area.getY(), markerX (marker), area.getBottom(), 1.2f);
-        }
+        g.setColour (t.textPrimary);
+        g.drawLine (markerX (marker), area.getY(), markerX (marker), area.getBottom(), 1.2f);
     }
 
     g.restoreState();   // end of the area-clipped drawing above

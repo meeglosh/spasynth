@@ -6,6 +6,8 @@
   waveform display, like the loop markers, instead of the short tick at the
   top it used before. It reads at a glance now; it stays a dimmer color
   than the loop start/end markers so the two are still easy to tell apart.
+  It also now stays visible while the sample is playing, with the moving
+  playhead drawn over it, instead of being replaced by the playhead.
 - Added a new XFADE control for looped samples. It crossfades the loop
   point so the seam stops clicking or jumping. The crossfade borrows audio
   from outside the loop itself (the run-up before the loop start, or the

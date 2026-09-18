@@ -14406,6 +14406,169 @@ namespace
         file.deleteFile();
     }
 
+    // 1.0.19 regression: before the fix, sample mode's START marker and the
+    // live playhead shared one line, so the START point vanished the moment
+    // a note sounded -- exactly when a user auditioning the start point most
+    // wants to see it. Confirms both are drawn simultaneously, at distinct
+    // positions, and distinguishable by brightness (dim START vs. bright
+    // playhead); also confirms a non-sample mode is unaffected (still a
+    // single marker either way).
+    static void sampleStartMarkerVisibleDuringPlaybackTest()
+    {
+        std::cout << "sampleStartMarkerVisibleDuringPlaybackTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto file = writeRampSine (4.0, sampleRate);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads for live-marker test");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::sampleStart), 0.05f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+
+        spa::ui::WaveDisplay* wave = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (wave == nullptr)
+                wave = dynamic_cast<spa::ui::WaveDisplay*> (&c);
+            for (auto* child : c.getChildren())
+                if (wave == nullptr)
+                    find (*child);
+        };
+        find (*editor);
+        expect (wave != nullptr, "WaveDisplay found for live-marker test");
+        if (wave == nullptr)
+        {
+            file.deleteFile();
+            return;
+        }
+
+        // Sustain a note well away from a cold start so the live playhead
+        // (driven by the real SamplePlayer position) sits far from
+        // sampleStart -- the two markers must read at clearly different x.
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        renderBlocks (proc, buffer, midi, 200);   // ~2.13s of a 4s file
+
+        auto& tel = proc.getTelemetry();
+        expect (tel.activeVoices.load() > 0, "sanity: a voice is active during the live-marker check");
+        const auto playheadNorm = tel.slotPosition[0].load();
+        expect (playheadNorm > 0.3f, "sanity: playhead has advanced well past sampleStart ("
+                                     + juce::String (playheadNorm) + ")");
+
+        const auto area = wave->waveArea();
+        const auto startCol = juce::roundToInt (wave->normToX (0.05f, area));
+        const auto playCol = juce::roundToInt (wave->normToX (playheadNorm, area));
+        expect (std::abs (playCol - startCol) > 6,
+                "sanity: start and playhead columns are clearly separated");
+
+        juce::Image image (juce::Image::ARGB, juce::jmax (1, wave->getWidth()),
+                           juce::jmax (1, wave->getHeight()), true);
+        juce::Graphics g (image);
+        wave->paintEntireComponent (g, false);
+
+        const auto bg = image.getPixelAt (2, 2);
+        const auto topY = juce::roundToInt (area.getY()) + 1;
+        const auto bottomY = juce::roundToInt (area.getBottom()) - 2;
+
+        // Brightest pixel found near a column (small horizontal search
+        // window, matching the tolerance used elsewhere in this file) --
+        // green channel as a stand-in for perceived brightness, since both
+        // marker colours are near-neutral greys.
+        const auto brightestNear = [&] (int col, int y)
+        {
+            juce::uint8 best = 0;
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                const auto x = col + dx;
+                if (x < 0 || x >= image.getWidth() || y < 0 || y >= image.getHeight())
+                    continue;
+                best = juce::jmax (best, image.getPixelAt (x, y).getGreen());
+            }
+            return best;
+        };
+
+        const auto startBrightTop = brightestNear (startCol, topY);
+        const auto startBrightBottom = brightestNear (startCol, bottomY);
+        const auto playBrightTop = brightestNear (playCol, topY);
+        const auto playBrightBottom = brightestNear (playCol, bottomY);
+
+        expect (startBrightTop != bg.getGreen() || startBrightBottom != bg.getGreen(),
+                "START marker is still drawn while the sample plays");
+        expect (playBrightTop != bg.getGreen() || playBrightBottom != bg.getGreen(),
+                "live playhead is drawn while the sample plays");
+
+        // The playhead (textPrimary, alpha 1.0) must read brighter than the
+        // dimmer START point (textSecondary, alpha 0.9) at the same rows.
+        expect (playBrightTop > startBrightTop || playBrightBottom > startBrightBottom,
+                "playhead reads brighter than the START marker (textPrimary vs. textSecondary)");
+
+        // Non-sample-mode path unaffected: WaveDisplay::paintDisplay()
+        // returns early for wavetable/analog/FM/noise/pluck (their own
+        // marker/preview logic lives well above the block this fix touches),
+        // so the only mode that still reaches the untouched `else` branch is
+        // granular while idle (grainPos knob, single marker, exactly as
+        // before 1.0.19). Release the note first so the slot goes idle.
+        midi.clear();
+        proc.panic();   // immediate all-notes-off, no tail-off to wait out
+        renderBlocks (proc, buffer, midi, 4);
+        expect (proc.getTelemetry().activeVoices.load() == 0,
+                "sanity: voice released before the granular-idle check");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::granular);
+        setParam (proc, id::oscSlot (0, id::osc::grainPos), 0.85f);
+        for (int i = 0; i < 5; ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (25);
+
+        // Recompute geometry: the wave area can reflow between modes (loop
+        // controls etc. differ), so re-derive both columns rather than
+        // reusing the sample-mode ones.
+        const auto area2 = wave->waveArea();
+        const auto grainCol2 = juce::roundToInt (wave->normToX (0.85f, area2));
+        const auto startCol2 = juce::roundToInt (wave->normToX (0.05f, area2));
+        const auto bottomY2 = juce::roundToInt (area2.getBottom()) - 2;
+        expect (std::abs (grainCol2 - startCol2) > 6,
+                "sanity: grainPos and the old sample-start columns are clearly separated");
+
+        juce::Image image2 (juce::Image::ARGB, juce::jmax (1, wave->getWidth()),
+                            juce::jmax (1, wave->getHeight()), true);
+        juce::Graphics g2 (image2);
+        wave->paintEntireComponent (g2, false);
+        const auto bg2 = image2.getPixelAt (2, 2);
+        const auto brightestNear2 = [&] (int col, int y)
+        {
+            juce::uint8 best = 0;
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                const auto x = col + dx;
+                if (x < 0 || x >= image2.getWidth() || y < 0 || y >= image2.getHeight())
+                    continue;
+                best = juce::jmax (best, image2.getPixelAt (x, y).getGreen());
+            }
+            return best;
+        };
+        const auto grainBright2 = brightestNear2 (grainCol2, bottomY2);
+        const auto staleStartBright2 = brightestNear2 (startCol2, bottomY2);
+        expect (grainBright2 != bg2.getGreen(),
+                "granular-idle: the single pre-1.0.19 marker is still drawn at grainPos");
+        expect (staleStartBright2 == bg2.getGreen(),
+                "granular-idle: nothing drawn at the unrelated sample-start column");
+
+        file.deleteFile();
+    }
+
     // Loop crossfade (XFADE) visualization geometry, via the
     // getXfadeRamps() accessor -- asserted directly rather than by
     // reading pixels, and computed through the same engine call paint()
@@ -15852,6 +16015,7 @@ int main (int argc, char* argv[])
     RUN (sampleStartMarkerFullHeightTest);
     RUN (sampleLoopXfadeVisualizationTest);
     RUN (matrixAssignTwoButtonTest);
+    RUN (sampleStartMarkerVisibleDuringPlaybackTest);
 
    #undef RUN
 

@@ -12132,6 +12132,279 @@ namespace
         editor->removeFromDesktop();
     }
 
+    // Detects, at compile time, whether a panel type exposes the
+    // isPoweredOnForTest() accessor used below -- lets moduleHeaderPowerColourTest
+    // assert (without any runtime access to private members) that panels
+    // with NO on/off toggle (EnvPanel, LFOPanel) were never wired into the
+    // power-colour rule, matching the product owner's call that always-live
+    // modules (mod matrix, envelopes, LFOs) keep the accent unconditionally.
+    template <typename T, typename = void>
+    struct HasPoweredOnAccessor : std::false_type {};
+    template <typename T>
+    struct HasPoweredOnAccessor<T, std::void_t<decltype (std::declval<const T&>().isPoweredOnForTest())>>
+        : std::true_type {};
+
+    // Farthest (smallest) Manhattan RGB distance from `target` found anywhere
+    // in `region` of `image` -- used to prove a header title was actually
+    // PAINTED in a given token colour, not just that some accessor reports
+    // the right boolean. A small result means some pixel is (near) an exact
+    // match; a large one means the colour never appears in that region.
+    static int closestColourDistance (const juce::Image& image, juce::Rectangle<int> region,
+                               juce::Colour target)
+    {
+        int best = 4 * 255;
+        for (int y = region.getY(); y < region.getBottom(); ++y)
+        {
+            for (int x = region.getX(); x < region.getRight(); ++x)
+            {
+                const auto p = image.getPixelAt (x, y);
+                const int d = std::abs ((int) p.getRed()   - (int) target.getRed())
+                            + std::abs ((int) p.getGreen() - (int) target.getGreen())
+                            + std::abs ((int) p.getBlue()  - (int) target.getBlue());
+                best = juce::jmin (best, d);
+            }
+        }
+        return best;
+    }
+
+    // v1.0.17: module headers now show at a glance whether the module is
+    // powered on -- muted (the same token as the "LOCKS" caption,
+    // t.textSecondary) when off, the user's accent colour when on. Renders
+    // each panel's real header row and confirms the ACTUAL painted pixels
+    // match the expected token, off and on, for one panel of each kind that
+    // has a toggle (oscillator, filter, chaos, arp, FX) -- and confirms, at
+    // compile time, that the two toggle-less panel kinds (envelope, LFO)
+    // were never wired into the rule at all.
+    static void moduleHeaderPowerColourTest()
+    {
+        std::cout << "moduleHeaderPowerColourTest\n";
+        namespace id = spa::params::id;
+
+        static_assert (HasPoweredOnAccessor<spa::ui::OscStrip>::value, "OscStrip tracks power state");
+        static_assert (HasPoweredOnAccessor<spa::ui::FilterPanel>::value, "FilterPanel tracks power state");
+        static_assert (HasPoweredOnAccessor<spa::ui::ChaosPanel>::value, "ChaosPanel tracks power state");
+        static_assert (HasPoweredOnAccessor<spa::ui::ArpPanel>::value, "ArpPanel tracks power state");
+        static_assert (HasPoweredOnAccessor<spa::ui::FXPanel>::value, "FXPanel tracks power state");
+        static_assert (! HasPoweredOnAccessor<spa::ui::EnvPanel>::value,
+                       "EnvPanel (no toggle) must never gain power-colour tracking");
+        static_assert (! HasPoweredOnAccessor<spa::ui::LFOPanel>::value,
+                       "LFOPanel (no toggle) must never gain power-colour tracking");
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        spa::ui::OscStrip* osc = nullptr;
+        spa::ui::FilterPanel* filterPanel = nullptr;
+        spa::ui::ChaosPanel* chaosPanel = nullptr;
+        spa::ui::ArpPanel* arpPanel = nullptr;
+        spa::ui::FXPanel* fxPanel = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (osc == nullptr) osc = dynamic_cast<spa::ui::OscStrip*> (&c);
+            if (filterPanel == nullptr) filterPanel = dynamic_cast<spa::ui::FilterPanel*> (&c);
+            if (chaosPanel == nullptr) chaosPanel = dynamic_cast<spa::ui::ChaosPanel*> (&c);
+            if (arpPanel == nullptr) arpPanel = dynamic_cast<spa::ui::ArpPanel*> (&c);
+            if (fxPanel == nullptr) fxPanel = dynamic_cast<spa::ui::FXPanel*> (&c);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+
+        expect (osc != nullptr && filterPanel != nullptr && chaosPanel != nullptr
+                    && arpPanel != nullptr && fxPanel != nullptr,
+                "moduleHeaderPowerColourTest: one panel of each toggle-bearing kind found");
+        if (osc == nullptr || filterPanel == nullptr || chaosPanel == nullptr
+            || arpPanel == nullptr || fxPanel == nullptr)
+            return;
+
+        const auto& t = spa::ui::currentTheme();
+
+        // Renders one panel's real header and reports how close the closest
+        // pixel in the title's left half (not the header-row's own controls,
+        // e.g. ChaosPanel's SYNC toggle) comes to each of the two candidate
+        // tokens.
+        auto measureHeader = [&] (juce::Component& c) -> std::pair<int, int>
+        {
+            juce::Image image (juce::Image::ARGB, juce::jmax (1, c.getWidth()),
+                               juce::jmax (1, c.getHeight()), true);
+            juce::Graphics g (image);
+            c.paintEntireComponent (g, false);
+            const auto headerRegion = juce::Rectangle<int> (0, 0, c.getWidth() / 2,
+                                                             spa::ui::metrics::sectionHeaderHeight);
+            return { closestColourDistance (image, headerRegion, t.accent),
+                     closestColourDistance (image, headerRegion, t.textSecondary) };
+        };
+
+        // One assertion per STATE across all five panels, not one per panel
+        // -- an aggregate assertion count is meaningless as a signal (see
+        // CLAUDE.md's agent-management lessons on per-item assertion loops).
+        // Scans every panel but reports only the first offender, so a
+        // failure still names which panel and what it measured.
+        const std::vector<std::pair<const char*, juce::Component*>> panels {
+            { "OscStrip", osc }, { "FilterPanel", filterPanel }, { "ChaosPanel", chaosPanel },
+            { "ArpPanel", arpPanel }, { "FXPanel", fxPanel },
+        };
+        auto checkAllHeaders = [&] (bool expectedOn, const char* stateLabel)
+        {
+            juce::String offender;
+            for (auto& [name, comp] : panels)
+            {
+                const auto [dAccent, dMuted] = measureHeader (*comp);
+                const bool good = expectedOn ? (dAccent <= 12 && dAccent < dMuted)
+                                              : (dMuted <= 12 && dMuted < dAccent);
+                if (! good)
+                {
+                    offender = juce::String (name) + " (dAccent=" + juce::String (dAccent)
+                             + ", dMuted=" + juce::String (dMuted) + ")";
+                    break;
+                }
+            }
+            expect (offender.isEmpty(),
+                    juce::String ("moduleHeaderPowerColourTest (") + stateLabel
+                        + "): every module header paints the expected token"
+                        + (offender.isEmpty() ? juce::String() : " -- offender: " + offender));
+        };
+
+        // Force every module explicitly OFF first -- registry defaults differ
+        // per module (OSC A and Filter 1 default ON so patches sound out of
+        // the box; Chaos defaults ON; Arp/Dist default OFF), so this can't
+        // assume a shared default, only that the header follows whatever the
+        // param is set to.
+        setParam (proc, id::oscSlot (0, id::osc::enable), 0.0f);
+        setParam (proc, id::filter1Enable, 0.0f);
+        setParam (proc, id::chaos::enable, 0.0f);
+        setParam (proc, id::arp::enable, 0.0f);
+        setParam (proc, id::fx::distEnable, 0.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        checkAllHeaders (false, "OFF");
+
+        // Flip each module's own enable param on and confirm the header
+        // follows it to the accent colour.
+        setParam (proc, id::oscSlot (0, id::osc::enable), 1.0f);
+        setParam (proc, id::filter1Enable, 1.0f);
+        setParam (proc, id::chaos::enable, 1.0f);
+        setParam (proc, id::arp::enable, 1.0f);
+        setParam (proc, id::fx::distEnable, 1.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        checkAllHeaders (true, "ON");
+
+        // And back off again -- proves the header repaints live off the
+        // parameter rather than only painting the accent once at construction.
+        setParam (proc, id::oscSlot (0, id::osc::enable), 0.0f);
+        setParam (proc, id::filter1Enable, 0.0f);
+        setParam (proc, id::chaos::enable, 0.0f);
+        setParam (proc, id::arp::enable, 0.0f);
+        setParam (proc, id::fx::distEnable, 0.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        checkAllHeaders (false, "OFF again");
+    }
+
+    // The chaos sync feature (2026-09-17) shipped with overlapping controls
+    // and a label collision that no test caught -- the product owner found
+    // it by looking at a screenshot. This walks the panel's real top-level
+    // children in BOTH sync states and asserts every visible one has a
+    // positive size, sits fully inside the panel, and does not overlap any
+    // other visible one -- general enough to catch a future control being
+    // added to this panel without room for it.
+    static void chaosPanelLayoutTest()
+    {
+        std::cout << "chaosPanelLayoutTest\n";
+        namespace id = spa::params::id;
+
+        for (bool synced : { false, true })
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setParam (proc, id::chaos::syncToBpm, synced ? 1.0f : 0.0f);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+            spa::ui::ChaosPanel* chaosPanel = nullptr;
+            std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+            {
+                if (chaosPanel == nullptr)
+                    chaosPanel = dynamic_cast<spa::ui::ChaosPanel*> (&c);
+                for (auto* child : c.getChildren())
+                    if (chaosPanel == nullptr)
+                        find (*child);
+            };
+            find (*editor);
+
+            const juce::String tag = synced ? "synced" : "free-running";
+            expect (chaosPanel != nullptr, "chaosPanelLayoutTest (" + tag + "): ChaosPanel found");
+            if (chaosPanel == nullptr)
+                continue;
+
+            std::vector<std::pair<juce::String, juce::Rectangle<int>>> visible;
+            int idx = 0;
+            for (auto* child : chaosPanel->getChildren())
+            {
+                if (child->isVisible())
+                    visible.push_back ({ "child#" + juce::String (idx), child->getBounds() });
+                ++idx;
+            }
+
+            expect (visible.size() > 5,
+                    "chaosPanelLayoutTest (" + tag + "): panel has a realistic number of visible controls");
+
+            // One assertion per PROPERTY per sync state, not one per item/pair
+            // -- an aggregate assertion count is meaningless as a signal (see
+            // CLAUDE.md's agent-management lessons on per-item assertion
+            // loops). Each assertion still names the first offender found
+            // while scanning, so a failure stays diagnosable.
+            const auto panelBounds = chaosPanel->getLocalBounds();
+
+            juce::String sizeOffender;
+            for (auto& [name, bounds] : visible)
+            {
+                if (bounds.getWidth() <= 0 || bounds.getHeight() <= 0)
+                {
+                    sizeOffender = name + " " + bounds.toString();
+                    break;
+                }
+            }
+            expect (sizeOffender.isEmpty(),
+                    "chaosPanelLayoutTest (" + tag + "): every visible control has positive size"
+                        + (sizeOffender.isEmpty() ? juce::String() : " -- offender: " + sizeOffender));
+
+            juce::String containOffender;
+            for (auto& [name, bounds] : visible)
+            {
+                if (! panelBounds.contains (bounds))
+                {
+                    containOffender = name + " " + bounds.toString();
+                    break;
+                }
+            }
+            expect (containOffender.isEmpty(),
+                    "chaosPanelLayoutTest (" + tag + "): every visible control sits inside the panel"
+                        + (containOffender.isEmpty() ? juce::String() : " -- offender: " + containOffender
+                            + " vs panel " + panelBounds.toString()));
+
+            juce::String overlapOffender;
+            for (size_t i = 0; overlapOffender.isEmpty() && i < visible.size(); ++i)
+                for (size_t j = i + 1; j < visible.size(); ++j)
+                    if (visible[i].second.intersects (visible[j].second))
+                    {
+                        overlapOffender = visible[i].first + " " + visible[i].second.toString()
+                                        + " overlaps " + visible[j].first + " " + visible[j].second.toString();
+                        break;
+                    }
+            expect (overlapOffender.isEmpty(),
+                    "chaosPanelLayoutTest (" + tag + "): no two visible controls overlap"
+                        + (overlapOffender.isEmpty() ? juce::String() : " -- offender: " + overlapOffender));
+        }
+    }
+
     // v1.0.15: the preset drawer used to slide OVER the module grid, hiding
     // it; Mike wanted it to never overlap -- opening it now widens the
     // window by the drawer's column width (metrics::presetBrowserWidth),
@@ -13941,6 +14214,8 @@ int main (int argc, char* argv[])
     modAssignedIndicatorTest();
     fxTabEngagedBoldTest();
     waveDisplayZoomTest();
+    moduleHeaderPowerColourTest();
+    chaosPanelLayoutTest();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

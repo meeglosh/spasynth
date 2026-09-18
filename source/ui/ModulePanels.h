@@ -37,6 +37,10 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
 
+    // Exposed for moduleHeaderPowerColourTest -- same idea as ChaosPanel's
+    // isSyncEngagedForTest().
+    bool isPoweredOnForTest() const { return powerTracker.isEngaged ("on"); }
+
     // juce::FileDragAndDropTarget -- lets a customer drag a file straight
     // from Finder/Explorer/a DAW browser onto this strip instead of using
     // LOAD. Does not grab keyboard focus at any point (see the
@@ -108,6 +112,11 @@ private:
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
+    // Drives the header title colour (muted when off, accent when on) --
+    // same TabEngagementTracker idiom as ChaosPanel/FXTabs, repaints this
+    // component when the enable param changes.
+    TabEngagementTracker powerTracker;
+
     // True while an acceptable drag hovers this strip -- drives the paint()
     // highlight, cleared on exit/drop. Test-visible via isDragHighlighted().
     bool dragHighlight = false;
@@ -126,6 +135,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Exposed for moduleHeaderPowerColourTest.
+    bool isPoweredOnForTest() const { return powerTracker->isEngaged ("on"); }
+
 private:
     const int index;
     FilterDisplay display;
@@ -134,6 +146,7 @@ private:
     Knob keytrack, envAmount, mix;
     std::unique_ptr<Toggle> enable;
     std::unique_ptr<Choice> routing;     // filter 2 only
+    std::unique_ptr<TabEngagementTracker> powerTracker;
 };
 
 // One ADSR page: curve + four knobs.
@@ -179,6 +192,8 @@ public:
 
     // Exposed for chaosSyncTest -- same idea as DraggableTabs::isTabEngaged.
     bool isSyncEngagedForTest() const { return syncTracker.isEngaged ("sync"); }
+    // Exposed for moduleHeaderPowerColourTest.
+    bool isPoweredOnForTest() const { return powerTracker.isEngaged ("on"); }
 
 private:
     // Same idiom as OscStrip: the sync param gates which of rate/division is
@@ -208,6 +223,9 @@ private:
     // Repaints the header when sync toggles, so paint() can switch the
     // title between "Organic Chaos" and "Organized Chaos".
     TabEngagementTracker syncTracker;
+    // Drives the header title colour (muted when off, accent when on) --
+    // separate tracker from syncTracker since it watches a different param.
+    TabEngagementTracker powerTracker;
 
     struct Drift
     {
@@ -226,22 +244,35 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Exposed for moduleHeaderPowerColourTest.
+    bool isPoweredOnForTest() const { return powerTracker.isEngaged ("on"); }
+
 private:
     Toggle enable, latch;
     Choice mode, division, phrase, velMode;
     Knob octaves, gate, swing;
     Knob chance, stutter, jump, humanize;
+    TabEngagementTracker powerTracker;
 };
 
 // One FX tab: character scope on top, the section's registry controls below.
 class FXPanel : public juce::Component
 {
 public:
+    // enableParamIds: the section's on/off toggle param id(s) -- more than
+    // one for a tab covering two effects (TREM/VIB), engaged if ANY is on,
+    // same rule as TabEngagementTracker/fxTabEngagement in SPASynthEditor.
+    // Empty means this FX tab has no toggle of its own (none currently do,
+    // but the header colour rule only applies when one is supplied).
     FXPanel (juce::AudioProcessorValueTreeState&, FXDisplay::Kind,
-             params::Section, const juce::String& title);
+             params::Section, const juce::String& title,
+             const juce::StringArray& enableParamIds = {});
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // Exposed for moduleHeaderPowerColourTest.
+    bool isPoweredOnForTest() const { return powerTracker != nullptr && powerTracker->isEngaged ("on"); }
 
 private:
     juce::String panelTitle;
@@ -251,6 +282,10 @@ private:
     // Delay tab only: time vs. division dimming, mirroring the LFO rule.
     // Null for every other section.
     std::unique_ptr<DependentEnable> delayTimeEnable, delayDivisionEnable;
+
+    // Drives the header title colour (muted when off, accent when on); null
+    // when no enableParamIds were supplied.
+    std::unique_ptr<TabEngagementTracker> powerTracker;
 };
 
 } // namespace ui

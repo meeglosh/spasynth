@@ -38,7 +38,9 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     : processor (p), slot (slotIndex),
       display (p, slotIndex),
       enable (p.getAPVTS(), id::oscSlot (slotIndex, id::osc::enable), "ON"),
-      mode (p.getAPVTS(), id::oscSlot (slotIndex, id::osc::mode))
+      mode (p.getAPVTS(), id::oscSlot (slotIndex, id::osc::mode)),
+      powerTracker (p.getAPVTS(),
+                    { { "on", { id::oscSlot (slotIndex, id::osc::enable) } } }, *this)
 {
     // Clicking the header to open the sample-swap menu shouldn't steal focus
     // from the on-screen keyboard's QWERTY note input -- see Controls.h's
@@ -355,7 +357,7 @@ void OscStrip::paint (juce::Graphics& g)
     draw::sectionHeader (g, getLocalBounds(),
                          "Oscillator " + id::oscSlotLetter (slot),
                          swap ? juce::String() : contentName(),
-                         currentTheme().accent);
+                         draw::moduleHeaderColour (currentTheme(), powerTracker.isEngaged ("on")));
     if (swap)
         paintSampleSwapper (g);
 
@@ -636,6 +638,10 @@ FilterPanel::FilterPanel (SPASynthProcessor& p, int filterIndex)
                                        index == 1 ? id::filter1Enable : id::filter2Enable, "ON");
     addAndMakeVisible (*enable);
 
+    powerTracker = std::make_unique<TabEngagementTracker> (p.getAPVTS(),
+        std::vector<std::pair<juce::String, std::vector<juce::String>>> {
+            { "on", { index == 1 ? id::filter1Enable : id::filter2Enable } } }, *this);
+
     if (index == 2)
     {
         routing = std::make_unique<Choice> (p.getAPVTS(), id::filterRouting);
@@ -652,7 +658,8 @@ void FilterPanel::paint (juce::Graphics& g)
     // two recessed tiers, so the FILTER 1/2 band is title-only.
     draw::sectionHeader (g, getLocalBounds(),
                          index == 1 ? "Filter 1" : "Filter 2", {},
-                         currentTheme().accent, false);
+                         draw::moduleHeaderColour (currentTheme(), powerTracker->isEngaged ("on")),
+                         false);
 }
 
 void FilterPanel::resized()
@@ -777,7 +784,8 @@ ChaosPanel::ChaosPanel (SPASynthProcessor& p)
                  [] (float v) { return v < 0.5f; }, { &rate }),
       divisionEnable (p.getAPVTS(), id::chaos::syncToBpm,
                       [] (float v) { return v >= 0.5f; }, { &division }),
-      syncTracker (p.getAPVTS(), { { "sync", { id::chaos::syncToBpm } } }, *this)
+      syncTracker (p.getAPVTS(), { { "sync", { id::chaos::syncToBpm } } }, *this),
+      powerTracker (p.getAPVTS(), { { "on", { id::chaos::enable } } }, *this)
 {
     addAndMakeVisible (display);
     addAndMakeVisible (enable);
@@ -832,7 +840,7 @@ void ChaosPanel::paint (juce::Graphics& g)
     // pair in the header), never here.
     const auto isSynced = syncTracker.isEngaged ("sync");
     draw::sectionHeader (g, getLocalBounds(), isSynced ? "Organized Chaos" : "Organic Chaos", {},
-                         currentTheme().accentMod);
+                         draw::moduleHeaderColour (currentTheme(), powerTracker.isEngaged ("on")));
 }
 
 void ChaosPanel::handleAsyncUpdate()
@@ -906,7 +914,8 @@ ArpPanel::ArpPanel (juce::AudioProcessorValueTreeState& apvts)
       chance (apvts, id::arp::chance, "CHANCE", true),
       stutter (apvts, id::arp::stutter, "STUTTER", true),
       jump (apvts, id::arp::jump, "JUMP", true),
-      humanize (apvts, id::arp::humanize, "HUMAN", true)
+      humanize (apvts, id::arp::humanize, "HUMAN", true),
+      powerTracker (apvts, { { "on", { id::arp::enable } } }, *this)
 {
     addAndMakeVisible (enable);
     addAndMakeVisible (latch);
@@ -927,7 +936,7 @@ void ArpPanel::paint (juce::Graphics& g)
 {
     draw::panel (g, getLocalBounds().toFloat());
     draw::sectionHeader (g, getLocalBounds(), "Arpeggiator", {},
-                         currentTheme().accentMod);
+                         draw::moduleHeaderColour (currentTheme(), powerTracker.isEngaged ("on")));
 }
 
 void ArpPanel::resized()
@@ -968,7 +977,8 @@ void ArpPanel::resized()
 // =============================== FXPanel ===================================
 
 FXPanel::FXPanel (juce::AudioProcessorValueTreeState& apvts, FXDisplay::Kind kind,
-                  params::Section section, const juce::String& title)
+                  params::Section section, const juce::String& title,
+                  const juce::StringArray& enableParamIds)
     : panelTitle (title),
       display (apvts, kind),
       controls (apvts, section, title, {}, false)
@@ -988,6 +998,12 @@ FXPanel::FXPanel (juce::AudioProcessorValueTreeState& apvts, FXDisplay::Kind kin
             apvts, id::fx::delaySync, [] (float v) { return v >= 0.5f; },
             controls.findControlComponents (id::fx::delayDivision));
     }
+
+    if (! enableParamIds.isEmpty())
+        powerTracker = std::make_unique<TabEngagementTracker> (apvts,
+            std::vector<std::pair<juce::String, std::vector<juce::String>>> {
+                { "on", std::vector<juce::String> (enableParamIds.begin(), enableParamIds.end()) } },
+            *this);
 }
 
 void FXPanel::paint (juce::Graphics& g)
@@ -999,7 +1015,10 @@ void FXPanel::paint (juce::Graphics& g)
     // recessed tiers, so the DISTORTION/etc. band is title-only. The
     // embedded `controls` (SectionPanel, drawFrame=false) draws no header of
     // its own, so this stays the only header painted per FX tab.
-    draw::sectionHeader (g, getLocalBounds(), panelTitle, {}, currentTheme().accent, false);
+    draw::sectionHeader (g, getLocalBounds(), panelTitle, {},
+                         draw::moduleHeaderColour (currentTheme(),
+                             powerTracker == nullptr || powerTracker->isEngaged ("on")),
+                         false);
 }
 
 void FXPanel::resized()

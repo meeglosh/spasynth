@@ -35,6 +35,12 @@
   silent, even pushed all the way over, and RANDOMIZE ALL keeps it in the
   first half of its range so it stays musical on a random patch; drag it
   yourself for the rest.
+- Every module with its own on/off switch now shows its power state right in
+  its title: the name reads in a muted grey while the module is off and lights
+  up in your accent color the moment you turn it on. This covers all three
+  oscillators, both filters, Organic Chaos, the arpeggiator, and each FX tab.
+  The mod matrix, envelopes and LFOs are always live, so their titles are
+  unchanged.
 
 ## 1.0.16
 

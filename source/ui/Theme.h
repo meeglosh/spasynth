@@ -203,6 +203,20 @@ namespace draw
     // drawTabAreaBehindFrontButton's tab-strip recess). Was 0.42f; Mike
     // called both a little dark, lightened to 0.30f (2026-08-31).
     constexpr float shadowStartAlpha = 0.30f;
+
+    // Module header title colour, for any module with an on/off toggle: the
+    // muted white already used for the "LOCKS" caption above the randomizer
+    // lock buttons (ContentComponent::paint -- t.textSecondary) when the
+    // module is off, the user's accent colour when it's on. One rule in one
+    // place rather than a ternary repeated at every draw::sectionHeader call
+    // site (oscillator strips, filters, chaos, arp, FX panels). Modules with
+    // no toggle (mod matrix, envelopes, LFOs) keep calling sectionHeader with
+    // currentTheme().accent directly -- they're always live, so this helper
+    // doesn't apply to them.
+    inline juce::Colour moduleHeaderColour (const Theme& t, bool poweredOn)
+    {
+        return poweredOn ? t.accent : t.textSecondary;
+    }
 }
 
 } // namespace spa::ui

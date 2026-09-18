@@ -1404,19 +1404,25 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addAndMakeVisible (arpPanel);
 
     fxTabs.addTab ("DIST", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::distortion, params::Section::fxDist, "Distortion"), true);
+                   FXDisplay::Kind::distortion, params::Section::fxDist, "Distortion",
+                   juce::StringArray { params::id::fx::distEnable }), true);
     fxTabs.addTab ("CHORUS", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::chorus, params::Section::fxChorus, "Chorus"), true);
+                   FXDisplay::Kind::chorus, params::Section::fxChorus, "Chorus",
+                   juce::StringArray { params::id::fx::chorusEnable }), true);
     fxTabs.addTab ("DELAY", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::delay, params::Section::fxDelay, "Delay"), true);
+                   FXDisplay::Kind::delay, params::Section::fxDelay, "Delay",
+                   juce::StringArray { params::id::fx::delayEnable }), true);
     fxTabs.addTab ("REVERB", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb"), true);
+                   FXDisplay::Kind::reverb, params::Section::fxReverb, "Reverb",
+                   juce::StringArray { params::id::fx::reverbEnable }), true);
     fxTabs.addTab ("EQ", tabBg, new EqEditor (processor.getAPVTS(), processor.getTelemetry(),
                    [&proc = processor] { return proc.getSampleRate(); }), true);
     fxTabs.addTab ("MOD", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation"), true);
+                   FXDisplay::Kind::chorus, params::Section::fxMod, "Modulation",
+                   juce::StringArray { params::id::fx::modEnable }), true);
     fxTabs.addTab ("TREM/VIB", tabBg, new FXPanel (processor.getAPVTS(),
-                   FXDisplay::Kind::chorus, params::Section::fxTremVib, "Trem / Vib"), true);
+                   FXDisplay::Kind::chorus, params::Section::fxTremVib, "Trem / Vib",
+                   juce::StringArray { params::id::fx::tremEnable, params::id::fx::vibEnable }), true);
     fxTabs.addTab ("LIMIT", tabBg,
                    new LimiterPanel (processor.getAPVTS(), processor.getTelemetry()), true);
     fxTabs.addTab ("CONV", tabBg, new ConvolvePanel (processor), true);

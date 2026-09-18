@@ -1,6 +1,8 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../library/Library.h"
+#include <cmath>
 
 namespace spa::ui
 {
@@ -77,16 +79,149 @@ const Theme& currentTheme();
 void setAccentColors (juce::Colour audio, juce::Colour mod);
 void resetAccentColors();
 
-// Fixed "this parameter is assigned in the mod matrix" indicator colour.
+// "This parameter is assigned in the mod matrix" indicator colour.
 // This is patch information, not decoration -- unlike accent/accentMod
 // above, it is NOT part of the user's tintable accent system: the accent
-// picker, LINK, and setAccentColors()/resetAccentColors() must never read
-// or write it, and no library:: settings path stores it. Put in exactly
-// one place so the product owner can retune the shade by editing this one
-// line. Starting value: a soft violet, chosen to read clearly against the
-// charcoal faceplate while staying visibly distinct from both the teal
-// accent/accentMod pair and the blue ASSIGN-mode glow (Theme::assignGlow).
-inline juce::Colour modAssignedColour() { return juce::Colour (0xff9d84f0); }
+// picker, LINK, and setAccentColors()/resetAccentColors() must never write
+// it, and no library:: settings path stores it directly. But it DOES need
+// to always contrast with whatever accent(s) the user has chosen, so
+// (2026-09-18) it is now DERIVED from the current accent(s) rather than a
+// fixed constant -- recomputed fresh on every call (never cached) by
+// reading spa::ui::currentTheme() and library::getAccentsLinked() live, so
+// it tracks accent changes immediately with no stale state to invalidate.
+//
+// Derivation rule:
+//  - Accents LINKED (one colour): the complement of that accent's hue
+//    (+180 degrees). Simple opposite-on-the-wheel, maximal contrast against
+//    a single colour.
+//  - Accents UNLINKED (two colours): the hue that maximizes the MINIMUM
+//    angular distance to EITHER accent hue. Closed form: let h1, h2 be the
+//    two hues and d their minor-arc separation (0 <= d <= 180; the major
+//    arc is 360-d). The midpoint of the MAJOR arc sits 180-d/2 degrees from
+//    each of h1 and h2 along that arc -- strictly more than the minor arc's
+//    midpoint (d/2 from each) -- so it's the maximizing choice, computed
+//    below via a vector-sum bisector (circularMidpointDegrees) rather than
+//    a directional branch, so it's correct at every separation including
+//    d==0 and the d==180 (opposite-hues) degeneracy. The guaranteed
+//    distance 180-d/2 decreases as d grows, so its WORST CASE over every
+//    possible accent pair is at d's own maximum, d=180 (accents already
+//    exactly opposite): 180-90 = exactly 90 degrees to the nearer accent.
+//    At the other extreme, d==0 (identical hues), it reduces to the same
+//    +180 complement as the linked case, so the two rules agree in the
+//    limit.
+//  - Undefined hue (near-grey or near-black accent, where hue is numerically
+//    meaningless -- see hueIsDefined): falls back to the hue of the
+//    ORIGINAL fixed violet this feature shipped with (0xff9d84f0, ~254
+//    degrees), so a grey/near-black accent still yields the same familiar
+//    landmark colour rather than an arbitrary pick.
+//
+// Saturation/brightness are NOT carried over from the accent -- a raw
+// accent's S/B could be washed-out or near-black, which would defeat the
+// whole point of a guaranteed-contrasting indicator. Clamped instead to a
+// fixed, always-legible range against the charcoal faceplate
+// (background ~0xff181d20): S in [0.55, 0.75], B in [0.85, 0.95]. This
+// keeps the colour saturated and bright enough to read clearly next to a
+// muted accent (the default teal, ~45% saturation) or a vivid one, without
+// ever going pastel-washed-out (low S) or neon-clipped (B==1). The
+// midpoint of each range (S=0.65, B=0.90) is used directly -- there is no
+// per-accent input to blend toward, so a fixed legible point in the
+// documented range is simplest and fully deterministic.
+inline constexpr float kAssignedColourMinSat = 0.55f;
+inline constexpr float kAssignedColourMaxSat = 0.75f;
+inline constexpr float kAssignedColourMinBri = 0.85f;
+inline constexpr float kAssignedColourMaxBri = 0.95f;
+
+// Below this saturation/brightness, JUCE's Colour::getHue() returns a
+// meaningless value (0/red for pure greys) -- treat the hue as undefined
+// and use the fixed fallback instead of deriving nonsense. Threshold is
+// generously above float noise but well below anything a user would call
+// "tinted".
+inline constexpr float kHueUndefinedThreshold = 0.06f;
+
+inline bool hueIsDefined (juce::Colour c)
+{
+    return c.getSaturation() > kHueUndefinedThreshold
+        && c.getBrightness() > kHueUndefinedThreshold;
+}
+
+inline float wrapHueDegrees (float h)
+{
+    h = std::fmod (h, 360.0f);
+    return h < 0.0f ? h + 360.0f : h;
+}
+
+// Angular distance between two hues (degrees), always in [0,180].
+inline float hueDistanceDegrees (float a, float b)
+{
+    const auto d = std::abs (wrapHueDegrees (a) - wrapHueDegrees (b));
+    return d > 180.0f ? 360.0f - d : d;
+}
+
+// The original fixed violet's hue -- kept as the documented fallback for
+// an undefined accent hue (see modAssignedColour() above).
+inline float assignedColourFallbackHueDegrees()
+{
+    static const float hue = juce::Colour (0xff9d84f0).getHue() * 360.0f;
+    return hue;
+}
+
+// The hue that bisects h1/h2 along whichever arc is requested: `near` picks
+// the shorter arc's midpoint, false picks the midpoint of the longer arc
+// (180 degrees from the near one). Implemented as a vector-sum bisector
+// rather than a directional branch so it's correct (and revert-detectable)
+// at every separation, including the exact-opposite degeneracy where the
+// two hues' vectors cancel -- handled explicitly below.
+inline float circularMidpointDegrees (float h1Degrees, float h2Degrees, bool near)
+{
+    const auto r1 = juce::degreesToRadians (h1Degrees);
+    const auto r2 = juce::degreesToRadians (h2Degrees);
+    const auto sx = std::cos (r1) + std::cos (r2);
+    const auto sy = std::sin (r1) + std::sin (r2);
+    if (std::abs (sx) < 1.0e-5 && std::abs (sy) < 1.0e-5)
+    {
+        // h1 and h2 are exactly opposite (d==180): every hue on the wheel
+        // is equidistant along one perpendicular axis, so +/-90 from h1 is
+        // a deterministic, valid pick -- still exactly 90 degrees from
+        // both, matching the documented worst-case bound.
+        return wrapHueDegrees (h1Degrees + (near ? 90.0f : -90.0f));
+    }
+    auto angle = juce::radiansToDegrees ((float) std::atan2 (sy, sx));
+    if (! near)
+        angle += 180.0f;
+    return wrapHueDegrees (angle);
+}
+
+inline juce::Colour modAssignedColour()
+{
+    const auto& t = currentTheme();
+    const bool linked = library::getAccentsLinked();
+
+    const bool accentDefined = hueIsDefined (t.accent);
+    const bool modDefined = hueIsDefined (t.accentMod);
+
+    float hue;
+    if (linked)
+    {
+        hue = accentDefined ? wrapHueDegrees (t.accent.getHue() * 360.0f + 180.0f)
+                             : assignedColourFallbackHueDegrees();
+    }
+    else if (accentDefined && modDefined)
+    {
+        hue = circularMidpointDegrees (t.accent.getHue() * 360.0f,
+                                        t.accentMod.getHue() * 360.0f, false);
+    }
+    else if (accentDefined)
+        hue = wrapHueDegrees (t.accent.getHue() * 360.0f + 180.0f);
+    else if (modDefined)
+        hue = wrapHueDegrees (t.accentMod.getHue() * 360.0f + 180.0f);
+    else
+        hue = assignedColourFallbackHueDegrees();
+
+    return juce::Colour::fromHSV (hue / 360.0f,
+                                   (kAssignedColourMinSat + kAssignedColourMaxSat) * 0.5f,
+                                   (kAssignedColourMinBri + kAssignedColourMaxBri) * 0.5f,
+                                   1.0f);
+}
 
 namespace metrics
 {

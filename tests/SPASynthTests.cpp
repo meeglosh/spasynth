@@ -13928,19 +13928,230 @@ namespace
         expect (displayedHi <= 1.0f + 1.0e-6f,
                 "the reachable-range high edge clamps to the knob's actual maximum travel");
 
-        // The violet indicator is a fixed constant, entirely outside the
-        // accent system: running setAccentColors() -- the exact call the
-        // accent picker itself makes -- must not move it.
-        const auto violetBefore = spa::ui::modAssignedColour();
+        // As of 2026-09-18 the indicator is DERIVED from the user's accents
+        // (see Theme.h) rather than a fixed constant, so running
+        // setAccentColors() -- the exact call the accent picker itself
+        // makes -- MUST move it. Full derivation-maths coverage lives in
+        // derivedAssignedColourTest below; this just confirms the knob's
+        // live indicator tracks the same call path the accent picker uses.
+        const auto before = spa::ui::modAssignedColour();
         const auto savedAccent = spa::ui::currentTheme().accent;
         const auto savedAccentMod = spa::ui::currentTheme().accentMod;
         spa::ui::setAccentColors (juce::Colours::hotpink, juce::Colours::lime);
-        expect (spa::ui::modAssignedColour() == violetBefore,
-                "modAssignedColour() is unaffected by setAccentColors(), "
+        expect (spa::ui::modAssignedColour() != before,
+                "modAssignedColour() changes when setAccentColors() moves the accents, "
                 "the same code path the accent picker itself uses");
         spa::ui::setAccentColors (savedAccent, savedAccentMod);   // don't pollute the user's saved accents
 
         editor->removeFromDesktop();
+    }
+
+    // Full derivation-maths coverage for spa::ui::modAssignedColour() (see
+    // Theme.h for the closed-form proof this mirrors). Aggregates failures
+    // across each sweep into ONE assertion naming the offending input,
+    // following presetBrowserFocusGrabTest's pattern above.
+    static void derivedAssignedColourTest()
+    {
+        std::cout << "derivedAssignedColourTest\n";
+
+        // Save + restore both accents and the linked flag -- this test
+        // drives all three directly.
+        const auto savedAccent = spa::ui::currentTheme().accent;
+        const auto savedAccentMod = spa::ui::currentTheme().accentMod;
+        const auto savedLinked = spa::library::getAccentsLinked();
+        struct Restore
+        {
+            juce::Colour accent, accentMod;
+            bool linked;
+            ~Restore()
+            {
+                spa::library::setAccentsLinked (linked);
+                spa::ui::setAccentColors (accent, accentMod);
+            }
+        } restore { savedAccent, savedAccentMod, savedLinked };
+
+        // 1) Linked: derived hue is the complement (+180) of the one accent,
+        // within a named tolerance (should be exact modulo float rounding).
+        constexpr float kOppositeToleranceDeg = 0.5f;
+        {
+            spa::library::setAccentsLinked (true);
+            juce::StringArray offenders;
+            for (auto accentHex : { 0xff51d0bfu, 0xffa06cf0u, 0xffff2a24u, 0xff2244ffu })
+            {
+                const juce::Colour accent (accentHex);
+                spa::ui::setAccentColors (accent, accent);
+                const auto derivedHue = spa::ui::modAssignedColour().getHue() * 360.0f;
+                const auto expectedHue = spa::ui::wrapHueDegrees (accent.getHue() * 360.0f + 180.0f);
+                const auto err = spa::ui::hueDistanceDegrees (derivedHue, expectedHue);
+                if (err > kOppositeToleranceDeg)
+                    offenders.add (accent.toDisplayString (false) + " off by "
+                                   + juce::String (err) + " deg");
+            }
+            expect (offenders.isEmpty(),
+                    "linked-accent derived hue within " + juce::String (kOppositeToleranceDeg)
+                        + " deg of the complement for: " + offenders.joinIntoString ("; "));
+        }
+
+        // 2) Unlinked: derived hue's distance to the NEARER of the two
+        // accents must reach the true closed-form bound, 180 - d/2 (d = the
+        // accent pair's own minor-arc separation), which is minimized (its
+        // worst case over every possible pair) at exactly 90 degrees when
+        // the accents are already opposite. Sweep several separations.
+        constexpr float kBoundToleranceDeg = 0.5f;
+        {
+            spa::library::setAccentsLinked (false);
+            juce::StringArray offenders;
+            const std::vector<std::pair<float, float>> pairs = {
+                { 0.0f, 10.0f },     // nearly identical hues (small d)
+                { 0.0f, 90.0f },     // quarter-wheel apart
+                { 0.0f, 150.0f },    // large separation
+                { 0.0f, 180.0f },    // exactly opposite -- the worst case (bound == 90)
+                { 40.0f, 220.0f },   // opposite, offset from 0
+                { 260.0f, 10.0f },   // wraps across 0/360
+            };
+            for (auto [h1, h2] : pairs)
+            {
+                const auto c1 = juce::Colour::fromHSV (h1 / 360.0f, 0.65f, 0.7f, 1.0f);
+                const auto c2 = juce::Colour::fromHSV (h2 / 360.0f, 0.65f, 0.7f, 1.0f);
+                spa::ui::setAccentColors (c1, c2);
+                const auto derivedHue = spa::ui::modAssignedColour().getHue() * 360.0f;
+                const auto distTo1 = spa::ui::hueDistanceDegrees (derivedHue, h1);
+                const auto distTo2 = spa::ui::hueDistanceDegrees (derivedHue, h2);
+                const auto nearer = juce::jmin (distTo1, distTo2);
+
+                const auto d = spa::ui::hueDistanceDegrees (h1, h2);
+                const auto trueBound = 180.0f - d * 0.5f;
+
+                if (nearer < trueBound - kBoundToleranceDeg)
+                    offenders.add (juce::String (h1) + "/" + juce::String (h2)
+                                   + ": nearer=" + juce::String (nearer)
+                                   + " < bound=" + juce::String (trueBound));
+            }
+            expect (offenders.isEmpty(),
+                    "unlinked derived hue meets the true closed-form bound (180 - d/2) for: "
+                        + offenders.joinIntoString ("; "));
+
+            // The global worst case across ALL possible pairs (opposite
+            // accents, d==180) must itself clear 90 degrees minus tolerance
+            // -- pinned explicitly so a regression that weakens the general
+            // sweep's tolerance can't silently erode the headline guarantee.
+            spa::ui::setAccentColors (juce::Colour::fromHSV (0.0f, 0.65f, 0.7f, 1.0f),
+                                      juce::Colour::fromHSV (0.5f, 0.65f, 0.7f, 1.0f));
+            const auto worstHue = spa::ui::modAssignedColour().getHue() * 360.0f;
+            const auto worstNearer = juce::jmin (spa::ui::hueDistanceDegrees (worstHue, 0.0f),
+                                                 spa::ui::hueDistanceDegrees (worstHue, 180.0f));
+            expect (worstNearer >= 90.0f - kBoundToleranceDeg,
+                    "opposite-accent worst case still guarantees ~90 deg to the nearer accent, got "
+                        + juce::String (worstNearer));
+        }
+
+        // 3) Liveness: changing the accents changes the derived colour, and
+        // it must NOT still equal a stale prior value (no caching).
+        {
+            spa::library::setAccentsLinked (true);
+            spa::ui::setAccentColors (juce::Colour (0xff51d0bf), juce::Colour (0xff51d0bf));
+            const auto first = spa::ui::modAssignedColour();
+            spa::ui::setAccentColors (juce::Colour (0xffa06cf0), juce::Colour (0xffa06cf0));
+            const auto second = spa::ui::modAssignedColour();
+            spa::ui::setAccentColors (juce::Colour (0xff51d0bf), juce::Colour (0xff51d0bf));
+            const auto third = spa::ui::modAssignedColour();
+            expect (first != second,
+                    "derived colour changes when the accent changes (no caching)");
+            expect (third == first,
+                    "reverting the accent back reproduces the same derived colour "
+                    "(computed fresh, not stuck on an intermediate cached value)");
+        }
+
+        // 4) S/B clamp range holds across a spread of accents, including a
+        // desaturated grey and a very dark accent (both undefined-hue
+        // cases -- must land on the documented fallback hue). Bounds below
+        // are the literal documented range (Theme.h), NOT a read of the
+        // live kAssignedColour* constants -- checking against the live
+        // constants would make this test unable to catch a regression that
+        // moves those constants themselves.
+        {
+            constexpr float kDocMinSat = 0.55f, kDocMaxSat = 0.75f;
+            constexpr float kDocMinBri = 0.85f, kDocMaxBri = 0.95f;
+            juce::StringArray offenders;
+            const auto fallbackHue = spa::ui::assignedColourFallbackHueDegrees();
+
+            // expectFallback is a fixed, hand-picked classification (NOT a
+            // call into spa::ui::hueIsDefined()) so this loop stays able to
+            // catch a regression that breaks hueIsDefined() itself, rather
+            // than agreeing with whatever that function currently says.
+            struct Case { juce::Colour c; bool linked; juce::String label; bool expectFallback; };
+            const std::vector<Case> cases = {
+                { juce::Colour (0xff51d0bf), true,  "default teal, linked",         false },
+                { juce::Colour (0xffa06cf0), true,  "near-old-violet, linked",       false },
+                { juce::Colour (0xff808080), true,  "grey, linked (undefined hue)",  true  },
+                { juce::Colour (0xff050505), true,  "near-black, linked (undefined hue)", true },
+                { juce::Colour (0xffff2a24), false, "red/blue, unlinked",           false },
+            };
+            for (auto& c : cases)
+            {
+                spa::library::setAccentsLinked (c.linked);
+                spa::ui::setAccentColors (c.c, c.linked ? c.c : juce::Colour (0xff2244ff));
+                const auto derived = spa::ui::modAssignedColour();
+                const auto s = derived.getSaturation();
+                const auto b = derived.getBrightness();
+                if (s < kDocMinSat - 1.0e-3f
+                    || s > kDocMaxSat + 1.0e-3f
+                    || b < kDocMinBri - 1.0e-3f
+                    || b > kDocMaxBri + 1.0e-3f)
+                    offenders.add (c.label + ": S=" + juce::String (s) + " B=" + juce::String (b));
+
+                // The two undefined-hue cases must fall back to the documented
+                // fixed hue rather than deriving from a meaningless input hue.
+                if (c.expectFallback)
+                {
+                    const auto derivedHue = derived.getHue() * 360.0f;
+                    if (spa::ui::hueDistanceDegrees (derivedHue, fallbackHue) > kOppositeToleranceDeg)
+                        offenders.add (c.label + ": expected fallback hue " + juce::String (fallbackHue)
+                                       + ", got " + juce::String (derivedHue));
+                }
+            }
+            expect (offenders.isEmpty(),
+                    "derived S/B stays in [" + juce::String (kDocMinSat) + ","
+                        + juce::String (kDocMaxSat) + "] / ["
+                        + juce::String (kDocMinBri) + ","
+                        + juce::String (kDocMaxBri)
+                        + "] and undefined-hue inputs fall back correctly, offenders: "
+                        + offenders.joinIntoString ("; "));
+        }
+    }
+
+    // The header panic button was removed entirely (2026-09-18) -- walks the
+    // whole editor tree (pattern from presetBrowserFocusGrabTest above) and
+    // asserts no trace of it remains, by type or by its old tooltip text
+    // (componentID was never set on it, so the tooltip is the reliable
+    // fingerprint of a reverted removal).
+    static void panicButtonRemovedTest()
+    {
+        std::cout << "panicButtonRemovedTest\n";
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        int offenders = 0;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            auto* tooltipClient = dynamic_cast<juce::SettableTooltipClient*> (&c);
+            if (tooltipClient != nullptr
+                && tooltipClient->getTooltip().containsIgnoreCase ("Panic: stop all sound"))
+            {
+                ++offenders;
+                std::cout << "  FAIL   panic-button remnant: " << typeid (c).name() << "\n";
+            }
+            for (auto* child : c.getChildren())
+                walk (*child);
+        };
+        walk (*editor);
+
+        expect (offenders == 0,
+                juce::String (offenders) + " component(s) still carry the removed panic button's tooltip");
     }
 
     // Tester request: enabled FX tabs bold their label so the user can see at
@@ -14495,6 +14706,8 @@ int main (int argc, char* argv[])
     RUN (paintRegionRegressionTest);
     RUN (modVizKnobTest);
     RUN (modAssignedIndicatorTest);
+    RUN (derivedAssignedColourTest);
+    RUN (panicButtonRemovedTest);
     RUN (fxTabEngagedBoldTest);
     RUN (waveDisplayZoomTest);
     RUN (moduleHeaderPowerColourTest);

@@ -21,14 +21,17 @@
   everything-at-once wobble. The section renames itself to Organized Chaos
   while this is on. Depth, mix and the six per-target amounts still work
   exactly as before; only the rate is tempo-driven now.
-- Any knob wired into the mod matrix now shows it at a glance: it turns a
-  soft violet the moment a route targets it, whether or not a note is
-  playing and whether or not that route's depth is set to zero yet. A new
-  travel arc also shows how far the assigned routes can actually push or
-  pull the knob from where it sits right now, updating live as you drag a
-  depth slider. This is separate from your accent color choice and is not
-  affected by it, so it stays a clear, consistent signal no matter what
-  colors you have picked.
+- Any knob wired into the mod matrix now shows it at a glance: it changes
+  color the moment a route targets it, whether or not a note is playing and
+  whether or not that route's depth is set to zero yet. A new travel arc
+  also shows how far the assigned routes can actually push or pull the knob
+  from where it sits right now, updating live as you drag a depth slider.
+  This indicator color is chosen automatically from your own accent color(s)
+  so it always stands out clearly against them, and it updates immediately
+  if you change your accent colors in the picker.
+- Removed the panic button from the header. Every host already offers its
+  own way to stop stuck notes, and having a second one on our end was
+  redundant; incoming MIDI panic messages are unaffected.
 - Convolve now has a START knob for its impulse. Turning it up skips further
   into the loaded sound before the wet signal begins, so you can leave the
   direct hit and early reflections behind and keep only the long diffuse

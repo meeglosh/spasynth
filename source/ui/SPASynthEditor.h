@@ -164,14 +164,6 @@ private:
         void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     };
 
-    // Header panic button: an alert badge, muted red by default and bright red
-    // on hover, so it reads as "the emergency stop".
-    struct PanicButton : juce::Button
-    {
-        PanicButton() : juce::Button ("panic") {}
-        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
-    };
-
     // Per-instance cache backing getModAssignInfo() above: which mod-dest
     // parameters are assigned in the matrix, and the polarity-aware
     // reachable range their routes' combined depths imply. Recomputed
@@ -247,7 +239,6 @@ private:
     // QWERTY-mapped range is always the range visible on startup.
     int keyboardOctave = 4;
 
-    PanicButton panicButton;   // header top-right: stop all sound
     std::unique_ptr<juce::Component> tempoBar;   // standalone only (brand band)
 
     // Header.

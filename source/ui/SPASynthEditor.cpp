@@ -262,24 +262,6 @@ void ContentComponent::OctaveHighlight::paint (juce::Graphics& g)
     }
 }
 
-void ContentComponent::PanicButton::paintButton (juce::Graphics& g,
-                                                 bool highlighted, bool down)
-{
-    auto r = getLocalBounds().toFloat().reduced (2.0f);
-    const auto d = juce::jmin (r.getWidth(), r.getHeight());
-    const auto circle = r.withSizeKeepingCentre (d, d);
-
-    // Muted red at rest so it reads as the emergency stop; bright on hover/press.
-    const auto red = juce::Colour (0xffff4d40);
-    g.setColour ((highlighted || down) ? red : red.withAlpha (0.55f));
-
-    g.drawEllipse (circle, 1.4f);
-    const auto cx = circle.getCentreX();
-    g.drawLine (cx, circle.getY() + d * 0.26f, cx, circle.getY() + d * 0.56f, 1.8f);  // ! stem
-    const auto dot = d * 0.13f;
-    g.fillEllipse (cx - dot * 0.5f, circle.getY() + d * 0.64f, dot, dot);             // ! dot
-}
-
 namespace
 {
 // Standalone-only tempo bar: internal BPM (editable), tap tempo, and an
@@ -1137,11 +1119,6 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     octaveHighlight.baseNote = keyboardOctave * 12;
     octaveHighlight.setInterceptsMouseClicks (false, false);
     keyboard.addAndMakeVisible (octaveHighlight);
-
-    panicButton.setTooltip ("Panic: stop all sound and clear stuck notes");
-    panicButton.onClick = [this] { processor.panic(); };
-    panicButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
-    addAndMakeVisible (panicButton);
 
     // The standalone has no host tempo, so it gets a tempo bar (internal BPM /
     // tap / external MIDI clock). The plugin follows the host, so no bar.
@@ -2094,7 +2071,6 @@ void ContentComponent::resized()
     right.removeFromRight (4);
     masterSlider.setBounds (right.removeFromRight (40));
     right.removeFromRight (4);
-    panicButton.setBounds (right.removeFromRight (22).reduced (0, 5));   // by the meter
     accentButton.setBounds (right.removeFromRight (32).reduced (2, 6));
     // Glide: knob first (left), then the behavior dropdown (right).
     glideModeBox.setBounds (right.removeFromRight (66).reduced (0, 5));

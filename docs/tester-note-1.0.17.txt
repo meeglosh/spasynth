@@ -1,29 +1,39 @@
 SPASynth 1.0.17 - what's new since 1.0.16
 
-Working with the mod matrix
-- Knobs that are wired into the mod matrix now show it. They turn violet the moment a route points at them, whether or not anything is playing and even before you turn the depth up, and a faint arc shows how far that knob can travel. Drag a matrix depth slider and the arc follows you.
-- Click the middle of a violet knob and every matrix row feeding it lights up in the same violet, scrolling the first one into view. The marking stays until you click elsewhere or press Esc.
-- A new route now arrives with its depth already at half, so connecting a source to a destination does something straight away instead of staying silent. Routes you have already set, including ones you deliberately zeroed, are never changed, and loading a preset never alters the depths it was saved with.
-- ASSIGN switches itself back off once a route is complete, so a quick connection takes one click. Double click it to lock it on, the way caps lock works, and a small padlock shows when it is locked.
+Most of this round came straight from your feedback. Thank you, keep it coming.
+
+Seeing what's wired up
+- Any knob wired into the mod matrix now shows it at a glance. It changes colour the moment a route targets it, whether or not a note is playing and whether or not the depth is still at zero, and a travel arc shows how far that knob can actually be pushed or pulled from where it sits. Drag a matrix depth slider and the arc follows you.
+- That indicator colour is picked automatically to contrast with your own accent colours, so it stands out whatever you have chosen, and it changes immediately if you change your accents. If you set up custom colours, expect assigned knobs to look different than they did in the last build. That is deliberate.
+- Click the centre of a wired knob and every matrix row feeding it lights up in that same colour, scrolling the first into view. It is a plain click, not a drag, so it never gets in the way of turning the knob. The marking stays while you work and clears when you click elsewhere or press Esc.
+- A new route now arrives with its depth already at half, so connecting a source to a destination does something straight away. Routes you have already set, including ones you deliberately zeroed, are never touched, and loading a preset never alters the depths it was saved with.
+
+ASSIGN mode
+- You can switch tabs while ASSIGN is on. Previously the overlay swallowed tab clicks, so you could only assign to whatever tab happened to be showing, which made a synth-wide assignment impossible. Filters, envelopes, LFOs and FX are all reachable mid-assignment now.
+- The glow comes in stages instead of lighting up everything at once. Turning ASSIGN on lights only the parameters you can pick. Once you pick one, it shows as selected and only the matching side of the matrix lights up next.
+- Assigning only half a row now clearly shows that row waiting for its other half, outlined with a ring marking the field still to fill. This was always working as intended, it just never said so, which is why it looked stuck.
+- ASSIGN switches itself off once a route is complete, so a quick connection takes one click. Double click it to lock it on, the way caps lock works, and a small padlock shows when locked.
+- A row aimed at Organic Chaos RATE dims while chaos SYNC is on, because SYNC replaces the free rate with a tempo division and modulating it does nothing until SYNC goes off. The row is untouched and works again the moment you switch SYNC off.
 
 Oscillators
-- Right-click an oscillator's title for Copy to Oscillator B/C and Swap with Oscillator B/C. The loaded sound or wavetable travels with the settings. It does not touch anything you have wired up in the matrix.
-- Drag audio straight onto an oscillator from the Finder, from Explorer, or from your DAW's browser. The oscillator lights up as you drag over it, and dropping onto one that is not already playing a file switches it to Sample for you. Convolve takes a dropped impulse the same way.
+- Right-click an oscillator's title for Copy to Oscillator B/C and Swap with Oscillator B/C. The loaded sound or wavetable travels with the settings. It does not touch anything you have wired in the matrix.
+- Drag audio straight onto an oscillator from the Finder, from Explorer, or from your DAW's browser. Dropping onto one that is not already playing a file switches it to Sample for you. Convolve takes a dropped impulse the same way.
 
 Chaos and effects
-- Organic Chaos can lock to your project tempo. Turn on SYNC in its header and the section becomes Organized Chaos: each kind of drift keeps its own speed, but those speeds become whole divisions of the beat, so pitch might wander once a bar while amplitude moves once a beat, and all of it lands on the grid.
-- Convolve gets a start position, so the impulse can begin partway into the file. Skipping the front of a reverb impulse drops the direct hit and leaves the diffuse tail, and since Convolve takes any library sound as an impulse you can also reach a later section of a long recording.
+- Organic Chaos can lock to your tempo. Switch on SYNC and each drifting parameter keeps its own pace, but those paces become musical divisions of the beat, so pitch might settle once a bar while amplitude resettles once a beat, all of it landing on the grid rather than becoming one stepped wobble. The section renames itself Organized Chaos while on.
+- Convolve has a START knob. Turning it up skips further into the loaded sound before the wet signal begins, so you can leave the direct hit and early reflections behind and keep only the long diffuse tail. It also lets you reach a later section of a long recording used as an impulse. It never goes silent even pushed all the way over, and RANDOMIZE ALL keeps it in the first half of its range.
 
 Reading the interface
-- A module's title now shows whether it is powered on. Enabled modules use your accent colour, disabled ones go a muted white, so a glance says what is live.
-- The LOCKS label above the randomizer locks now has an arrow pointing at the lock buttons.
+- Every module with an on/off switch shows its power state in its title: muted grey when off, your accent colour when on. Three oscillators, both filters, Organic Chaos, the arpeggiator and each FX tab. The matrix, envelopes and LFOs are always live so their titles do not change.
+- The LOCKS label has an arrow pointing at the lock buttons, and sits better against the window edge.
+- The panic button is gone from the header. Your host already has its own way to stop stuck notes. Incoming MIDI panic messages are unaffected.
 
 Worth trying specifically
-- Wire up a few routes and look at the panel with nothing playing. Every wired knob should be violet.
-- Click a violet knob and confirm it finds its row, including a knob fed by two rows at once.
-- Copy an oscillator with a sample loaded onto an empty slot, then swap two loaded slots.
-- Turn on chaos SYNC against a project at a fixed tempo and listen for the drift landing on the beat.
-- Open a preset you saved in 1.0.16 and confirm it sounds the same, especially if you had routes deliberately turned down to zero.
+- Wire up a few routes and look at the panel with nothing playing. Every wired knob should stand out.
+- Click a wired knob and confirm it finds its row, including a knob fed by two rows at once.
+- Turn ASSIGN on and switch tabs mid-assignment, which was impossible before.
+- Assign only a destination to an empty row and confirm the waiting state reads clearly rather than looking stuck.
+- Open a preset saved in an earlier build and confirm it sounds the same.
 
 Install notes
 - macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.

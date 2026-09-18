@@ -48,8 +48,8 @@
   The mod matrix, envelopes and LFOs are always live, so their titles are
   unchanged.
 - Clicking the centre of a knob that is already wired into the mod matrix
-  (the ones that turn violet) now jumps straight to its routes: every matrix
-  row that targets it lights up in the same violet, and the matrix scrolls
+  now jumps straight to its routes: every matrix row that targets it lights
+  up in that same indicator color, and the matrix scrolls
   so the first one is on screen right away. This is a plain click, not a
   drag, so it never gets in the way of turning the knob. The highlight stays
   put while you work on the row, and clears the moment you click anywhere
@@ -69,10 +69,10 @@
     source column or the destination column, whichever you just picked)
     lights up next.
   - Assigning only half of a matrix row (a destination with no source yet,
-    or vice versa) now clearly shows that row waiting for its other half,
-    with a label naming exactly what is still missing. Previously this
-    looked like ASSIGN mode had gotten stuck; it was always working as
-    intended, just silently.
+    or vice versa) now clearly shows that row waiting for its other half:
+    the row is outlined and a ring marks the exact field still to be filled.
+    Previously this looked like ASSIGN mode had gotten stuck; it was always
+    working as intended, just silently.
   - A matrix row aimed at Organic Chaos's RATE now dims while chaos SYNC is
     on, since SYNC replaces the free-running rate with a tempo division and
     modulating it does nothing until SYNC is switched off again. The row

@@ -1,0 +1,19 @@
+SPASynth 1.0.19 - what's new since 1.0.18
+
+A smaller round, built around sample looping and one more pass on the mod matrix.
+
+- In Sample mode, the start point marker now runs the full height of the waveform, like the loop markers, instead of the short tick at the top. It reads at a glance now. It stays a dimmer colour than the loop start/end markers so the two are still easy to tell apart.
+- New XFADE control for looped samples. It crossfades the loop point so the seam stops clicking or jumping. The crossfade borrows audio from outside the loop itself (the run-up before the loop start, or the tail after the loop end), so turning it up never changes the loop's length or timing; beat-locked loops stay exactly in step with your project. It works with SYNC on as well as free-running loops. It defaults to 0, so every preset and session you already have sounds exactly as it did before. If the loop points sit hard against the very start and end of the file, there is no audio outside the loop to borrow from, so the control has nothing to work with and dims.
+- The mod matrix's single ASSIGN button is now two buttons, SOURCE and DEST. Press SOURCE and only the mod sources light up; pick one, and only the matrix's source column lights up next. Press DEST and only the knobs light up, then only the destination column. It is one more click to build a full route, in exchange for there only ever being one kind of thing to click at a time.
+- We removed the waiting-state outline and ring around a half-filled matrix row that we added in 1.0.18. With SOURCE and DEST now separate, assigning just one half of a row is a normal, deliberate thing to do, not a stuck state, so that callout was flagging correct behaviour as unfinished. It is gone on purpose, in response to your feedback on 1.0.18, not a regression. A half-filled row now just reads as dimmed, the same quiet treatment we already use for a row whose destination is inactive.
+
+Worth trying specifically
+- Build a route using SOURCE and DEST separately and confirm a half-filled row reads as calm rather than broken.
+- Put XFADE on a sustained or ambient loop and confirm the seam smooths out while the loop stays in time.
+- Do the same with SYNC on and confirm the loop stays locked to the project tempo.
+- Open a preset saved in 1.0.18 and confirm it still sounds identical (XFADE defaults to 0).
+- Check the full-height start marker in Sample mode.
+
+Install notes
+- macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

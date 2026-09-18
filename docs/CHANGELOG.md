@@ -1,5 +1,43 @@
 # SPASynth changelog
 
+## 1.0.19
+
+- In Sample mode, the start point marker now runs the full height of the
+  waveform display, like the loop markers, instead of the short tick at the
+  top it used before. It reads at a glance now; it stays a dimmer color
+  than the loop start/end markers so the two are still easy to tell apart.
+- Added a new XFADE control for looped samples. It crossfades the loop
+  point so the seam stops clicking or jumping. The crossfade borrows audio
+  from outside the loop itself (the run-up before the loop start, or the
+  tail after the loop end), so turning it up never changes the loop's
+  length or timing; that keeps beat-locked loops exactly in step with your
+  project. It works on beat-locked (SYNC) loops as well as free-running
+  ones. It defaults to 0, so every existing preset and session sounds
+  exactly as it did before. If the loop points sit hard against the very
+  start and end of the file, there is no audio outside the loop to borrow,
+  so the control has nothing to work with and dims. The waveform display
+  draws the crossfade as two shaded ramps at the loop seam, one of which
+  sits outside the loop band, to show where the borrowed audio is coming
+  from.
+- The mod matrix's single ASSIGN button is now two buttons, SOURCE and
+  DEST. Press SOURCE and only the mod sources light up; pick one, and only
+  the matrix's source column lights up next. Press DEST and only the knobs
+  light up, then only the destination column. Building a complete route
+  takes one more click than before, and in exchange there is only ever one
+  kind of thing to click at any moment. Assign mode now finishes after the
+  single assignment you asked for, rather than staying on until both
+  halves of a row are filled.
+- A half-filled matrix row no longer calls attention to itself. In 1.0.18
+  we added an outline and a ring around a half-assigned row to show it was
+  waiting rather than stuck. With separate SOURCE and DEST buttons,
+  assigning one half on its own is a deliberate, normal thing to do, so
+  that callout was flagging intended behavior as unfinished; it is gone.
+  A row that is not yet complete simply reads as dimmed, the same quiet
+  treatment we already use for a row whose destination is inactive,
+  with nothing chasing you.
+
+
+
 ## 1.0.18
 
 - The color that marks a knob as wired into the mod matrix is now chosen

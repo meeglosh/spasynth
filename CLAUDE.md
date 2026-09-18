@@ -1205,11 +1205,22 @@ uses no em dashes; sound count is 11,474.
 ## The verification ritual (do this for every change)
 
 1. `cmake --build build --target SPASynthTests` then run
-   `build/SPASynthTests_artefacts/SPASynthTests` → expect `ALL PASS` (176+
-   assertions). Note: this dir has no `Debug/` subdir since `build/` was
-   reconfigured without `CMAKE_BUILD_TYPE` (2026-08-04) — if you see a
-   `Debug/` copy, it's stale, delete it. Fix every new compiler warning — one
-   caught a real Filter-2 lock bug.
+   `build/SPASynthTests_artefacts/SPASynthTests` → expect `ALL PASS` (1532
+   assertions, ~5 min, 125 tests). Note: this dir has no `Debug/` subdir
+   since `build/` was reconfigured without `CMAKE_BUILD_TYPE` (2026-08-04) —
+   if you see a `Debug/` copy, it's stale, delete it. Fix every new compiler
+   warning — one caught a real Filter-2 lock bug. **The full suite is the
+   gate before a release build and for anything touching DSP or lifetime —
+   never substitute `--only` for it.** For iterating on a single change,
+   `--only <pattern>[,<pattern>...]` (case-insensitive substring match on
+   test name, comma-separated for a few at once) runs just the matching
+   tests in seconds and reports what it skipped; a pattern matching nothing
+   is an error (non-zero exit), not a silent no-op. `--list` prints every
+   test name. Tests are registered via `RUN(fn)` in `main()` — add new tests
+   the same way, in one line, so a missed registration can't happen; the
+   registration order IS the run order and must never be reordered (several
+   tests are order-sensitive: hermetic overrides, foreground gating, the
+   library leak guard).
    1b. **AddressSanitizer run, for any DSP or lifetime change and before
    every release build.** One-time configure (gitignored, no plugin copies
    so it can never shadow the installed release):

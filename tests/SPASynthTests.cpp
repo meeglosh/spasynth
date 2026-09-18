@@ -14362,131 +14362,197 @@ int main (int argc, char* argv[])
         && juce::String (std::getenv ("SPASYNTH_REAL_LIBRARY_TEST")) == "1")
         g_realLibraryTestOptIn = true;
 
-    settingsAreHermeticTest();
-    presetsRootIsHermeticTest();
-    renderSmokeTest();
-    multiSlotUnisonTest();
-    wavetableLoaderTest();
-    wavetableFactoryTest();
-    wavetableTableParamTest();
-    modMatrixMacroTest();
-    lfoModulationTest();
-    modVizTelemetryTest();
-    velocityRouteTest();
-    chaosMixBypassTest();
-    chaosMatrixSourceTest();
-    chaosTraceTest();
-    samplePlaybackTest();
-    oscStripFileDropTest();
-    samplePlayerWholeFileLoopTest();
-    tempoDetectionTest();
-    sampleSyncStretchTest();
-    sampleSyncLoopSnapTest();
-    sampleSyncHostTempoTest();
-    sampleSyncTransportLockTest();
-    timeSignatureParamTest();
-    sampleSyncUiTest();
-    granularTest();
-    quickSwapTest();
-    oscSlotCopySwapTest();
-    sfxFollowerTest();
-    fxDelayReverbTest();
-    convolveTailLengthTest();
-    convolveStartPositionTest();
-    reverbMixTest();
-    reverbStabilityTest();
-    plateReverbCharacterTest();
-    reverbMixPercentTest();
-    distCrushTest();
-    parametricEqTest();
-    eqBandTypesTest();
-    eqEditorTypeMenuTest();
-    voiceModeTest();
-    oversamplingTest();
-    panicTest();
-    bypassTailTest();
-    midiClockTest();
-    fxOrderTest();
-    fxEQDistortionTest();
-    fxToggleBlastTest();
-    randomizerTest();
-    randomizerProducesSoundTest();
-    randomizeLoudnessGuardTest();
-    randomizeNeverSilentTest();
-    voiceDeterminismTest();
-    randomizeArpFastRetriggerAttackTest();
-    editorIsOpaqueTest();
-    editorHitTestProbe();
-    midiLearnTest();
-    midiLearnEndToEndTest();
-    midiTelemetryTypesTest();
-    midiLearnBadgeFitsTest();
-    popupAnchoringTest();
-    arpeggiatorTest();
-    arpLatchOffTest();
-    arpStuckNoteTest();
-    arpZeroSampleBlockTest();
-    arpNonFinitePpqTest();
-    arpNegativePpqTest();
-    chaosSyncTest();
-    arpChanceTest();
-    extraEnginesTest();
-    analogSubOscTest();
-    analogSubKnobTest();
-    pluckLazyAllocTest();
-    filterExtrasTest();
-    dualFilterTest();
-    filter1EnableTest();
-    glideTest();
-    libraryScanTest();
-    libraryDiscoveryTest();
-    libraryDiscoveryLayoutsTest();
-    looseWavLibraryTest();
-    libraryRootPersistsWhenEmptyTest();
-    libraryDiscoveryLayoutsEndToEndTest();
-    libraryAutoRefreshTest();
-    libraryWatchDiscoveryThrottleTest();
-    emptyLibraryPromptTest();
-    presetRoundTripTest();
-    presetBankTest();
-    malformedPresetTest();
-    presetResetToDefaultTest();
-    presetLoadNoiseBurstTest();
-    factoryPresetGenerationTest();
-    factoryPresetRootPackTest();
-    factoryRecipeVarietyTest();
-    factoryPresetsAudibleTest();
-    factoryPresetsRealLibraryAudibleTest();
-    presetBrowserFilterTest();
-    licenseLineTest();
-    dependentEnableTest();
-    presetBrowserFocusGrabTest();
-    presetBrowserKeyboardFocusTest();
-    keyboardOctaveShiftTest();
-    voicePanelCallOutFocusTest();
-    voicePanelEditorCloseTest();
-    voicePanelDismissedThenClosedTest();
-    modAssignModeTest();
-    modAssignFocusTest();
-    assignGlowShapeTest();
-    modRouteRevealTest();
-    assignModeTest();
-    modRouteAutoDepthTest();
-    tabLayoutInvarianceTest();
-    lockCaptionArrowLayoutTest();
-    editorFitsScreenTest();
-    presetBrowserWidensWindowTest();
-    presetBrowserNativeShiftTest();
-    presetBrowserOverlayFallbackTest();
-    fxPanelLabelClippingTest();
-    chaosDisplayPaintTest();
-    paintRegionRegressionTest();
-    modVizKnobTest();
-    modAssignedIndicatorTest();
-    fxTabEngagedBoldTest();
-    waveDisplayZoomTest();
-    moduleHeaderPowerColourTest();
-    chaosPanelLayoutTest();
+    // Name-filterable test registry. RUN(fn) both names and calls a test in
+    // one line -- exactly as error-prone (or not) as the plain call it
+    // replaces, since the name is derived from the token itself, not typed
+    // separately. Building the registry (rather than calling tests directly)
+    // lets --list/--only operate on the same sequence without altering the
+    // default run order, which several tests depend on (hermetic overrides,
+    // foreground gating, the library leak guard all assume this exact order).
+    using TestFn = void (*) ();
+    struct TestEntry { const char* name; TestFn fn; };
+    std::vector<TestEntry> testRegistry;
+   #define RUN(fn) testRegistry.push_back ({ #fn, fn })
+
+    RUN (settingsAreHermeticTest);
+    RUN (presetsRootIsHermeticTest);
+    RUN (renderSmokeTest);
+    RUN (multiSlotUnisonTest);
+    RUN (wavetableLoaderTest);
+    RUN (wavetableFactoryTest);
+    RUN (wavetableTableParamTest);
+    RUN (modMatrixMacroTest);
+    RUN (lfoModulationTest);
+    RUN (modVizTelemetryTest);
+    RUN (velocityRouteTest);
+    RUN (chaosMixBypassTest);
+    RUN (chaosMatrixSourceTest);
+    RUN (chaosTraceTest);
+    RUN (samplePlaybackTest);
+    RUN (oscStripFileDropTest);
+    RUN (samplePlayerWholeFileLoopTest);
+    RUN (tempoDetectionTest);
+    RUN (sampleSyncStretchTest);
+    RUN (sampleSyncLoopSnapTest);
+    RUN (sampleSyncHostTempoTest);
+    RUN (sampleSyncTransportLockTest);
+    RUN (timeSignatureParamTest);
+    RUN (sampleSyncUiTest);
+    RUN (granularTest);
+    RUN (quickSwapTest);
+    RUN (oscSlotCopySwapTest);
+    RUN (sfxFollowerTest);
+    RUN (fxDelayReverbTest);
+    RUN (convolveTailLengthTest);
+    RUN (convolveStartPositionTest);
+    RUN (reverbMixTest);
+    RUN (reverbStabilityTest);
+    RUN (plateReverbCharacterTest);
+    RUN (reverbMixPercentTest);
+    RUN (distCrushTest);
+    RUN (parametricEqTest);
+    RUN (eqBandTypesTest);
+    RUN (eqEditorTypeMenuTest);
+    RUN (voiceModeTest);
+    RUN (oversamplingTest);
+    RUN (panicTest);
+    RUN (bypassTailTest);
+    RUN (midiClockTest);
+    RUN (fxOrderTest);
+    RUN (fxEQDistortionTest);
+    RUN (fxToggleBlastTest);
+    RUN (randomizerTest);
+    RUN (randomizerProducesSoundTest);
+    RUN (randomizeLoudnessGuardTest);
+    RUN (randomizeNeverSilentTest);
+    RUN (voiceDeterminismTest);
+    RUN (randomizeArpFastRetriggerAttackTest);
+    RUN (editorIsOpaqueTest);
+    RUN (editorHitTestProbe);
+    RUN (midiLearnTest);
+    RUN (midiLearnEndToEndTest);
+    RUN (midiTelemetryTypesTest);
+    RUN (midiLearnBadgeFitsTest);
+    RUN (popupAnchoringTest);
+    RUN (arpeggiatorTest);
+    RUN (arpLatchOffTest);
+    RUN (arpStuckNoteTest);
+    RUN (arpZeroSampleBlockTest);
+    RUN (arpNonFinitePpqTest);
+    RUN (arpNegativePpqTest);
+    RUN (chaosSyncTest);
+    RUN (arpChanceTest);
+    RUN (extraEnginesTest);
+    RUN (analogSubOscTest);
+    RUN (analogSubKnobTest);
+    RUN (pluckLazyAllocTest);
+    RUN (filterExtrasTest);
+    RUN (dualFilterTest);
+    RUN (filter1EnableTest);
+    RUN (glideTest);
+    RUN (libraryScanTest);
+    RUN (libraryDiscoveryTest);
+    RUN (libraryDiscoveryLayoutsTest);
+    RUN (looseWavLibraryTest);
+    RUN (libraryRootPersistsWhenEmptyTest);
+    RUN (libraryDiscoveryLayoutsEndToEndTest);
+    RUN (libraryAutoRefreshTest);
+    RUN (libraryWatchDiscoveryThrottleTest);
+    RUN (emptyLibraryPromptTest);
+    RUN (presetRoundTripTest);
+    RUN (presetBankTest);
+    RUN (malformedPresetTest);
+    RUN (presetResetToDefaultTest);
+    RUN (presetLoadNoiseBurstTest);
+    RUN (factoryPresetGenerationTest);
+    RUN (factoryPresetRootPackTest);
+    RUN (factoryRecipeVarietyTest);
+    RUN (factoryPresetsAudibleTest);
+    RUN (factoryPresetsRealLibraryAudibleTest);
+    RUN (presetBrowserFilterTest);
+    RUN (licenseLineTest);
+    RUN (dependentEnableTest);
+    RUN (presetBrowserFocusGrabTest);
+    RUN (presetBrowserKeyboardFocusTest);
+    RUN (keyboardOctaveShiftTest);
+    RUN (voicePanelCallOutFocusTest);
+    RUN (voicePanelEditorCloseTest);
+    RUN (voicePanelDismissedThenClosedTest);
+    RUN (modAssignModeTest);
+    RUN (modAssignFocusTest);
+    RUN (assignGlowShapeTest);
+    RUN (modRouteRevealTest);
+    RUN (assignModeTest);
+    RUN (modRouteAutoDepthTest);
+    RUN (tabLayoutInvarianceTest);
+    RUN (lockCaptionArrowLayoutTest);
+    RUN (editorFitsScreenTest);
+    RUN (presetBrowserWidensWindowTest);
+    RUN (presetBrowserNativeShiftTest);
+    RUN (presetBrowserOverlayFallbackTest);
+    RUN (fxPanelLabelClippingTest);
+    RUN (chaosDisplayPaintTest);
+    RUN (paintRegionRegressionTest);
+    RUN (modVizKnobTest);
+    RUN (modAssignedIndicatorTest);
+    RUN (fxTabEngagedBoldTest);
+    RUN (waveDisplayZoomTest);
+    RUN (moduleHeaderPowerColourTest);
+    RUN (chaosPanelLayoutTest);
+
+   #undef RUN
+
+    if (argc >= 2 && juce::String (argv[1]) == "--list")
+    {
+        for (const auto& entry : testRegistry)
+            std::cout << entry.name << "\n";
+        return 0;
+    }
+
+    std::vector<TestEntry> toRun = testRegistry;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        if (juce::String (argv[i]) != "--only" || i + 1 >= argc)
+            continue;
+
+        const auto patterns = juce::StringArray::fromTokens (juce::String (argv[i + 1]), ",", "");
+        toRun.clear();
+        std::set<const char*> selected; // preserve testRegistry order, avoid dup runs
+
+        for (const auto& patternRaw : patterns)
+        {
+            const auto pattern = patternRaw.trim().toLowerCase();
+            if (pattern.isEmpty())
+                continue;
+
+            int matchCount = 0;
+            for (const auto& entry : testRegistry)
+            {
+                if (juce::String (entry.name).toLowerCase().contains (pattern))
+                {
+                    if (selected.insert (entry.name).second)
+                        toRun.push_back (entry);
+                    ++matchCount;
+                }
+            }
+
+            if (matchCount == 0)
+            {
+                std::cout << "ERROR: --only pattern \"" << pattern << "\" matched no tests. "
+                             "Run --list to see all test names.\n";
+                return 1;
+            }
+
+            std::cout << "--only \"" << pattern << "\" matched " << matchCount << " test(s)\n";
+        }
+
+        std::cout << "Running " << toRun.size() << " of " << testRegistry.size()
+                   << " tests (" << (testRegistry.size() - toRun.size()) << " skipped)\n";
+    }
+
+    for (const auto& entry : toRun)
+        entry.fn();
 
     std::cout << (failures == 0 ? "ALL PASS" : juce::String (failures) + " FAILURES") << "\n";
     return failures == 0 ? 0 : 1;

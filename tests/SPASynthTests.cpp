@@ -12323,11 +12323,29 @@ namespace
 
         // The pieces must sum to the whole -- if a future edit changes one
         // without updating lockCaptionWidth, this catches it immediately.
-        expect (lockCaptionWidth == lockCaptionTextWidth + lockCaptionArrowGap
+        expect (lockCaptionWidth == lockCaptionLeadingIndent + lockCaptionTextWidth
+                                         + lockCaptionArrowGap
                                          + lockCaptionArrowWidth + lockCaptionTrailingGap,
                 "lockCaptionWidth is the sum of its named pieces");
         expect (lockCaptionTrailingGap > 0, "there is real breathing room after the arrow");
         expect (lockCaptionArrowGap > 0, "there is real breathing room between text and arrow");
+        expect (lockCaptionLeadingIndent > 0,
+                "the caption text starts indented off the panel's left edge");
+
+        // The text is right-justified in its box (Theme.h reasoning), so the
+        // measured ink should end within a pixel or two of the box's right
+        // edge -- confirming paint() actually closed the slack rather than
+        // just moving the box.
+        {
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText (smallFont(), "LOCKS", 0.0f, 0.0f);
+            const float textWidth = glyphs.getBoundingBox (0, -1, true).getWidth();
+            expect (textWidth <= (float) lockCaptionTextWidth + 1.0f,
+                    "the 'LOCKS' text fits inside its (now tighter) box");
+            expect ((float) lockCaptionTextWidth - textWidth <= 3.0f,
+                    "right-justification leaves at most a couple of pixels of slack "
+                    "before the arrow gap, not a whole box's worth");
+        }
 
         spa::SPASynthProcessor proc;
         proc.prepareToPlay (48000.0, 512);

@@ -1948,10 +1948,13 @@ void ContentComponent::paint (juce::Graphics& g)
     // apart. (moduleArea already lost the brand band + header above.)
     auto lockCaptionRow = moduleArea.removeFromTop (metrics::lockRowHeight)
                               .reduced (metrics::unit, 0);
+    lockCaptionRow.removeFromLeft (metrics::lockCaptionLeadingIndent);
     auto lockCaptionText = lockCaptionRow.removeFromLeft (metrics::lockCaptionTextWidth);
     g.setColour (t.textSecondary);
     g.setFont (metrics::smallFont());
-    g.drawText ("LOCKS", lockCaptionText, juce::Justification::centredLeft);
+    // Right-justified so the gap to the arrow is exactly lockCaptionArrowGap
+    // -- see the metric comment in Theme.h.
+    g.drawText ("LOCKS", lockCaptionText, juce::Justification::centredRight);
 
     lockCaptionRow.removeFromLeft (metrics::lockCaptionArrowGap);
     auto lockCaptionArrow = lockCaptionRow.removeFromLeft (metrics::lockCaptionArrowWidth)

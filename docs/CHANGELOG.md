@@ -3,7 +3,10 @@
 ## 1.0.17
 
 - Added a small arrow next to the "LOCKS" label above the randomizer lock
-  buttons, so it is clearer at a glance that it is pointing at them.
+  buttons, so it is clearer at a glance that it is pointing at them. Tightened
+  up the label itself too: "LOCKS" now sits with a bit more breathing room
+  off the window's left edge, and the gap to the arrow is snug rather than
+  loose.
 - Right-clicking an oscillator's title now offers Copy to Oscillator B/C or
   Swap with Oscillator B/C, so building a matching pair of oscillators or
   trying two sounds against each other no longer means re-dialing every knob

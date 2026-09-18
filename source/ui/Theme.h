@@ -104,18 +104,36 @@ namespace metrics
     inline constexpr int unit = 8;
     inline constexpr float cornerRadius = 7.0f;  // softer, elevated panels
 
-    // Randomizer lock strip caption ("LOCKS ->"). Three named pieces so the
+    // Randomizer lock strip caption ("LOCKS ->"). Named pieces so the
     // painted caption region (ContentComponent::paint) and the layout inset
     // that skips past it (ContentComponent::resized) can never drift apart --
     // they used to be two hand-coupled magic numbers (44 painted / 46 skipped).
-    inline constexpr int lockCaptionTextWidth = 44;   // room for the "LOCKS" text itself
+    //
+    // The text is drawn right-justified within lockCaptionTextWidth (rather
+    // than left-justified in a wider box) so the visible gap to the arrow is
+    // exactly lockCaptionArrowGap and nothing else -- a left-justified box
+    // leaves leftover slack between the end of the glyphs and the edge of
+    // the box, which reads as a bigger gap than the constant says. Chose
+    // right-justification over measuring the glyphs with a
+    // GlyphArrangement: it can't drift from what's actually painted (no
+    // second measurement to keep in sync) and holds at any UI scale or
+    // future font change with zero extra code.
+    //
+    // lockCaptionLeadingIndent moves the text off the panel's left edge
+    // (product-owner request: "LOCKS" read as too close to the edge) while
+    // lockCaptionTextWidth shrinks by the same amount, so the indent and the
+    // narrower box net to zero -- the arrow and the first lock button keep
+    // their on-screen position exactly (see lockCaptionWidth below).
+    inline constexpr int lockCaptionLeadingIndent = 14;  // extra air before the "LOCKS" text
+    inline constexpr int lockCaptionTextWidth = 30;   // room for the "LOCKS" text itself
     inline constexpr int lockCaptionArrowGap = 6;     // air between the text and the arrow
     inline constexpr int lockCaptionArrowWidth = 14;  // the arrow glyph's own footprint
     inline constexpr int lockCaptionTrailingGap = 8;  // air between the arrow and the first lock button
     // Total width of the caption region resized() must skip before laying
-    // out the lock buttons -- derived from the three pieces above so paint()
+    // out the lock buttons -- derived from the pieces above so paint()
     // and resized() can never disagree about where the caption ends.
-    inline constexpr int lockCaptionWidth = lockCaptionTextWidth + lockCaptionArrowGap
+    inline constexpr int lockCaptionWidth = lockCaptionLeadingIndent + lockCaptionTextWidth
+                                             + lockCaptionArrowGap
                                              + lockCaptionArrowWidth + lockCaptionTrailingGap;
 
     // Section-title row (draw::sectionHeader) reserved from the top of every

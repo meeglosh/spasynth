@@ -11857,6 +11857,244 @@ namespace
             expect (matrixPanel->isAssignOn() && matrixPanel->getAssignMode() == AssignMode::latched,
                     "latch mode does NOT exit on a completed route");
         }
+
+        // --- Case 4: tab clicks pass through, and newly revealed controls
+        // become assignable (tester complaint: could only assign to whatever
+        // tab happened to be showing). Reverts if AssignOverlay::hitTest goes
+        // back to swallowing every click (FILTER 2's tab button would report
+        // hit even though it isn't a target), or if the target list is never
+        // rebuilt after the switch (filter2Cutoff would stay unselectable).
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 4)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            juce::TabbedComponent* filterTabs = nullptr;
+            juce::TabbedComponent* envTabs = nullptr;
+            std::function<void (juce::Component&)> findTabs = [&] (juce::Component& c)
+            {
+                if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c))
+                {
+                    if (t->getTabNames().contains ("FILTER 2"))
+                        filterTabs = t;
+                    if (t->getTabNames().contains ("ENV 2"))
+                        envTabs = t;
+                }
+                for (auto* child : c.getChildren())
+                    findTabs (*child);
+            };
+            findTabs (*editor);
+            expect (filterTabs != nullptr && envTabs != nullptr, "filterTabs/envTabs found (case 4)");
+            if (filterTabs == nullptr || envTabs == nullptr)
+                return;
+
+            matrixPanel->simulateDoubleClick();   // latch, so it stays on across the switch
+            expect (matrixPanel->isAssignOn(), "assign armed for case 4");
+
+            // filter2.cutoff isn't even in the tree yet (its tab isn't shown).
+            expect (findByParamID (*editor, id::filter2Cutoff) == nullptr,
+                    "FILTER 2's controls aren't in the tree before switching to it");
+
+            // A click landing on FILTER 2's own tab button (not an assign
+            // target -- only env/lfo tab buttons double as sources) must be
+            // let through, not swallowed.
+            auto& filterBar = filterTabs->getTabbedButtonBar();
+            auto* filter2Button = filterBar.getTabButton (filterTabs->getTabNames().indexOf ("FILTER 2"));
+            expect (filter2Button != nullptr, "FILTER 2 tab button found (case 4)");
+            if (filter2Button == nullptr)
+                return;
+            {
+                const auto p = overlay->getLocalArea (filter2Button, filter2Button->getLocalBounds()).getCentre();
+                expect (! overlay->hitTest (p.x, p.y),
+                        "a plain (non-target) tab button passes clicks through the overlay while assign is active");
+            }
+
+            // An ENV tab button, by contrast, IS a target (ModSource::env2)
+            // and must keep being caught by the overlay, not passed through.
+            auto& envBar = envTabs->getTabbedButtonBar();
+            auto* env2Button = envBar.getTabButton (envTabs->getTabNames().indexOf ("ENV 2"));
+            expect (env2Button != nullptr, "ENV 2 tab button found (case 4)");
+            if (env2Button == nullptr)
+                return;
+            {
+                const auto p = overlay->getLocalArea (env2Button, env2Button->getLocalBounds()).getCentre();
+                expect (overlay->hitTest (p.x, p.y),
+                        "an assign-target tab button (ENV 2 / ModSource::env2) is NOT passed through");
+            }
+
+            // Actually switch (a real click drives the same TabbedButtonBar
+            // change broadcast this goes through -- ChangeBroadcaster::
+            // sendChangeMessage is posted async, so pump the message loop
+            // until it lands).
+            filterTabs->setCurrentTabIndex (filterTabs->getTabNames().indexOf ("FILTER 2"));
+            // The tab content swap itself is synchronous (TabbedButtonBar::
+            // setCurrentTabIndex calls currentTabChanged() directly), but the
+            // CHANGE MESSAGE our own rebuild listens on (ChangeBroadcaster::
+            // sendChangeMessage) is posted async -- so filter2.cutoff can
+            // already be findable in the tree before ASSIGN's target list has
+            // actually been rebuilt. Pump unconditionally first.
+            for (int i = 0; i < 20; ++i)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            auto* filter2Cutoff = findByParamID (*editor, id::filter2Cutoff);
+            expect (filter2Cutoff != nullptr, "FILTER 2's controls exist once its tab is current (case 4)");
+            if (filter2Cutoff == nullptr)
+                return;
+
+            clickAt (*overlay, *filter2Cutoff);
+            expect (overlay->isSelected (filter2Cutoff),
+                    "filter2.cutoff became assignable the moment its tab was revealed -- "
+                    "the target list was rebuilt on the tab switch");
+        }
+
+        // --- Case 5: staged glow. Stage 1 (nothing selected) glows
+        // parameters, not the matrix; stage 2 (something selected) glows
+        // only the matching matrix side. Reverts if paint()/shouldGlow ever
+        // goes back to "glow everything unconditionally".
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 5)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
+            expect (cutoffKnob != nullptr && lfo2Tab != nullptr && row0Dest != nullptr && row0Source != nullptr,
+                    "targets found (case 5)");
+            if (cutoffKnob == nullptr || lfo2Tab == nullptr || row0Dest == nullptr || row0Source == nullptr)
+                return;
+
+            matrixPanel->simulateDoubleClick();
+
+            // Stage 1: destination AND source targets glow; the matrix does not.
+            expect (overlay->isGlowingForTest (cutoffKnob), "stage 1: destination targets glow");
+            expect (overlay->isGlowingForTest (lfo2Tab), "stage 1: source targets glow");
+            expect (! overlay->isGlowingForTest (row0Dest), "stage 1: DEST matrix column does not glow");
+            expect (! overlay->isGlowingForTest (row0Source), "stage 1: SOURCE matrix column does not glow");
+
+            // Stage 2 (destination picked): it reads selected; only the
+            // matching (DEST) matrix side glows, not the source side.
+            clickAt (*overlay, *cutoffKnob);
+            expect (overlay->isSelected (cutoffKnob), "cutoff selected (case 5)");
+            expect (overlay->isGlowingForTest (row0Dest), "stage 2: matching (DEST) matrix side glows");
+            expect (! overlay->isGlowingForTest (row0Source), "stage 2: non-matching (SOURCE) side does not glow");
+            expect (! overlay->isGlowingForTest (cutoffKnob) || overlay->isSelected (cutoffKnob),
+                    "the picked destination itself still reads (selected, not merely 'glowing')");
+
+            // The still-unpicked side (source) stays in its stage-1 glow --
+            // this is the fix for "assign mode doesn't reset": the missing
+            // half keeps inviting a pick.
+            expect (overlay->isGlowingForTest (lfo2Tab),
+                    "the unpicked SOURCE side keeps glowing while only a destination is selected");
+        }
+
+        // --- Case 6: half-filled row shows the waiting state, and it clears
+        // once the row completes. Reverts if MatrixPanel::setWaitingRoute is
+        // never wired, or never cleared on completion.
+        {
+            spa::SPASynthProcessor proc;
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr && overlay != nullptr, "matrix panel + overlay found (case 6)");
+            if (matrixPanel == nullptr || overlay == nullptr)
+                return;
+
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
+            expect (cutoffKnob != nullptr && lfo2Tab != nullptr && row0Dest != nullptr && row0Source != nullptr,
+                    "targets found (case 6)");
+            if (cutoffKnob == nullptr || lfo2Tab == nullptr || row0Dest == nullptr || row0Source == nullptr)
+                return;
+
+            matrixPanel->simulateClick();   // one-shot
+
+            expect (! matrixPanel->isRouteWaitingForTest (0), "no waiting row before any write (case 6)");
+
+            clickAt (*overlay, *cutoffKnob);
+            clickAt (*overlay, *row0Dest);
+            expect (matrixPanel->isAssignOn(), "one-shot still armed: row 0 has a dest but no source");
+            expect (matrixPanel->isRouteWaitingForTest (0),
+                    "row 0 shows the waiting state after a dest-only write");
+
+            // The waiting decoration must never overlap any of the row's own
+            // controls at any width -- a prior version painted a "WAITING
+            // FOR SOURCE" label straight across the depth slider (the
+            // slider's handle showed through it, reading as a glitch).
+            // Computed via the same geometry paint() itself uses
+            // (waitingRingBounds, exposed for test), so this can't drift
+            // from what's actually drawn, and reverting to a row-wide label
+            // would fail it immediately.
+            {
+                const auto ring = matrixPanel->getWaitingRingBoundsForTest (0);
+                const auto sourceB = matrixPanel->getRowSourceBoundsForTest (0);
+                const auto destB = matrixPanel->getRowDestBoundsForTest (0);
+                const auto depthB = matrixPanel->getRowDepthBoundsForTest (0);
+                juce::String offenders;
+                if (! ring.isEmpty())
+                {
+                    // The ring legitimately hugs and slightly exceeds its OWN
+                    // (empty) field's bounds by design -- only flag it
+                    // against whichever of the three controls it ISN'T
+                    // wrapping.
+                    if (ring != sourceB.expanded (2) && ring.intersects (sourceB)) offenders << "source combo ";
+                    if (ring != destB.expanded (2) && ring.intersects (destB)) offenders << "dest combo ";
+                    if (ring.intersects (depthB)) offenders << "depth slider ";
+                }
+                expect (offenders.isEmpty(),
+                        "waiting decoration does not overlap any other row control, offender(s): " + offenders);
+            }
+
+            clickAt (*overlay, *lfo2Tab);
+            clickAt (*overlay, *row0Source);
+            expect (! matrixPanel->isAssignOn(), "one-shot exits once row 0 completes");
+            expect (! matrixPanel->isRouteWaitingForTest (0),
+                    "the waiting state clears once the row completes");
+        }
+
+        // --- Case 7: a matrix row targeting chaos.rate dims while chaos SYNC
+        // is on, and undims when SYNC is off. Reverts if
+        // isModDestinationInert only ever returns false, or if it's not
+        // wired to any actual chaos.rate/chaos.syncToBpm check.
+        {
+            spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::dest),
+                      (float) (params::modDestIndex (id::chaos::rate) + 1));
+            setParam (proc, id::chaos::syncToBpm, 0.0f);
+            std::unique_ptr<juce::AudioProcessorEditor> editor;
+            spa::ui::MatrixPanel* matrixPanel = nullptr;
+            spa::ui::AssignOverlay* overlay = nullptr;
+            makeFixture (proc, editor, matrixPanel, overlay);
+            expect (matrixPanel != nullptr, "matrix panel found (case 7)");
+            if (matrixPanel == nullptr)
+                return;
+            juce::ignoreUnused (overlay);
+
+            expect (! matrixPanel->isRouteDimmedForTest (0),
+                    "chaos.rate route NOT dimmed while SYNC is off");
+
+            setParam (proc, id::chaos::syncToBpm, 1.0f);
+            expect (matrixPanel->isRouteDimmedForTest (0),
+                    "chaos.rate route dims once SYNC is turned on (it's now inert)");
+
+            setParam (proc, id::chaos::syncToBpm, 0.0f);
+            expect (! matrixPanel->isRouteDimmedForTest (0),
+                    "chaos.rate route undims once SYNC is turned back off");
+        }
     }
 
     // Tester complaint: a freshly-made mod matrix row is silent until Depth

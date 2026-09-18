@@ -55,6 +55,28 @@
   put while you work on the row, and clears the moment you click anywhere
   else, press Esc, or switch on ASSIGN mode, whose own blue highlighting
   means something different and is unaffected by this.
+- ASSIGN mode improvements from tester feedback:
+  - You can now switch tabs while ASSIGN is on, so a synth-wide assignment no
+    longer means everything you want has to already be on the tab you
+    started from. Filters, envelopes, LFOs and FX all stay reachable
+    mid-assignment, and switching tabs immediately makes the newly shown
+    controls assignable.
+  - The blue highlighting now appears in stages instead of lighting up the
+    whole synth and the mod matrix at once, which was leading people to
+    click the matrix first, where nothing happens yet. Turning ASSIGN on now
+    lights up only the knobs and sources you can pick from; once you pick
+    one, it shows as selected and only the matching side of the matrix (the
+    source column or the destination column, whichever you just picked)
+    lights up next.
+  - Assigning only half of a matrix row (a destination with no source yet,
+    or vice versa) now clearly shows that row waiting for its other half,
+    with a label naming exactly what is still missing. Previously this
+    looked like ASSIGN mode had gotten stuck; it was always working as
+    intended, just silently.
+  - A matrix row aimed at Organic Chaos's RATE now dims while chaos SYNC is
+    on, since SYNC replaces the free-running rate with a tempo division and
+    modulating it does nothing until SYNC is switched off again. The row
+    itself is untouched and starts working again the moment SYNC goes off.
 
 ## 1.0.16
 

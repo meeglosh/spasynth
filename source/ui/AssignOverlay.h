@@ -48,6 +48,12 @@ void showPopupAnchored (juce::Component& anchor, juce::PopupMenu& menu,
 // testing entirely.
 class AssignOverlay : public juce::Component, private juce::Timer
 {
+private:
+    // Forward-declared so public members below (targetAt/shouldGlow) can
+    // name it; fully defined further down with the rest of the private
+    // implementation.
+    struct Target;
+
 public:
     explicit AssignOverlay (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (apvtsIn)
     {
@@ -118,6 +124,70 @@ public:
     // exactly as if the user had clicked the button off.
     std::function<void()> onOneShotComplete;
 
+    // Fired from setRouteChoice after EVERY write, real route index, so the
+    // owner (ContentComponent) can show/clear the "waiting for its other
+    // half" state on that specific matrix row (see MatrixPanel::
+    // setWaitingRoute). Called with the route that was just touched --
+    // whether it's now complete or not is the owner's own call via
+    // routeIsComplete, shared with maybeCompleteOneShot above so the two
+    // can't disagree.
+    std::function<void (int route)> onRouteWritten;
+
+    // Called when the set of controls under `rootComponent` may have
+    // changed while assign mode is active (e.g. a tab switch revealed a
+    // different panel's controls) -- see ContentComponent's tab-bar change
+    // listener wiring. No-op when assign mode isn't on, so it's safe to call
+    // unconditionally on every tab change.
+    void refreshTargetsIfActive()
+    {
+        if (active)
+            rebuildTargets();
+    }
+
+    // Staged glow (product-owner spec, tester-driven): everything glowing at
+    // once made people click the matrix first, where nothing happens with no
+    // selection made. So glow is gated per target kind:
+    //  - stage 1 (nothing selected yet): destination/source targets glow,
+    //    inviting a first pick; the matrix (destMenu/sourceMenu) does not.
+    //  - stage 2 (something selected): the selected object shows the
+    //    existing solid "selected" treatment; destMenu glows once a
+    //    DESTINATION is selected, sourceMenu once a SOURCE is selected --
+    //    independently, so if only one kind has been picked so far, the
+    //    OTHER kind's targets (destination/source) keep glowing too, same as
+    //    stage 1 -- this is what makes "assign mode doesn't reset" after
+    //    writing one half of a route read as still-armed-for-the-other-half
+    //    rather than broken (see MatrixPanel::setWaitingRoute for the
+    //    row-level half of that same fix).
+    // Test hook: does `c` currently read as glowing (pulsing or selected),
+    // per the exact same rule paint() uses -- lets a test check the staged
+    // glow without rasterizing and reading pixels back.
+    bool isGlowingForTest (const juce::Component* c) const
+    {
+        for (auto& target : targets)
+        {
+            if (target.comp.getComponent() != c)
+                continue;
+            const bool selected = (target.kind == Target::destination && &target == selectedDest)
+                                || (target.kind == Target::source && &target == selectedSource);
+            return shouldGlow (target, selected);
+        }
+        return false;
+    }
+
+    bool shouldGlow (const Target& target, bool selected) const
+    {
+        if (selected)
+            return true;
+        switch (target.kind)
+        {
+            case Target::destination: return selectedDest   == nullptr;
+            case Target::source:      return selectedSource == nullptr;
+            case Target::destMenu:    return selectedDest   != nullptr;
+            case Target::sourceMenu:  return selectedSource != nullptr;
+        }
+        return false;
+    }
+
     void paint (juce::Graphics& g) override
     {
         if (! active && ! fadingOut)
@@ -137,6 +207,9 @@ public:
 
             const bool selected = (target.kind == Target::destination && &target == selectedDest)
                                 || (target.kind == Target::source && &target == selectedSource);
+
+            if (! shouldGlow (target, selected))
+                continue;
 
             if (auto* slider = dynamic_cast<juce::Slider*> (c))
             {
@@ -261,27 +334,32 @@ public:
         }
     }
 
-    // Shared by mouseDown and tests. Point is in overlay-local coordinates.
-    void handleClickAt (juce::Point<int> localPos)
+    // Topmost-wins target lookup, shared by handleClickAt and hitTest: targets
+    // are pushed source-before-menus but within a kind, later == painted
+    // later == visually on top, so search back-to-front. Point is in
+    // overlay-local coordinates.
+    Target* targetAt (juce::Point<int> localPos)
     {
-        if (! active)
-            return;
-
-        // Topmost-wins: targets are pushed source-before-menus but within a
-        // kind, later == painted later == visually on top, so search back-
-        // to-front.
         for (auto it = targets.rbegin(); it != targets.rend(); ++it)
         {
             auto* c = it->comp.getComponent();
             if (c == nullptr)
                 continue;
             auto bounds = getLocalArea (c, c->getLocalBounds());
-            if (! bounds.contains (localPos))
-                continue;
-
-            handleTargetClick (*it);
-            return;
+            if (bounds.contains (localPos))
+                return &(*it);
         }
+        return nullptr;
+    }
+
+    // Shared by mouseDown and tests. Point is in overlay-local coordinates.
+    void handleClickAt (juce::Point<int> localPos)
+    {
+        if (! active)
+            return;
+
+        if (auto* target = targetAt (localPos))
+            handleTargetClick (*target);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -289,11 +367,23 @@ public:
         handleClickAt (e.getPosition());
     }
 
+    // Tab bars (filter/env/lfo/fx) must keep switching tabs while ASSIGN is
+    // active -- see the class comment's requirement 1 -- else a user can
+    // only assign to whatever tab happened to be showing when they engaged
+    // ASSIGN. General on purpose (no panel is named): any point that falls
+    // inside a TabbedButtonBar's own bounds, and ISN'T itself one of our
+    // assign targets (env/lfo tab buttons double as source targets -- see
+    // rebuildTargets -- and must keep being clickable as such), is let
+    // through by returning false here so the click reaches the real button
+    // underneath instead of this overlay.
     bool hitTest (int x, int y) override
     {
         if (! (active || fadingOut))
             return false;
-        if (excludeBounds.contains (x, y))
+        const juce::Point<int> p (x, y);
+        if (excludeBounds.contains (p))
+            return false;
+        if (active && targetAt (p) == nullptr && isOverPassthroughTabBar (p))
             return false;
         return true;
     }
@@ -309,9 +399,28 @@ private:
         int route = -1;              // destMenu / sourceMenu
     };
 
+    // See hitTest's comment. Bounds are computed on demand from a SafePointer
+    // list rebuilt alongside `targets` every rebuildTargets() call (assign
+    // mode toggled on, or a tab switch while already active), so a tab bar
+    // that appears/disappears/moves is always picked up fresh -- nothing here
+    // names filterTabs/envTabs/lfoTabs/fxTabs specifically.
+    bool isOverPassthroughTabBar (juce::Point<int> localPos) const
+    {
+        for (auto& sp : tabBars)
+        {
+            auto* bar = sp.getComponent();
+            if (bar == nullptr)
+                continue;
+            if (getLocalArea (bar, bar->getLocalBounds()).contains (localPos))
+                return true;
+        }
+        return false;
+    }
+
     void rebuildTargets()
     {
         targets.clear();
+        tabBars.clear();
         if (rootComponent == nullptr)
             return;
 
@@ -345,6 +454,9 @@ private:
         {
             if (! isScrolledIntoView (c))
                 return;
+
+            if (auto* bar = dynamic_cast<juce::TabbedButtonBar*> (&c))
+                tabBars.push_back (bar);
 
             const auto paramID = c.getProperties()["paramID"].toString();
             if (paramID.isNotEmpty())
@@ -470,6 +582,8 @@ private:
         // see maybeAutoFillRouteDepth's own comment for the full contract.
         maybeAutoFillRouteDepth (apvts, route);
         maybeCompleteOneShot (route);
+        if (onRouteWritten)
+            onRouteWritten (route);
     }
 
     // One-shot mode only: after writing a route choice, check whether the
@@ -521,6 +635,7 @@ private:
     juce::Component* rootComponent = nullptr;
     juce::Rectangle<int> excludeBounds;
     std::vector<Target> targets;
+    std::vector<juce::Component::SafePointer<juce::TabbedButtonBar>> tabBars;
     Target* selectedDest = nullptr;
     Target* selectedSource = nullptr;
     bool active = false;

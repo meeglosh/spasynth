@@ -1488,6 +1488,8 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
         // a knob click means something else entirely once assign is active.
         if (mode != spa::ui::MatrixPanel::AssignMode::off)
             matrixPanel.clearRevealedRoutes();
+        else
+            matrixPanel.setWaitingRoute (-1);   // leaving ASSIGN clears any half-filled-row callout
 
         assignOverlay->setOneShotMode (mode == spa::ui::MatrixPanel::AssignMode::oneShot);
         assignOverlay->setAssignMode (mode != spa::ui::MatrixPanel::AssignMode::off, *this,
@@ -1499,6 +1501,24 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     // path a manual click-off uses, so the button/overlay/property all stay
     // in sync via MatrixPanel::applyMode.
     assignOverlay->onOneShotComplete = [this] { matrixPanel.setAssignOn (false); };
+    // Half-filled-row feedback (see MatrixPanel::setWaitingRoute): after
+    // EVERY ASSIGN write, show the "waiting" callout on that row unless it's
+    // now complete -- routeIsComplete is the same predicate one-shot exit
+    // uses, so the two can't disagree about what "done" means.
+    assignOverlay->onRouteWritten = [this] (int route)
+    {
+        matrixPanel.setWaitingRoute (routeIsComplete (processor.getAPVTS(), route) ? -1 : route);
+    };
+
+    // Tab clicks must keep switching tabs while ASSIGN is active (see
+    // AssignOverlay::hitTest), and once they do, newly revealed controls on
+    // the freshly-shown tab must become assignable -- juce::TabbedComponent's
+    // TabbedButtonBar broadcasts a change message on every tab switch (any
+    // cause: click, arrow keys, programmatic), so this is general across all
+    // four tab groups rather than hooking each tab bar's buttons by hand.
+    for (auto* bar : { &filterTabs.getTabbedButtonBar(), &envTabs.getTabbedButtonBar(),
+                        &lfoTabs.getTabbedButtonBar(), &fxTabs.getTabbedButtonBar() })
+        bar->addChangeListener (this);
 
     processor.addChangeListener (this);
     processor.getPresetManager().addChangeListener (this);
@@ -1676,8 +1696,20 @@ ContentComponent::~ContentComponent()
     processor.removeChangeListener (this);
 }
 
-void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster*)
+void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    // Tab-bar switches (see the constructor's addChangeListener loop): only
+    // rebuild ASSIGN's target list, never the full refreshAll() -- distinct
+    // from the processor/preset-manager broadcasts this same callback also
+    // serves.
+    if (assignOverlay != nullptr
+        && (source == &filterTabs.getTabbedButtonBar() || source == &envTabs.getTabbedButtonBar()
+            || source == &lfoTabs.getTabbedButtonBar() || source == &fxTabs.getTabbedButtonBar()))
+    {
+        assignOverlay->refreshTargetsIfActive();
+        return;
+    }
+
     refreshAll();
 }
 

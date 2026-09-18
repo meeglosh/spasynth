@@ -41,6 +41,7 @@ struct Theme
     juce::Colour knobTrack;
     juce::Colour assignGlow;      // ASSIGN mode: pulsing blue glow on assignable controls/menus
     juce::Colour assignSelected;  // ASSIGN mode: solid colour for the currently selected object
+    juce::Colour assignWaiting;   // ASSIGN mode: a matrix row half-filled, waiting for its other half
 
     static Theme dark()
     {
@@ -64,6 +65,7 @@ struct Theme
         t.knobTrack     = juce::Colour (0xff2f393e);
         t.assignGlow     = juce::Colour (0xff4aa3ff);
         t.assignSelected = juce::Colour (0xffffd54a);
+        t.assignWaiting  = juce::Colour (0xffff8a3d);
         return t;
     }
 

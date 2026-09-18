@@ -71,6 +71,55 @@ inline void maybeAutoFillRouteDepth (juce::AudioProcessorValueTreeState& apvts, 
     depthP->endChangeGesture();
 }
 
+// "Is modulating this destination currently a no-op" -- e.g. chaos.rate
+// remains a valid, serialized mod destination while chaos SYNC is on, but
+// SYNC replaces the free-running rate with a tempo division, so a route
+// aimed at it does nothing until SYNC is switched off again. A tester read
+// this as a broken assignment rather than a temporarily-inert one.
+//
+// Table-driven ON PURPOSE: destination indices are dense and serialized
+// into every preset (see ParameterRegistry's append-only mod-dest order),
+// so a destination can never be REMOVED from the list just because it's
+// sometimes inert -- only dimmed. Keeping this general (a small table of
+// dest -> gate rules) means a future case is a new row here, not a
+// hardcoded special case scattered across the matrix/overlay code.
+inline bool isModDestinationInert (juce::AudioProcessorValueTreeState& apvts, const juce::String& destParamID)
+{
+    struct InertRule
+    {
+        const char* destID;
+        const char* gateID;
+        bool inertWhenGateAtLeastHalf;   // gate param's normalized-off-threshold convention
+    };
+    static const InertRule rules[] = {
+        { params::id::chaos::rate, params::id::chaos::syncToBpm, true },
+    };
+
+    for (auto& rule : rules)
+    {
+        if (destParamID != rule.destID)
+            continue;
+        auto* gate = apvts.getRawParameterValue (rule.gateID);
+        if (gate == nullptr)
+            return false;
+        const bool gateOn = gate->load() >= 0.5f;
+        return gateOn == rule.inertWhenGateAtLeastHalf;
+    }
+    return false;
+}
+
+// Same, but by dense mod-dest index (what a matrix row's DEST choice
+// actually stores) rather than a parameter ID string.
+inline bool isModDestIndexInert (juce::AudioProcessorValueTreeState& apvts, int destIndex)
+{
+    if (destIndex < 0)
+        return false;
+    for (auto& d : params::modDestinations())
+        if (d.index == destIndex)
+            return isModDestinationInert (apvts, d.def->id);
+    return false;
+}
+
 // The mod matrix as a compact routing table: 16 rows of source -> dest with
 // a bipolar depth slider, inside a viewport.
 class MatrixPanel : public juce::Component
@@ -199,6 +248,20 @@ public:
             applyMode (nextModeOnDoubleClick (assignMode));
         };
         addAndMakeVisible (assignBtn);
+
+        // Repaint the matrix whenever anything an inert-destination rule
+        // gates might have changed (currently just chaos SYNC), so a dimmed
+        // row un-dims live without needing ASSIGN mode or a manual refresh.
+        // AudioProcessorValueTreeState::Listener callbacks can fire from the
+        // audio thread (host automation), so this defers the actual repaint
+        // via AsyncUpdater -- same idiom as ChaosPanel/DependentEnable.
+        inertWatcher.target = &content;
+        apvts.addParameterListener (params::id::chaos::syncToBpm, &inertWatcher);
+    }
+
+    ~MatrixPanel() override
+    {
+        apvts.removeParameterListener (params::id::chaos::syncToBpm, &inertWatcher);
     }
 
     juce::Button& assignButton() { return assignBtn; }
@@ -297,6 +360,54 @@ public:
     int getRowHeightForTest() const { return rowHeight; }
     int getViewPositionYForTest() const { return viewport.getViewPositionY(); }
     int getViewHeightForTest() const { return viewport.getViewHeight(); }
+
+    // Waiting-for-other-half state (see AssignOverlay::setRouteChoice /
+    // ContentComponent's onRouteWritten wiring): set right after an ASSIGN
+    // click writes one half of a route, and it's the only "row" concept
+    // driven from outside a real user click on the row itself, so it's kept
+    // separate from revealedRoutes (which is knob-reveal only, a different
+    // feature). Pass -1 to clear. A no-op repaint guard, same as
+    // clearRevealedRoutes, since this is called on every ASSIGN write.
+    void setWaitingRoute (int route)
+    {
+        waitingRoute = route;
+        // Unconditional (not gated on the value actually changing): this is
+        // called right after every ASSIGN write, including ones that leave
+        // `route` the same waiting row it already was, and the inert-dim
+        // wash (a different row concept, painted in the same pass) needs a
+        // fresh look at the just-written DEST choice regardless.
+        content.repaint();
+    }
+    bool isRouteWaitingForTest (int route) const { return waitingRoute == route; }
+
+    // Test hooks for the waiting-ring geometry (see waitingRingBounds's own
+    // comment): the exact ring rectangle paintWaitingHighlight draws, plus
+    // the three controls it must never overlap, all in `content`'s local
+    // coordinate space (what paint() itself works in).
+    juce::Rectangle<int> getWaitingRingBoundsForTest (int route) const { return waitingRingBounds (route); }
+    juce::Rectangle<int> getRowSourceBoundsForTest (int route) const
+    {
+        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->source.getBounds();
+    }
+    juce::Rectangle<int> getRowDestBoundsForTest (int route) const
+    {
+        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->dest.getBounds();
+    }
+    juce::Rectangle<int> getRowDepthBoundsForTest (int route) const
+    {
+        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->depth.getBounds();
+    }
+
+    // Test hook: is `route`'s row currently painted dimmed because its
+    // destination is inert right now (see isModDestIndexInert)? Reads the
+    // combo's live selection exactly like paintInertRows does.
+    bool isRouteDimmedForTest (int route) const
+    {
+        if (route < 0 || route >= (int) rows.size())
+            return false;
+        const int destIndex = rows[(size_t) route]->dest.getSelectedItemIndex() - 1;
+        return isModDestIndexInert (apvts, destIndex);
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -528,6 +639,100 @@ private:
         }
     }
 
+    // Waiting-row highlight (see setWaitingRoute): amber, distinct from both
+    // the reveal violet and the ASSIGN overlay's own blue/yellow. Originally
+    // also carried a right-aligned "WAITING FOR SOURCE/DEST" label, but the
+    // row has NO free space anywhere -- source/dest/depth (see resized())
+    // pack its full width with only 4px gutters between them -- so that text
+    // was painted straight across the depth slider (the slider handle showed
+    // through it), which read as a glitch rather than a deliberate state.
+    // Text placed inside either combo would equally overlap a real control.
+    // Dropped in favour of exactly two elements that both sit clear of every
+    // control: a translucent row wash + outline (painted in the background
+    // pass, i.e. genuinely BEHIND the opaque combo/slider faces, not
+    // fighting them for pixels) and a ring drawn just outside the specific
+    // empty field's own bounds (expanded 2px, well inside the 4px column
+    // gutters -- getWaitingRingBoundsForTest() below is the exact rectangle,
+    // and a test asserts it never intersects the row's other controls at any
+    // width). The ring alone already answers "which half" unambiguously.
+    // Reads combo selections live (index 0 == None, see kNoneRouteChoiceIndex);
+    // never mutates.
+    void paintWaitingHighlight (juce::Graphics& g) const
+    {
+        if (waitingRoute < 0 || waitingRoute >= (int) rows.size())
+            return;
+        auto& row = *rows[(size_t) waitingRoute];
+        const bool sourceEmpty = row.source.getSelectedItemIndex() <= 0;
+        const bool destEmpty = row.dest.getSelectedItemIndex() <= 0;
+        if (! sourceEmpty && ! destEmpty)
+            return;   // completed since -- caller clears this, but paint must never assume timing
+
+        const auto colour = currentTheme().assignWaiting;
+        const juce::Rectangle<int> rowBounds (0, waitingRoute * rowHeight, content.getWidth(), rowHeight);
+        g.setColour (colour.withAlpha (0.16f));
+        g.fillRect (rowBounds);
+        g.setColour (colour.withAlpha (0.9f));
+        g.drawRect (rowBounds, 2);
+
+        const auto ring = waitingRingBounds (waitingRoute);
+        if (! ring.isEmpty())
+        {
+            g.setColour (colour);
+            g.drawRoundedRectangle (ring.toFloat(), 4.0f, 2.0f);
+        }
+    }
+
+    // The exact rectangle paintWaitingHighlight rings around the still-empty
+    // field of `route` -- factored out so a test can assert it never
+    // intersects the row's other controls without duplicating paint's own
+    // geometry (and so it can never drift from what's actually drawn).
+    // Empty if `route` isn't the waiting row or the row has since completed.
+    juce::Rectangle<int> waitingRingBounds (int route) const
+    {
+        if (route < 0 || route >= (int) rows.size())
+            return {};
+        auto& row = *rows[(size_t) route];
+        const bool sourceEmpty = row.source.getSelectedItemIndex() <= 0;
+        const bool destEmpty = row.dest.getSelectedItemIndex() <= 0;
+        if (! sourceEmpty && ! destEmpty)
+            return {};
+        auto& emptyBox = sourceEmpty ? row.source : row.dest;
+        return emptyBox.getBounds().expanded (2);
+    }
+
+    // Dims any row whose DEST is currently inert (isModDestIndexInert) --
+    // painted OVER the children (paintOverChildren), not in the background
+    // pass, so the wash actually darkens the combo boxes/slider drawn on top
+    // of it rather than just showing through the gaps between them.
+    void paintInertRows (juce::Graphics& g) const
+    {
+        for (int r = 0; r < (int) rows.size(); ++r)
+        {
+            const int destIndex = rows[(size_t) r]->dest.getSelectedItemIndex() - 1;
+            if (! isModDestIndexInert (apvts, destIndex))
+                continue;
+            const juce::Rectangle<int> rowBounds (0, r * rowHeight, content.getWidth(), rowHeight);
+            g.setColour (currentTheme().background.withAlpha (0.6f));
+            g.fillRect (rowBounds);
+            g.setColour (currentTheme().textSecondary.withAlpha (0.85f));
+            g.setFont (metrics::smallFont());
+            g.drawText ("INERT WHILE SYNCED", rowBounds.reduced (4, 0), juce::Justification::centredRight);
+        }
+    }
+
+    // Message-thread-deferred repaint trigger for the inert-dim wash -- see
+    // the constructor comment on why this can't touch `target` directly from
+    // parameterChanged().
+    struct InertGateWatcher : public juce::AudioProcessorValueTreeState::Listener,
+                              private juce::AsyncUpdater
+    {
+        juce::Component* target = nullptr;
+
+    private:
+        void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
+        void handleAsyncUpdate() override { if (target != nullptr) target->repaint(); }
+    };
+
     // Nested (not a lambda/std::function member) so paint() has zero extra
     // indirection cost at 30+ fps; a nested class is a member of MatrixPanel
     // for access purposes (C++11+), so it can reach paintRevealHighlights()
@@ -535,7 +740,12 @@ private:
     struct RowsHost : public juce::Component
     {
         MatrixPanel* owner = nullptr;
-        void paint (juce::Graphics& g) override { owner->paintRevealHighlights (g); }
+        void paint (juce::Graphics& g) override
+        {
+            owner->paintRevealHighlights (g);
+            owner->paintWaitingHighlight (g);
+        }
+        void paintOverChildren (juce::Graphics& g) override { owner->paintInertRows (g); }
     };
 
     juce::AudioProcessorValueTreeState& apvts;
@@ -545,6 +755,8 @@ private:
     AssignButton assignBtn { "ASSIGN" };
     AssignMode assignMode = AssignMode::off;
     std::set<int> revealedRoutes;
+    int waitingRoute = -1;
+    InertGateWatcher inertWatcher;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)
 };

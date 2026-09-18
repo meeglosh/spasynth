@@ -1,0 +1,30 @@
+SPASynth 1.0.17 - what's new since 1.0.16
+
+Working with the mod matrix
+- Knobs that are wired into the mod matrix now show it. They turn violet the moment a route points at them, whether or not anything is playing and even before you turn the depth up, and a faint arc shows how far that knob can travel. Drag a matrix depth slider and the arc follows you.
+- Click the middle of a violet knob and every matrix row feeding it lights up in the same violet, scrolling the first one into view. The marking stays until you click elsewhere or press Esc.
+- A new route now arrives with its depth already at half, so connecting a source to a destination does something straight away instead of staying silent. Routes you have already set, including ones you deliberately zeroed, are never changed, and loading a preset never alters the depths it was saved with.
+- ASSIGN switches itself back off once a route is complete, so a quick connection takes one click. Double click it to lock it on, the way caps lock works, and a small padlock shows when it is locked.
+
+Oscillators
+- Right-click an oscillator's title for Copy to Oscillator B/C and Swap with Oscillator B/C. The loaded sound or wavetable travels with the settings. It does not touch anything you have wired up in the matrix.
+- Drag audio straight onto an oscillator from the Finder, from Explorer, or from your DAW's browser. The oscillator lights up as you drag over it, and dropping onto one that is not already playing a file switches it to Sample for you. Convolve takes a dropped impulse the same way.
+
+Chaos and effects
+- Organic Chaos can lock to your project tempo. Turn on SYNC in its header and the section becomes Organized Chaos: each kind of drift keeps its own speed, but those speeds become whole divisions of the beat, so pitch might wander once a bar while amplitude moves once a beat, and all of it lands on the grid.
+- Convolve gets a start position, so the impulse can begin partway into the file. Skipping the front of a reverb impulse drops the direct hit and leaves the diffuse tail, and since Convolve takes any library sound as an impulse you can also reach a later section of a long recording.
+
+Reading the interface
+- A module's title now shows whether it is powered on. Enabled modules use your accent colour, disabled ones go a muted white, so a glance says what is live.
+- The LOCKS label above the randomizer locks now has an arrow pointing at the lock buttons.
+
+Worth trying specifically
+- Wire up a few routes and look at the panel with nothing playing. Every wired knob should be violet.
+- Click a violet knob and confirm it finds its row, including a knob fed by two rows at once.
+- Copy an oscillator with a sample loaded onto an empty slot, then swap two loaded slots.
+- Turn on chaos SYNC against a project at a fixed tempo and listen for the drift landing on the beat.
+- Open a preset you saved in 1.0.16 and confirm it sounds the same, especially if you had routes deliberately turned down to zero.
+
+Install notes
+- macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

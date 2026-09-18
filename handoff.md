@@ -256,7 +256,7 @@ exercise that are new here: drag audio onto an oscillator, ASSIGN single vs
 double click, a freshly made mod route being audible immediately, and a
 saved preset with a deliberately zeroed route still loading at zero.
 
-## 1.0.17 in progress (Mike, 2026-09-17): small pre-launch updates
+## 1.0.17 BUILT + STAGED (2026-09-18, main `b99beb9`), awaiting Mike's install
 
 A round of small pre-launch polish items, batched so the bigger
 architecture work does not block launch. Version bumped to 1.0.17 at the
@@ -288,7 +288,33 @@ start of the round, as usual. Items so far:
   synced** (rate becomes a division). Sync-off is guarded by a golden-value
   test so refactors cannot drift it.
 
-More items expected; append them here as they land.
+All six items landed. **Artifacts:** macOS pkg from `b99beb9`, signed +
+notarized + stapled, `spctl` accepted, universal, minos 11.0, md5
+`552e1392be1c2e4acb1da8f9a4019a8c`. Windows exe from `ci-windows-b99beb9`,
+md5 `3b812f0bbdf70d9a4d20c115305b451e`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.17/`. Dev
+plugin copies cleared. Suite **1532 ALL PASS** (Debug, Release, ASan).
+Tester note: `docs/tester-note-1.0.17.txt`.
+
+**Install:** `sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.17-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic.
+
+**Lessons worth keeping from this round:**
+- **`RandomSpec::maxNorm` is a bias, NOT a ceiling.** The randomiser widens
+  a parameter's range toward 1.0 once wildness passes 0.5, so a hard cap
+  also needs a clamp in `randomizeAll`'s musicality pass. Test at full
+  wildness or you will not catch it.
+- **A process-wide `getCurrentlyFocusedComponent()` check is flaky** unless
+  it is baselined AND gated on `Process::isForegroundProcess()`: showing a
+  real window can make the OS focus it. The deterministic half of the rule
+  is the static sweep for controls that grab focus on click; keep that
+  ungated.
+- **Layout bugs need layout tests.** The chaos sync feature shipped with
+  overlapping controls because no test asserted panel geometry and I
+  reviewed it by reading code. `chaosPanelLayoutTest` now covers that
+  panel; consider the same for others.
+- Aggregate per-item assertions. A layout test briefly added 433 of them.
 
 ### Open, awaiting Mike's answers
 - **Knob indicator for assigned mod destinations** (Phil: the current one is

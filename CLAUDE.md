@@ -10,6 +10,107 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-18): v1.0.19 (main `ed0e16f`) built + staged; sample loop crossfade, full-height start marker, two-button mod matrix assign
+
+**1.0.18 WAS SENT to the testers** (unlike several prior rounds), so 1.0.19
+is a genuine bump, not an overwrite. This round came from tester feedback
+plus one request from Mike.
+
+- **Sample START marker** (`source/ui/Displays.cpp`): was a ~10px top tick,
+  now spans the full waveform height. Stays `textSecondary` so it stays
+  distinguishable from the `accentMod` loop markers and the `textPrimary`
+  live playhead.
+- **Loop crossfade**, new param `osc::loopXfade` ("Loop XFade", 0-100%,
+  default 0, NOT a mod destination, low-biased randomizer). Knob labelled
+  XFADE in the sample knob row between LOOP END and ROOT; dims with LOOP
+  ST/END via the existing single-gate `loopRangeEnable` `DependentEnable`.
+  **Design decision of record: the crossfade borrows audio from OUTSIDE the
+  loop** (the run-up before loopStart, or the tail after loopEnd), so the
+  loop PERIOD never changes and the SYNC transport phase lock is unaffected.
+  Default 0 keeps every existing preset/session bit-identical. Implemented
+  in `source/dsp/SamplePlayer.h`: `computeXfadeSamples` + `readLoopCrossfaded`
+  (equal-power sin/cos, both heads read through `readClamped`), plus a
+  public `effectiveXfadeSamples` wrapper mirroring the existing
+  `effectiveLoopBoundsSamples`, which the UI calls so the drawn geometry can
+  never disagree with what is heard. Visualized via
+  `WaveDisplay::getXfadeRamps()` (equal-power curve + soft wedge fill);
+  exactly one ramp of the pair sits OUTSIDE the loop band — that's the
+  borrowed material, and showing that is the point of the visual.
+- **Mod matrix ASSIGN is now two buttons**, SOURCE and DEST
+  (`matrixAssignSource` / `matrixAssignDest`), replacing the single ASSIGN.
+  `MatrixPanel::AssignKind {source,dest}` + `AssignState {mode,kind}`;
+  `nextStateOnClick` switches kind rather than toggling off when the other
+  kind's button is clicked mid-session; double-click always latches that
+  kind. `AssignOverlay::setAssignKind` makes `rebuildTargets()` filter by
+  kind so off-kind targets are absent entirely (no glow, no hit-test). The
+  LookAndFeel padlock gate is now `getComponentID().startsWith("matrixAssign")`.
+- **The 1.0.18 half-filled-row "waiting" callout is REMOVED** at tester
+  request: with two buttons, assigning one half is deliberate, so the
+  callout flagged intended behaviour as unfinished. `setWaitingRoute` and
+  the whole waiting API are gone; an incomplete row now gets the same quiet
+  dim already used for an inert destination. One-shot assign now exits
+  after its own single write instead of waiting for a complete row.
+  `Theme.h`'s `assignWaiting` colour token is now unused and inert (left in
+  place, outside the editing agent's scope) — flag as trivial cleanup.
+
+**Two DSP defects caught in senior review, NOT by tests:** (1) crossfade
+direction was originally `usePreRoll = (preRoom >= X)` — chosen from the
+CURRENT crossfade length, so on a sample with a short run-up and long tail
+the direction silently flipped partway up the knob sweep. Fixed to
+`usePreRoll = (preRoom >= postRoom)`, `maxX` taken from the chosen side.
+(2) the SYNC stretcher's post-roll form gated on a PER-GRAIN "past loopEnd"
+flag, so after a wrap two overlapping grains could disagree about the
+source and the overlap-add produced a hybrid instead of the equal-power law
+— fixed to a PLAYHEAD-level `wrapped` flag so every grain agrees. Why the
+stretcher needed the crossfade at all: its overlap-add smooths GRAIN
+boundaries, not the LOOP seam — each grain's read position still folds from
+loopEnd back to loopStart mid-grain, so `readLoopCrossfaded` is shared by
+the classic path and the stretcher's per-grain reads.
+
+**New load-bearing lesson about seeded randomizer tests**: adding ANY
+randomizable parameter shifts the seeded RNG draw sequence, which can move
+a seed-searching test onto a seed that no longer reproduces its scenario.
+`randomizeArpFastRetriggerAttackTest` searched only for `Arp Mode ==
+Phrase`, missing that `arp::enable` is separately randomized and biased OFF
+(`biasCentre = 0.15f`) — it picked a seed with the arp disabled and asserted
+a clamp that's correctly gated on the arp being on. Rule: **a
+seed-searching randomizer test must pin the full scenario, not one
+parameter of it.**
+
+Suite **1660 assertions ALL PASS** in Debug, Release (under `set -e`), and
+clean under **ASan x3** (count varies 1658-1659 under ASan — some OS-focus
+assertions gate on `isForegroundProcess`). **macOS 1.0.19 pkg** signed +
+notarized + stapled, `spctl` accepted, universal, minos 11.0, md5
+`9a811ec06cfb4f1cb722951146e742d9`. **Windows exe from draft release
+`ci-windows-ed0e16f`** (CI run `35382701173`), md5
+`7077978c9548e5960ae55bc3cd6506f5`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.19/`. Repo
+is PUBLIC. Paste-ready tester note: `docs/tester-note-1.0.19.txt`. Changelog
+`## 1.0.19` states plainly the 1.0.18 callout was removed on purpose.
+
+**Pending**: Mike installs the 1.0.19 pkg (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.19-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic), runs
+the gauntlet, and sends both installers + the note to the testers. Bump to
+1.0.20 for anything after that.
+
+**Open/optional**: the crossfade wedge visualization has a full-alpha left
+edge that can read like a marker line — taste call for Mike once he looks
+at it. `Theme.h`'s unused `assignWaiting` token. Pre-existing (not
+introduced this round): running certain randomize tests in isolation via
+`--only` segfaults at process teardown in a background JUCE thread AFTER
+the test's own assertions pass; does not occur in a full-suite run (exits
+0), so `build_release.sh`'s gate is unaffected.
+
+**Agent management notes (append to existing lessons)**: agents backgrounded
+their own work twice despite an explicit FOREGROUND ONLY instruction,
+stalling the handback; a subagent piped the full suite through `tail -60`
+and reported "1 FAILURES" without ever seeing which assertion failed (rule:
+redirect the full suite to a file and grep the whole file, never pipe
+through tail); `pgrep -f "<pattern>"` in a wait loop matches the loop's OWN
+command line and never exits (use a bracketed character class, e.g.
+`[S]PASynthTests`).
+
 ## Current state (2026-09-11): v1.0.15 (main `656a8bb`) built + staged; the big tester-feedback round
 
 **1.0.14 was installed and CONFIRMED by Mike (recording crash gone) but

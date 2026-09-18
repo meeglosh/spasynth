@@ -581,12 +581,41 @@ diffing before any release.
 5. Send `docs/launch-email.md` / `docs/social-posts.md` (now current, reflect
    the full shipping feature set) — marketing site is already confirmed live
    and accurate by Mike.
-6. Rebase `hardening-safe` (`d7f38c3`) onto current main and get Mike's Logic
-   verification before shipping any of it.
+6. Decide what to do with `hardening-safe` (see "Branches" below). It is NOT
+   a merge; treat it as a source to extract from.
 
 Windows real-DAW smoke test is **done** — Paul and Phil both tested Windows
 on 1.0.8, no issues. Marketing site is **done** — confirmed live/accurate by
 Mike directly.
+
+## Branches (2026-09-18): main is the only one to work from
+
+`main` is current and everything from every round is on it. Two old
+branches remain on the remote and **neither should be merged**:
+
+- **`audit-hardening` — ABANDONED, do not merge, ever.** Decision of record
+  2026-09-05: the signed build from it produced loud pulsing noise bursts in
+  Logic and the standalone that 1.0.12 did not. The likely cause was later
+  found and fixed independently (the FDNReverb one-past-the-end read, in
+  1.0.14), but the branch was never re-verified and predates ~90 commits of
+  change. Kept on the remote for history only.
+- **`hardening-safe` (`d7f38c3`) — do not merge, extract from.** It is 85
+  commits BEHIND main and 1 ahead, sitting on 1.0.13's main, and roughly a
+  third of it is already superseded: its hermetic-tests work landed
+  independently in 1.0.15 in a better form (settings override plus the
+  real-Factory leak guard). Merging it would drag the old version back in.
+  What is still genuinely worth having, as fresh work rather than a merge:
+  - **A Windows test gate in CI.** This is the valuable one. Without it,
+    `Process::setDockIconVisible` being macOS-only broke every Windows CI
+    run for 31 commits of the 1.0.15 round before anyone noticed, because
+    nothing failed loudly.
+  - Atomic preset writes (temp file plus rename), so a crash mid-save
+    cannot corrupt a preset.
+  - SHA-pinned CI actions, publishing gated to push.
+  - A license-file read cap and sample-header validation, both small and
+    defensive.
+  None of it touches the audio thread. Land it as a fresh commit on current
+  main, verified normally, not as a branch merge.
 
 ## Versioning rule (Mike's call)
 

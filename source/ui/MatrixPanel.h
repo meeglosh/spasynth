@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
+#include <set>
 #include <utility>
 
 namespace spa::ui
@@ -117,6 +118,8 @@ public:
 
     explicit MatrixPanel (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (apvtsIn)
     {
+        content.owner = this;
+
         for (int r = 0; r < params::numModRoutes; ++r)
         {
             auto row = std::make_unique<Row>();
@@ -260,6 +263,41 @@ public:
         box.simulatePopupClosedWithoutSelectionForTest();
     }
 
+    // Mod-route reveal (see Controls.h's RevealClickSlider and
+    // ContentComponent::revealMatrixRoutes): highlights every row in
+    // `routes` in the same violet as an assigned knob, and scrolls the
+    // viewport so the FIRST one is visible. Persists until explicitly
+    // cleared -- no fade, no timer -- since the point is to keep working on
+    // the row after finding it. Replaces whatever was previously
+    // highlighted (a fresh reveal always starts from a clean slate).
+    void setRevealedRoutes (const std::vector<int>& routes)
+    {
+        revealedRoutes.clear();
+        for (auto r : routes)
+            revealedRoutes.insert (r);
+        content.repaint();
+        if (! routes.empty())
+            scrollRouteIntoView (routes.front());
+    }
+
+    // Clicking anywhere that isn't an assigned knob, or Esc, or entering
+    // ASSIGN mode all clear the reveal (see ContentComponent). No-op (no
+    // repaint) if nothing was highlighted, so this is safe to call
+    // unconditionally on every click.
+    void clearRevealedRoutes()
+    {
+        if (revealedRoutes.empty())
+            return;
+        revealedRoutes.clear();
+        content.repaint();
+    }
+
+    bool isRouteRevealedForTest (int route) const { return revealedRoutes.count (route) != 0; }
+    int getRevealedRouteCountForTest() const { return (int) revealedRoutes.size(); }
+    int getRowHeightForTest() const { return rowHeight; }
+    int getViewPositionYForTest() const { return viewport.getViewPositionY(); }
+    int getViewHeightForTest() const { return viewport.getViewHeight(); }
+
     void paint (juce::Graphics& g) override
     {
         draw::panel (g, getLocalBounds().toFloat());
@@ -269,7 +307,6 @@ public:
 
     void resized() override
     {
-        constexpr int rowHeight = 25;
         {
             auto headerArea = getLocalBounds().removeFromTop (metrics::sectionHeaderHeight);
             assignBtn.setBounds (headerArea.removeFromRight (70).reduced (6, 5));
@@ -445,12 +482,69 @@ private:
             onAssignToggled (assignMode);
     }
 
+    static constexpr int rowHeight = 25;
+
+    // Scrolls the viewport the minimum amount needed to bring `route`'s row
+    // fully into view -- a no-op if it's already visible, so a reveal of an
+    // already-visible row doesn't yank the scroll position around.
+    void scrollRouteIntoView (int route)
+    {
+        if (route < 0 || route >= (int) rows.size())
+            return;
+        const auto rowTop = route * rowHeight;
+        const auto rowBottom = rowTop + rowHeight;
+        const auto curY = viewport.getViewPositionY();
+        const auto viewH = viewport.getViewHeight();
+        if (rowTop < curY)
+            viewport.setViewPosition (viewport.getViewPositionX(), rowTop);
+        else if (rowBottom > curY + viewH)
+            viewport.setViewPosition (viewport.getViewPositionX(), rowBottom - viewH);
+    }
+
+    // A translucent violet band (+ outline) behind each revealed row's
+    // controls -- the small gaps `resized()` leaves between rows/columns
+    // (Row bounds are `.reduced(2,3)` and there are 4px gutters between the
+    // source/dest/depth columns) let it read clearly even though the combo
+    // boxes paint their own opaque backgrounds over most of the row. Fixed
+    // modAssignedColour() (violet), deliberately never Theme::assignGlow/
+    // assignSelected (blue/yellow) -- see the class comment on
+    // setRevealedRoutes for why this must read as "the same violet as the
+    // knob", not as another ASSIGN-mode visual. Pure read of `revealedRoutes`
+    // -- never mutates state (paint() must never do that).
+    void paintRevealHighlights (juce::Graphics& g) const
+    {
+        if (revealedRoutes.empty())
+            return;
+        const auto colour = modAssignedColour();
+        for (auto r : revealedRoutes)
+        {
+            if (r < 0 || r >= (int) rows.size())
+                continue;
+            const juce::Rectangle<int> rowBounds (0, r * rowHeight, content.getWidth(), rowHeight);
+            g.setColour (colour.withAlpha (0.22f));
+            g.fillRect (rowBounds);
+            g.setColour (colour.withAlpha (0.85f));
+            g.drawRect (rowBounds, 2);
+        }
+    }
+
+    // Nested (not a lambda/std::function member) so paint() has zero extra
+    // indirection cost at 30+ fps; a nested class is a member of MatrixPanel
+    // for access purposes (C++11+), so it can reach paintRevealHighlights()
+    // directly via `owner`.
+    struct RowsHost : public juce::Component
+    {
+        MatrixPanel* owner = nullptr;
+        void paint (juce::Graphics& g) override { owner->paintRevealHighlights (g); }
+    };
+
     juce::AudioProcessorValueTreeState& apvts;
-    juce::Component content;
+    RowsHost content;
     juce::Viewport viewport;
     std::vector<std::unique_ptr<Row>> rows;
     AssignButton assignBtn { "ASSIGN" };
     AssignMode assignMode = AssignMode::off;
+    std::set<int> revealedRoutes;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)
 };

@@ -40,6 +40,69 @@ class ModAssignSource
 public:
     virtual ~ModAssignSource() = default;
     virtual ModAssignInfo getModAssignInfo (int destIndex) const = 0;
+
+    // Called by an assigned (violet) Knob (see RevealClickSlider below) on
+    // a plain click -- press and release, no drag -- inside its inner disk:
+    // reveal which matrix rows currently target this mod destination.
+    // Implemented by ContentComponent, which owns the per-instance
+    // MatrixPanel and can turn destIndex back into route numbers (see
+    // ContentComponent::revealMatrixRoutes in SPASynthEditor.cpp). Must be a
+    // no-op while ASSIGN mode is active -- a knob click there already means
+    // "select this as a route endpoint" (see MatrixPanel/AssignOverlay).
+    // In practice AssignOverlay itself already swallows the click before it
+    // ever reaches the knob while assign mode is on (its
+    // setInterceptsMouseClicks(true,false)), so this is a second,
+    // defense-in-depth guard at the implementation, not the only one.
+    virtual void revealMatrixRoutes (int destIndex) = 0;
+};
+
+// A rotary juce::Slider that additionally detects a plain click -- pressed
+// and released with no drag -- inside its own inner disk (the area inside
+// the ring, excluding the ring stroke itself), and fires onPlainClick when
+// that happens. Geometry is worked out from the SAME formula
+// SPASynthLookAndFeel::drawRotarySlider/AssignOverlay::knobRingGeometry use
+// to draw the ring (bounds.reduced(2), radius/lineW/arcRadius), so the
+// clickable disk always matches what's actually drawn rather than a
+// hardcoded pixel radius. Used by Knob (below) to let an assigned knob
+// reveal its matrix routes without competing with dragging the knob's own
+// value, which requires no such click-without-drag distinction elsewhere
+// on the ring/track.
+class RevealClickSlider : public juce::Slider
+{
+public:
+    std::function<void()> onPlainClick;
+
+    // Test-only: runs exactly the body a real qualifying click would run,
+    // without needing real mouse-event geometry/timing (same rationale as
+    // MatrixPanel's simulateClick() and friends).
+    void simulatePlainClickForTest() { if (onPlainClick) onPlainClick(); }
+
+private:
+    float innerClickRadius() const
+    {
+        const auto bounds = getLocalBounds().toFloat().reduced (2.0f);
+        const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+        const auto lineW = juce::jlimit (1.6f, 2.6f, radius * 0.12f);
+        const auto arcRadius = radius - lineW * 1.2f;
+        return juce::jmax (0.0f, arcRadius - lineW);
+    }
+
+    bool eligibleDown = false;   // press landed inside the inner disk
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const auto centre = getLocalBounds().toFloat().reduced (2.0f).getCentre();
+        eligibleDown = centre.getDistanceFrom (e.position) <= innerClickRadius();
+        juce::Slider::mouseDown (e);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        juce::Slider::mouseUp (e);
+        if (eligibleDown && ! e.mouseWasDraggedSinceMouseDown() && onPlainClick)
+            onPlainClick();
+        eligibleDown = false;
+    }
 };
 
 // One shared 30 Hz timer polling every live Knob for its modulation-viz
@@ -146,6 +209,23 @@ public:
         modDestIdx = params::modDestIndex (paramID);
         if (modDestIdx >= 0)
             detail::ModVizClock::get().add (this);
+
+        // Click-to-reveal: only assigned (violet) knobs do anything here --
+        // pollModViz publishes "modAssigned" onto this same slider's
+        // properties (see below), so that's the single source of truth an
+        // unassigned knob's click reads and bails on. ASSIGN mode's own
+        // precedence is handled entirely on the ModAssignSource side (see
+        // its declaration comment) -- not here, so this stays a thin click
+        // detector.
+        slider.onPlainClick = [this]
+        {
+            if (modDestIdx < 0)
+                return;
+            if (! (bool) slider.getProperties().getWithDefault ("modAssigned", false))
+                return;
+            if (auto* src = findParentComponentOfClass<ModAssignSource>())
+                src->revealMatrixRoutes (modDestIdx);
+        };
     }
 
     ~Knob() override
@@ -193,7 +273,7 @@ public:
         slider.setBounds (area);
     }
 
-    juce::Slider slider;
+    RevealClickSlider slider;
     juce::Label label;
 
     // Drop the parameter attachment early, for controls that can outlive

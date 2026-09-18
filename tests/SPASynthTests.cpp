@@ -11399,6 +11399,258 @@ namespace
         }
     }
 
+    // Clicking an assigned (violet) knob's inner disk reveals which matrix
+    // rows currently target its parameter (Controls.h's RevealClickSlider,
+    // ContentComponent::revealMatrixRoutes, MatrixPanel::setRevealedRoutes).
+    // Aggregate assertions (one per behaviour, not per row/pixel):
+    static void modRouteRevealTest()
+    {
+        std::cout << "modRouteRevealTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+
+        // Baseline for the real-focus check at the end (see its comment):
+        // captured right here, AFTER the window is shown (so any one-time
+        // OS focus-on-window-activation side effect has already happened)
+        // but BEFORE this test's own clicking begins -- so that check
+        // measures "did our click sequence change focus", not "is focus
+        // null". Showing a real native window (addToDesktop/setVisible just
+        // above) can itself cause the OS to hand initial keyboard focus to
+        // some focusable descendant purely as a side effect of window
+        // activation, when this process happens to be the real foreground/
+        // interactive one -- that is environment noise unrelated to
+        // anything this feature's click handling does, and it is exactly
+        // the class of flake CLAUDE.md documents for real-OS-focus checks.
+        auto* focusBeforeAnyClicks = juce::Component::getCurrentlyFocusedComponent();
+
+        spa::ui::ContentComponent* content = nullptr;
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        spa::ui::AssignOverlay* overlay = nullptr;
+        std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+        {
+            if (content == nullptr) content = dynamic_cast<spa::ui::ContentComponent*> (&c);
+            if (matrixPanel == nullptr) matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            if (overlay == nullptr) overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+            for (auto* child : c.getChildren()) findParts (*child);
+        };
+        findParts (*editor);
+        expect (content != nullptr && matrixPanel != nullptr && overlay != nullptr,
+                "ContentComponent/MatrixPanel/AssignOverlay found");
+        if (content == nullptr || matrixPanel == nullptr || overlay == nullptr)
+        {
+            editor->removeFromDesktop();
+            return;
+        }
+
+        // Two rows (9, 11) target filter1Cutoff; one row (3) targets a
+        // DIFFERENT destination (filter1Resonance), so we can prove no
+        // bleed. A third destination (osc A level) is left completely
+        // unrouted, for the "unassigned knob" checks.
+        const int cutoffDestChoice = params::modDestIndex (id::filter1Cutoff) + 1;
+        const int resonanceDestChoice = params::modDestIndex (id::filter1Resonance) + 1;
+        setParam (proc, id::routeParam (9, id::route::source), (float) params::ModSource::lfo1);
+        setParam (proc, id::routeParam (9, id::route::dest), (float) cutoffDestChoice);
+        setParam (proc, id::routeParam (11, id::route::source), (float) params::ModSource::lfo2);
+        setParam (proc, id::routeParam (11, id::route::dest), (float) cutoffDestChoice);
+        setParam (proc, id::routeParam (3, id::route::source), (float) params::ModSource::lfo1);
+        setParam (proc, id::routeParam (3, id::route::dest), (float) resonanceDestChoice);
+
+        auto* cutoffSlider = dynamic_cast<juce::Slider*> (findByParamID (*editor, id::filter1Cutoff));
+        auto* unassignedSlider = dynamic_cast<juce::Slider*> (
+            findByParamID (*editor, id::oscSlot (0, id::osc::level)));
+        expect (cutoffSlider != nullptr && unassignedSlider != nullptr,
+                "cutoff knob (assigned) + osc A level knob (unassigned) found");
+        if (cutoffSlider == nullptr || unassignedSlider == nullptr)
+        {
+            editor->removeFromDesktop();
+            return;
+        }
+
+        // Wait on the ACTUAL modAssigned property the 30Hz ModVizClock
+        // publishes (Controls.h's Knob::pollModViz), rather than a fixed
+        // pump -- a fixed delay races the real timer under CPU load in this
+        // headless harness (same reasoning as modAssignFocusTest's
+        // waitForToggle) and was observed flaky on a loaded machine.
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+            while (! (bool) cutoffSlider->getProperties().getWithDefault ("modAssigned", false)
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        expect ((bool) cutoffSlider->getProperties().getWithDefault ("modAssigned", false),
+                "cutoff knob's slider published modAssigned (ModVizClock)");
+
+        // A real click: press and release at dead centre (always inside the
+        // inner disk), no drag, through the actual virtual mouseDown/mouseUp
+        // so the click-detection geometry itself is exercised, not just the
+        // reveal logic behind it.
+        const auto clickCentre = [] (juce::Component& c)
+        {
+            const auto centre = c.getLocalBounds().toFloat().getCentre();
+            juce::MouseEvent down (juce::Desktop::getInstance().getMainMouseSource(), centre,
+                                   juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                   &c, &c, juce::Time::getCurrentTime(), centre,
+                                   juce::Time::getCurrentTime(), 1, false);
+            c.mouseDown (down);
+            c.mouseUp (down);
+        };
+
+        clickCentre (*cutoffSlider);
+
+        // 1) exactly rows 9 and 11 are marked, nothing else -- catches both
+        // "reveal does nothing" and "reveal marks the wrong/every row".
+        {
+            bool ok = true;
+            juce::String bad;
+            for (int r = 0; r < params::numModRoutes; ++r)
+            {
+                const bool expected = (r == 9 || r == 11);
+                if (matrixPanel->isRouteRevealedForTest (r) != expected)
+                {
+                    ok = false;
+                    bad << r << " ";
+                }
+            }
+            expect (ok, "exactly rows 9 and 11 marked (both target the clicked dest), no others"
+                        + (bad.isEmpty() ? juce::String() : (" -- mismatches at: " + bad)));
+        }
+
+        // 2) scrolled so the FIRST marked row (9) is fully visible.
+        {
+            const auto rowH = matrixPanel->getRowHeightForTest();
+            const auto y = matrixPanel->getViewPositionYForTest();
+            const auto h = matrixPanel->getViewHeightForTest();
+            expect (9 * rowH >= y && 9 * rowH + rowH <= y + h,
+                    "viewport scrolled so row 9 (the first match) is fully visible");
+        }
+
+        // 3) persists across a repaint (paint() must only ever READ the
+        // highlight set, never mutate it -- render offscreen to prove it).
+        {
+            juce::Image image (juce::Image::ARGB, juce::jmax (1, matrixPanel->getWidth()),
+                               juce::jmax (1, matrixPanel->getHeight()), true);
+            juce::Graphics g (image);
+            matrixPanel->paintEntireComponent (g, false);
+            expect (matrixPanel->getRevealedRouteCountForTest() == 2,
+                    "highlight survives a repaint unchanged (still 2 rows)");
+        }
+
+        // 4) clicking an unassigned knob marks nothing (from a clean slate).
+        matrixPanel->clearRevealedRoutes();
+        clickCentre (*unassignedSlider);
+        expect (matrixPanel->getRevealedRouteCountForTest() == 0,
+                "clicking an unassigned knob reveals nothing");
+
+        // 5) ASSIGN mode takes precedence: latch it on, click the (still
+        // violet) cutoff knob directly -- must mark nothing -- but assign
+        // mode's OWN click-to-select behaviour must still work.
+        matrixPanel->simulateDoubleClick();
+        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched,
+                "entered latch mode for this check");
+        clickCentre (*cutoffSlider);
+        expect (matrixPanel->getRevealedRouteCountForTest() == 0,
+                "assigned-knob click reveals nothing while ASSIGN mode is active");
+        {
+            const auto p = overlay->getLocalArea (cutoffSlider, cutoffSlider->getLocalBounds()).getCentre();
+            overlay->handleClickAt (p);
+            expect (overlay->isSelected (cutoffSlider),
+                    "ASSIGN mode's own click-to-select still works while reveal is suppressed");
+        }
+        matrixPanel->simulateClick();   // latched -> off
+        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::off,
+                "left assign mode");
+
+        // 6) re-establish a reveal, then clear on click-elsewhere and on Esc.
+        clickCentre (*cutoffSlider);
+        expect (matrixPanel->getRevealedRouteCountForTest() == 2, "reveal re-established after leaving ASSIGN");
+
+        {
+            juce::MouseEvent elsewhere (juce::Desktop::getInstance().getMainMouseSource(),
+                                        juce::Point<float>(), juce::ModifierKeys(),
+                                        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, content, content,
+                                        juce::Time::getCurrentTime(), juce::Point<float>(),
+                                        juce::Time::getCurrentTime(), 1, false);
+            content->mouseDown (elsewhere);
+        }
+        expect (matrixPanel->getRevealedRouteCountForTest() == 0,
+                "a click anywhere else (through ContentComponent::mouseDown) clears the reveal");
+
+        clickCentre (*cutoffSlider);
+        expect (matrixPanel->getRevealedRouteCountForTest() == 2, "reveal re-established again");
+        content->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+        expect (matrixPanel->getRevealedRouteCountForTest() == 0, "Esc clears the reveal");
+
+        // 7) nothing involved took real keyboard focus -- the rule this kind
+        // of click-handling addition is most likely to break. Two halves:
+        //
+        // (a) STATIC, always runs regardless of environment: no component
+        // in the editor now has click-focus-grab enabled (same allowlist/
+        // sweep as modAssignFocusTest). This alone already proves our new
+        // click path never flips setMouseClickGrabsKeyboardFocus/
+        // setWantsKeyboardFocus on anything -- every Knob/RevealClickSlider
+        // still has both disabled from the Knob ctor, untouched by this
+        // feature, and revealMatrixRoutes/setRevealedRoutes/
+        // scrollRouteIntoView (source-reviewed) never call
+        // grabKeyboardFocus() anywhere.
+        //
+        // (b) DYNAMIC, real OS focus: compares focus AFTER our whole click
+        // sequence to focusBeforeAnyClicks (captured right after the window
+        // was shown, before any clicking) rather than asserting it's null.
+        // Asserting null was the bug here -- getCurrentlyFocusedComponent()
+        // is process-wide, and simply showing a real native window
+        // (addToDesktop/setVisible) can hand it initial focus as a one-time
+        // side effect of window activation whenever this test happens to be
+        // the actual foreground/interactive process, with nothing to do
+        // with any click in this test (observed directly: pass/FAIL/pass
+        // across identical runs). Gated on isForegroundProcess() the same
+        // way modAssignFocusTest/popupAnchoringTest are, since a real OS
+        // focus grab/comparison isn't meaningful otherwise.
+        {
+            int offenders = 0;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                const bool allowed = dynamic_cast<juce::TextEditor*> (&c) != nullptr
+                                   || c.findParentComponentOfClass<juce::TextEditor>() != nullptr
+                                   || dynamic_cast<juce::MidiKeyboardComponent*> (&c) != nullptr
+                                   || dynamic_cast<spa::ui::PresetBrowser*> (&c) != nullptr
+                                   || c.findParentComponentOfClass<spa::ui::PresetBrowser>() != nullptr;
+                if (! allowed && c.getMouseClickGrabsKeyboardFocus())
+                    ++offenders;
+                for (auto* child : c.getChildren())
+                    walk (*child);
+            };
+            walk (*editor);
+            expect (offenders == 0, juce::String (offenders) + " component(s) now grab keyboard focus on click");
+
+            if (juce::Process::isForegroundProcess())
+            {
+                auto* focusAfterAllClicks = juce::Component::getCurrentlyFocusedComponent();
+                expect (focusAfterAllClicks == focusBeforeAnyClicks,
+                        "real keyboard focus is unchanged by this test's whole click sequence "
+                        "(before: " + juce::String::toHexString ((juce::pointer_sized_int) focusBeforeAnyClicks)
+                        + ", after: " + juce::String::toHexString ((juce::pointer_sized_int) focusAfterAllClicks) + ")");
+            }
+            else
+            {
+                std::cout << "  ..   not a real foreground/interactive process in this environment "
+                             "(Process::isForegroundProcess() == false) -- skipping the real-OS-focus "
+                             "comparison; the click-focus-grab sweep above still covers the "
+                             "deterministic half\n";
+            }
+        }
+
+        editor->removeFromDesktop();
+    }
+
     // ASSIGN gains two modes (product-owner spec): one-shot (single click
     // from off) self-exits the instant the matrix row just written becomes
     // fully populated (source AND dest both non-"None"); latch (double
@@ -14199,6 +14451,7 @@ int main (int argc, char* argv[])
     modAssignModeTest();
     modAssignFocusTest();
     assignGlowShapeTest();
+    modRouteRevealTest();
     assignModeTest();
     modRouteAutoDepthTest();
     tabLayoutInvarianceTest();

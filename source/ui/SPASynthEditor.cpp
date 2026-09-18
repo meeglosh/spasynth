@@ -1022,6 +1022,30 @@ ModAssignInfo ContentComponent::getModAssignInfo (int destIndex) const
     return modAssignTable.get (destIndex);
 }
 
+void ContentComponent::revealMatrixRoutes (int destIndex)
+{
+    // See the ModAssignSource interface comment: ASSIGN mode owns knob
+    // clicks for something else entirely, and AssignOverlay already
+    // swallows the click before it reaches the knob while active -- this is
+    // the defense-in-depth half of that guard.
+    if (assignOverlay != nullptr && assignOverlay->isAssignActive())
+        return;
+
+    // Read live parameter state, the same convention ModAssignTable::rebuild
+    // and AssignOverlay use: a route's DEST combo choice is destIndex + 1
+    // ("None" is choice 0).
+    std::vector<int> routes;
+    auto& apvts = processor.getAPVTS();
+    for (int r = 0; r < params::numModRoutes; ++r)
+    {
+        auto* destRaw = apvts.getRawParameterValue (
+            params::id::routeParam (r, params::id::route::dest));
+        if (destRaw != nullptr && (int) destRaw->load() - 1 == destIndex)
+            routes.push_back (r);
+    }
+    matrixPanel.setRevealedRoutes (routes);
+}
+
 ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> themeChanged)
     : processor (p), onThemeChanged (std::move (themeChanged)),
       modAssignTable (p.getAPVTS()),
@@ -1483,6 +1507,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addAndMakeVisible (popupFocusAnchor);
     matrixPanel.onAssignToggled = [this] (spa::ui::MatrixPanel::AssignMode mode)
     {
+        // Entering ASSIGN mode clears any mod-route reveal highlight --
+        // a knob click means something else entirely once assign is active.
+        if (mode != spa::ui::MatrixPanel::AssignMode::off)
+            matrixPanel.clearRevealedRoutes();
+
         assignOverlay->setOneShotMode (mode == spa::ui::MatrixPanel::AssignMode::oneShot);
         assignOverlay->setAssignMode (mode != spa::ui::MatrixPanel::AssignMode::off, *this,
             matrixPanel.assignButton().getBounds()
@@ -1595,6 +1624,14 @@ void ContentComponent::applyMidiLearnMenuResult (int result, const juce::String&
 
 void ContentComponent::mouseDown (const juce::MouseEvent& e)
 {
+    // Mod-route reveal: any click anywhere clears a highlight left over
+    // from a previous assigned-knob click (see revealMatrixRoutes). This
+    // runs via addMouseListener(this, true) below for every click in the
+    // whole subtree, so it fires BEFORE a fresh reveal's own mouseUp (the
+    // knob's RevealClickSlider fires onPlainClick on release) -- clear then
+    // set, never the other way round.
+    matrixPanel.clearRevealedRoutes();
+
     if (! e.mods.isPopupMenu())
         return;
 
@@ -2524,6 +2561,11 @@ bool ContentComponent::keyPressed (const juce::KeyPress& key)
     // see the comment in togglePresetBrowser(). Mirrors PresetBrowser::
     // keyPressed's own Esc handling for the case where focus is inside the
     // browser instead.
+    // Esc always clears a mod-route reveal highlight too, whatever else it
+    // does below.
+    if (key == juce::KeyPress::escapeKey)
+        matrixPanel.clearRevealedRoutes();
+
     if (key == juce::KeyPress::escapeKey && assignOverlay != nullptr && assignOverlay->isAssignActive())
     {
         matrixPanel.setAssignOn (false);

@@ -112,6 +112,10 @@ public:
     // can move them. See Controls.h's ModAssignSource/ModAssignInfo and the
     // ModAssignTable definition below.
     ModAssignInfo getModAssignInfo (int destIndex) const override;
+    // ModAssignSource: reveal every matrix row targeting destIndex (see the
+    // interface's declaration comment in Controls.h). Implemented in
+    // SPASynthEditor.cpp.
+    void revealMatrixRoutes (int destIndex) override;
 
     void pollMidiLearnBadgeNow() { timerCallback(); }
     juce::String getMidiLearnBadgeText() const { return midiLearnBadge.getText(); }

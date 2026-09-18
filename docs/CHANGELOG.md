@@ -41,6 +41,14 @@
   oscillators, both filters, Organic Chaos, the arpeggiator, and each FX tab.
   The mod matrix, envelopes and LFOs are always live, so their titles are
   unchanged.
+- Clicking the centre of a knob that is already wired into the mod matrix
+  (the ones that turn violet) now jumps straight to its routes: every matrix
+  row that targets it lights up in the same violet, and the matrix scrolls
+  so the first one is on screen right away. This is a plain click, not a
+  drag, so it never gets in the way of turning the knob. The highlight stays
+  put while you work on the row, and clears the moment you click anywhere
+  else, press Esc, or switch on ASSIGN mode, whose own blue highlighting
+  means something different and is unaffected by this.
 
 ## 1.0.16
 

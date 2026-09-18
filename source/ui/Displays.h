@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
 #include "../dsp/Telemetry.h"
+#include <vector>
 
 namespace spa
 {
@@ -77,6 +78,27 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    // Loop crossfade (XFADE) ramp geometry, normalized 0..1 file positions --
+    // computed via dsp::SamplePlayer::effectiveXfadeSamples on the SAME
+    // effective (snapped when SYNC is on) bounds the engine actually loops
+    // on, so this can never disagree with what's heard. This is the SINGLE
+    // SOURCE of the drawn geometry: paintDisplay() calls this and draws
+    // exactly these regions (not a separate re-derivation), and it is also
+    // used directly by tests to assert on real geometry without a pixel
+    // read. Empty when nothing would be drawn (mode != sample, LOOP off, or
+    // no crossfade room). insideBand marks the ramp that sits within
+    // [loopStart, loopEnd] -- the other one, outside the band, is the
+    // actually-borrowed material (see the class comment in Displays.cpp for
+    // why both directions exist).
+    struct XfadeRamp
+    {
+        float fromNorm = 0.0f;
+        float toNorm = 0.0f;
+        bool insideBand = false;
+        bool fadeIn = false;
+    };
+    std::vector<XfadeRamp> getXfadeRamps() const;
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;

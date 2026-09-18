@@ -39,13 +39,18 @@ void showPopupAnchored (juce::Component& anchor, juce::PopupMenu& menu,
 //  - destMenu    : a matrix row's DEST combo.
 //  - sourceMenu  : a matrix row's SOURCE combo.
 //
-// Clicking a destination/source selects it (solid yellow); clicking a menu
-// of the matching kind routes the current selection into that row (source or
-// dest, overwriting whatever was there) and OVERWRITES via
-// setValueNotifyingHost -- selection persists so the same object can be
-// assigned into several rows. Esc or the ASSIGN button turning off clears
-// selection and fades the glow out over ~300ms, then stops painting/hit-
-// testing entirely.
+// Since Phil's two-button follow-up (see MatrixPanel::AssignKind), a session
+// is always single-purpose: setAssignKind() tells rebuildTargets() which TWO
+// of the four kinds above to even collect (source+sourceMenu, or
+// destination+destMenu) -- the other two are simply absent from `targets`
+// for the whole session, so they neither glow nor hit-test.
+//
+// Clicking a destination/source selects it (solid yellow); clicking the
+// matching menu kind routes the current selection into that row (overwriting
+// whatever was there) and OVERWRITES via setValueNotifyingHost -- selection
+// persists so the same object can be assigned into several rows. Esc or an
+// ASSIGN button turning off clears selection and fades the glow out over
+// ~300ms, then stops painting/hit-testing entirely.
 class AssignOverlay : public juce::Component, private juce::Timer
 {
 private:
@@ -112,26 +117,33 @@ public:
 
     // Told by MatrixPanel (via ContentComponent's wiring) whether the CURRENT
     // assign session is one-shot (MatrixPanel::AssignMode::oneShot) rather
-    // than latched. Only affects whether a completed route calls
-    // onOneShotComplete -- everything else about assigning is identical in
-    // both modes.
+    // than latched. Only affects whether a write calls onOneShotComplete --
+    // everything else about assigning is identical in both modes.
     void setOneShotMode (bool on) { oneShotActive = on; }
 
-    // Fired from setRouteChoice, one-shot mode only, when the matrix row just
-    // written now has BOTH its source and its destination set to something
-    // other than "None" (see kNoneChoiceIndex). The owner (ContentComponent)
-    // wires this to matrixPanel.setAssignOn(false), which exits assign mode
-    // exactly as if the user had clicked the button off.
-    std::function<void()> onOneShotComplete;
+    // Told by MatrixPanel (via ContentComponent's wiring) which half of the
+    // matrix the CURRENT assign session targets (Phil's tester request: two
+    // separate single-purpose ASSIGN buttons instead of one that armed both
+    // a destination pick and a source pick at once). Must be set BEFORE
+    // setAssignMode(true, ...) is called, since that's what rebuildTargets()
+    // (called from inside setAssignMode) filters on.
+    void setAssignKind (MatrixPanel::AssignKind kind) { sessionKind = kind; }
 
-    // Fired from setRouteChoice after EVERY write, real route index, so the
-    // owner (ContentComponent) can show/clear the "waiting for its other
-    // half" state on that specific matrix row (see MatrixPanel::
-    // setWaitingRoute). Called with the route that was just touched --
-    // whether it's now complete or not is the owner's own call via
-    // routeIsComplete, shared with maybeCompleteOneShot above so the two
-    // can't disagree.
-    std::function<void (int route)> onRouteWritten;
+    // Fired from setRouteChoice, one-shot mode only, after THIS session's
+    // own write -- i.e. on any write while one-shot is active, regardless of
+    // whether the touched row is now fully populated. The owner
+    // (ContentComponent) wires this to matrixPanel.setAssignOn(false), which
+    // exits assign mode exactly as if the user had clicked the button off.
+    //
+    // This is required by the two-button model: a session only ever writes
+    // its own kind (source or dest -- see rebuildTargets' filtering), so a
+    // SOURCE-only session inherently leaves the row half-filled by design
+    // (Phil's follow-up: don't complain about that -- see MatrixPanel's
+    // isRouteDimmedForTest/paintInertRows for the quiet-dim replacement of
+    // the old "waiting for its other half" callout). The old completeness
+    // condition (routeIsComplete) would then simply never fire for a
+    // SOURCE-only session, so one-shot could never self-exit.
+    std::function<void()> onOneShotComplete;
 
     // Called when the set of controls under `rootComponent` may have
     // changed while assign mode is active (e.g. a tab switch revealed a
@@ -144,20 +156,21 @@ public:
             rebuildTargets();
     }
 
-    // Staged glow (product-owner spec, tester-driven): everything glowing at
-    // once made people click the matrix first, where nothing happens with no
-    // selection made. So glow is gated per target kind:
-    //  - stage 1 (nothing selected yet): destination/source targets glow,
-    //    inviting a first pick; the matrix (destMenu/sourceMenu) does not.
-    //  - stage 2 (something selected): the selected object shows the
-    //    existing solid "selected" treatment; destMenu glows once a
-    //    DESTINATION is selected, sourceMenu once a SOURCE is selected --
-    //    independently, so if only one kind has been picked so far, the
-    //    OTHER kind's targets (destination/source) keep glowing too, same as
-    //    stage 1 -- this is what makes "assign mode doesn't reset" after
-    //    writing one half of a route read as still-armed-for-the-other-half
-    //    rather than broken (see MatrixPanel::setWaitingRoute for the
-    //    row-level half of that same fix).
+    // Staged glow (product-owner spec, tester-driven originally, now
+    // simplified again by Phil's two-button follow-up): everything glowing
+    // at once made people click the matrix first, where nothing happens with
+    // no selection made. Now that a session only ever contains ONE kind of
+    // target (rebuildTargets filters by sessionKind -- a SOURCE session
+    // collects only source/sourceMenu, a DEST session only
+    // destination/destMenu; the other kind's controls are never even in
+    // `targets`, so they neither glow nor hit-test), the rule is just:
+    //  - nothing selected yet: the session's object kind (destination or
+    //    source) glows, inviting a first pick; the matching matrix column
+    //    (destMenu or sourceMenu) does not.
+    //  - something selected: the selected object shows the existing solid
+    //    "selected" treatment; the matching matrix column glows instead.
+    // There is no cross-kind coexistence to reason about any more -- the
+    // OTHER kind's controls simply aren't targets in this session at all.
     // Test hook: does `c` currently read as glowing (pulsing or selected),
     // per the exact same rule paint() uses -- lets a test check the staged
     // glow without rasterizing and reading pixels back.
@@ -417,6 +430,15 @@ private:
         return false;
     }
 
+    // Filters by `sessionKind` (see setAssignKind): a SOURCE session
+    // collects only source/sourceMenu targets, a DEST session only
+    // destination/destMenu targets -- the other kind's controls are never
+    // added to `targets` at all, so they neither glow nor hit-test (Phil's
+    // two-button follow-up request: one button's session should not offer
+    // the other half at all, "I don't care if the left side is missing").
+    // Tab bars are still collected unconditionally -- pass-through (see
+    // hitTest/isOverPassthroughTabBar) is orthogonal to which kind of
+    // target this session is after.
     void rebuildTargets()
     {
         targets.clear();
@@ -458,34 +480,37 @@ private:
             if (auto* bar = dynamic_cast<juce::TabbedButtonBar*> (&c))
                 tabBars.push_back (bar);
 
+            const bool wantSource = sessionKind == MatrixPanel::AssignKind::source;
+            const bool wantDest = sessionKind == MatrixPanel::AssignKind::dest;
+
             const auto paramID = c.getProperties()["paramID"].toString();
             if (paramID.isNotEmpty())
             {
                 const int menuRow = sourceMenuIds.indexOf (paramID);
                 const int destRow = destMenuIds.indexOf (paramID);
-                if (menuRow >= 0)
+                if (menuRow >= 0 && wantSource)
                 {
                     Target t; t.kind = Target::sourceMenu; t.comp = &c; t.route = menuRow;
                     targets.push_back (t);
                 }
-                else if (destRow >= 0)
+                else if (destRow >= 0 && wantDest)
                 {
                     Target t; t.kind = Target::destMenu; t.comp = &c; t.route = destRow;
                     targets.push_back (t);
                 }
-                else if (params::modDestIndex (paramID) >= 0)
+                else if (menuRow < 0 && destRow < 0 && wantDest && params::modDestIndex (paramID) >= 0)
                 {
                     Target t; t.kind = Target::destination; t.comp = &c; t.paramID = paramID;
                     targets.push_back (t);
                 }
             }
-            else if (c.getProperties().contains ("modSource"))
+            else if (wantSource && c.getProperties().contains ("modSource"))
             {
                 Target t; t.kind = Target::source; t.comp = &c;
                 t.modSourceValue = (int) c.getProperties()["modSource"];
                 targets.push_back (t);
             }
-            else if (c.getProperties().contains ("oscSlot"))
+            else if (wantSource && c.getProperties().contains ("oscSlot"))
             {
                 Target t; t.kind = Target::source; t.comp = &c;
                 t.oscSlot = (int) c.getProperties()["oscSlot"];
@@ -581,24 +606,20 @@ private:
         // the overlay at all. That is what makes it safe to fill Depth here;
         // see maybeAutoFillRouteDepth's own comment for the full contract.
         maybeAutoFillRouteDepth (apvts, route);
-        maybeCompleteOneShot (route);
-        if (onRouteWritten)
-            onRouteWritten (route);
+        maybeCompleteOneShot();
     }
 
-    // One-shot mode only: after writing a route choice, check whether the
-    // row just touched now has both a real source AND a real destination
-    // (routeIsComplete, shared with the auto-depth-fill above so the two
-    // definitions of "complete" can't drift apart); if so the row is
-    // "complete" and the product-owner spec says assign mode exits
-    // immediately, same as clicking the button off.
-    void maybeCompleteOneShot (int route)
+    // One-shot mode only: fires onOneShotComplete after EVERY write this
+    // session makes, unconditionally -- see onOneShotComplete's own comment
+    // for why "the row is now complete" (the old condition, routeIsComplete)
+    // can no longer be the trigger: a session only ever writes its own kind
+    // (source or dest), so a SOURCE-only session's row can be fully complete
+    // for as long as the user keeps using this session, by design.
+    void maybeCompleteOneShot()
     {
         if (! oneShotActive || onOneShotComplete == nullptr)
             return;
-
-        if (routeIsComplete (apvts, route))
-            onOneShotComplete();
+        onOneShotComplete();
     }
 
     float pulsePhase01() const
@@ -638,6 +659,7 @@ private:
     std::vector<juce::Component::SafePointer<juce::TabbedButtonBar>> tabBars;
     Target* selectedDest = nullptr;
     Target* selectedSource = nullptr;
+    MatrixPanel::AssignKind sessionKind = MatrixPanel::AssignKind::dest;
     bool active = false;
     bool oneShotActive = false;
     bool fadingOut = false;

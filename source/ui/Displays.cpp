@@ -136,6 +136,77 @@ float WaveDisplay::normToX (float norm, juce::Rectangle<float> area) const
     return area.getX() + ((norm - viewStart) / viewLength) * area.getWidth();
 }
 
+std::vector<WaveDisplay::XfadeRamp> WaveDisplay::getXfadeRamps() const
+{
+    std::vector<XfadeRamp> out;
+    namespace id = params::id;
+
+    const auto mode = (params::OscMode) (int) value (id::oscSlot (slot, id::osc::mode));
+    if (mode != params::OscMode::sample)
+        return out;
+
+    if (value (id::oscSlot (slot, id::osc::loop)) < 0.5f)
+        return out;
+
+    const auto sample = processor.getSample (slot);
+    if (sample == nullptr)
+        return out;
+
+    const auto lenSamples = (double) sample->lengthSamples();
+    if (lenSamples < 2.0)
+        return out;
+    const auto lastSampleSrc = juce::jmax (0.0, lenSamples - 1.0);
+
+    dsp::SamplePlayer::Params xfP;
+    xfP.sample = sample.get();
+    xfP.loop = true;
+    xfP.loopStartNorm = value (id::oscSlot (slot, id::osc::loopStart));
+    xfP.loopEndNorm   = value (id::oscSlot (slot, id::osc::loopEnd));
+    xfP.loopXfade     = value (id::oscSlot (slot, id::osc::loopXfade)) * 0.01f;
+
+    // SYNC (beat-grid snap): same effective bounds the engine actually
+    // loops on, whether or not SYNC is on -- the crossfade now applies in
+    // both sync states (the stretcher applies it per-grain too), so the
+    // ramps must sit on the snapped seam under SYNC to match what's heard.
+    if (value (id::oscSlot (slot, id::osc::syncToBpm)) >= 0.5f)
+    {
+        const auto beatsOverride = value (id::oscSlot (slot, id::osc::syncBeatsOverride));
+        const auto lengthSeconds = sample->lengthSeconds();
+        const auto nativeBpm = beatsOverride > 0.0f && lengthSeconds > 1.0e-6
+                              ? 60.0 * beatsOverride / lengthSeconds
+                              : sample->detectedBpm;
+        if (nativeBpm > 1.0 && lengthSeconds > 1.0e-6)
+        {
+            xfP.snapToGrid = true;
+            xfP.gridBeatSeconds = 60.0 / nativeBpm;
+            xfP.gridOffsetSeconds = sample->firstOnsetSeconds;
+        }
+    }
+
+    double xfLoopStart = 0.0, xfLoopEnd = 0.0;
+    dsp::SamplePlayer::effectiveLoopBoundsSamples (xfP, lenSamples, xfLoopStart, xfLoopEnd);
+
+    bool usePreRoll = true;
+    const auto X = dsp::SamplePlayer::effectiveXfadeSamples (xfP, lastSampleSrc, xfLoopStart, xfLoopEnd, usePreRoll);
+    if (X <= 0.0)
+        return out;
+
+    const auto toNorm = [lenSamples] (double s) { return (float) (s / lenSamples); };
+
+    if (usePreRoll)
+    {
+        out.push_back ({ toNorm (xfLoopEnd - X), toNorm (xfLoopEnd), true, false });       // fade-out, inside the band
+        out.push_back ({ toNorm (xfLoopStart - X), toNorm (xfLoopStart), false, true });   // fade-in, outside (borrowed run-up)
+    }
+    else
+    {
+        out.push_back ({ toNorm (xfLoopStart), toNorm (xfLoopStart + X), true, true });    // fade-in, inside the band
+        out.push_back ({ toNorm (xfLoopEnd), toNorm (xfLoopEnd + X), false, false });      // fade-out, outside (borrowed tail)
+    }
+
+    return out;
+}
+
 void WaveDisplay::zoomAt (float normCursor, float factor)
 {
     const auto newLen = juce::jlimit (minViewLength, 1.0f, viewLength / factor);
@@ -476,6 +547,61 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         g.setColour (t.accentMod.withAlpha (0.85f));
         g.drawLine (lx0, area.getY(), lx0, area.getBottom(), 1.0f);
         g.drawLine (lx1, area.getY(), lx1, area.getBottom(), 1.0f);
+
+        // Loop crossfade (XFADE) visualization: two matched ramps at the
+        // seam showing WHERE the blend material comes from -- because the
+        // crossfade borrows audio from OUTSIDE the loop, exactly one ramp
+        // of each pair sits outside the band above (that's the borrowed
+        // material) and the other sits inside it. Geometry comes from
+        // getXfadeRamps() (single source of this geometry, also used by
+        // tests), which calls the engine's own effectiveXfadeSamples on the
+        // SAME effective (snapped when SYNC is on) bounds the engine
+        // actually loops on, so this can never disagree with what's heard
+        // -- including under SYNC, where the stretcher now applies this
+        // same crossfade per-grain. Kept subordinate to the crisp accentMod
+        // edge lines just drawn above: a soft fill (0.22 alpha, fading to
+        // 0) plus a thin 0.7-alpha stroke of the actual equal-power curve
+        // the engine uses.
+        for (const auto& ramp : getXfadeRamps())
+        {
+            constexpr int steps = 20;
+            const auto x0 = markerX (ramp.fromNorm);
+            const auto x1 = markerX (ramp.toNorm);
+            // At extreme zoom-out on a long file, x0/x1 can round to the
+            // same (or a sub-pixel-apart) pixel; ColourGradient with
+            // coincident points is degenerate, so skip drawing this ramp.
+            if (std::abs (x1 - x0) < 0.5f)
+                continue;
+            const auto topY = area.getY();
+            const auto bottomY = area.getBottom();
+
+            juce::Path curve;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const auto w = (float) i / (float) steps;
+                const auto ang = w * juce::MathConstants<float>::halfPi;
+                const auto g01 = ramp.fadeIn ? std::sin (ang) : std::cos (ang);
+                const auto x = x0 + (x1 - x0) * w;
+                const auto y = bottomY + (topY - bottomY) * g01;
+                if (i == 0) curve.startNewSubPath (x, y); else curve.lineTo (x, y);
+            }
+
+            auto wedge = curve;
+            wedge.lineTo (x1, bottomY);
+            wedge.lineTo (x0, bottomY);
+            wedge.closeSubPath();
+
+            // Full alpha at the curve's peak end, fading to 0 at the other.
+            const auto peakX = ramp.fadeIn ? x1 : x0;
+            const auto zeroX = ramp.fadeIn ? x0 : x1;
+            juce::ColourGradient grad (t.accentMod.withAlpha (0.22f), peakX, bottomY,
+                                       t.accentMod.withAlpha (0.0f), zeroX, bottomY, false);
+            g.setGradientFill (grad);
+            g.fillPath (wedge);
+
+            g.setColour (t.accentMod.withAlpha (0.7f));
+            g.strokePath (curve, juce::PathStrokeType (1.0f));
+        }
     }
 
     // LOOP + SYNC on: beat-grid ticks across the file, spaced at the
@@ -552,13 +678,14 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         if (mode == params::OscMode::sample && ! live)
         {
             // Idle sample mode: this is the START point, not a moving
-            // playhead -- draw it as a short, subtle top tick (textSecondary)
-            // rather than a bright full-height line so it doesn't compete
-            // with the crisper loop start/end markers above.
+            // playhead -- draw it full height like the loop markers so it
+            // reads clearly against the whole waveform, but keep it in
+            // textSecondary (dimmer than the accentMod loop start/end
+            // markers and the bright textPrimary live playhead) so it stays
+            // visually distinguishable from both rather than competing.
             const auto sx = markerX (marker);
             g.setColour (t.textSecondary.withAlpha (0.9f));
-            g.drawLine (sx, area.getY(), sx,
-                       area.getY() + juce::jmin (10.0f, area.getHeight() * 0.3f), 1.0f);
+            g.drawLine (sx, area.getY(), sx, area.getBottom(), 1.0f);
         }
         else
         {

@@ -33,6 +33,10 @@ public:
         double loopStartNorm = 0.0;
         double loopEndNorm = 1.0;
 
+        // Loop crossfade, 0..1 of the available crossfade room (see
+        // computeXfadeSamples). 0 = hard loop, the pre-1.0.19 behaviour.
+        double loopXfade = 0.0;
+
         // Beat-grid snap (LOOP + SYNC): loop points are quantised to the
         // sample's detected beat grid -- a whole number of beats (minimum 1),
         // anchored at the first detected onset -- before use. Applied here at
@@ -47,6 +51,7 @@ public:
     {
         position = sample != nullptr ? startNorm * sample->lengthSamples() : 0.0;
         done = sample == nullptr;
+        wrapped = false;
         stretch = StretchState {};
         stretch.playheadSource = position;
     }
@@ -83,6 +88,20 @@ public:
         computeLoopBounds (p, lengthSamples, loopStartOut, loopEndOut);
     }
 
+    // Effective loop crossfade length (source samples) and direction, for
+    // callers that need to reason about the crossfade window without owning
+    // a SamplePlayer -- the UI's loop-crossfade visualization. Mirrors
+    // computeXfadeSamples exactly (same pattern as
+    // effectiveLoopBoundsSamples above, added for exactly this reason): the
+    // display must never re-derive this math, so there is exactly one
+    // implementation and the picture can never disagree with what's heard.
+    static double effectiveXfadeSamples (const Params& p, double lastSample,
+                                         double loopStart, double loopEnd,
+                                         bool& usePreRollOut) noexcept
+    {
+        return computeXfadeSamples (p, lastSample, loopStart, loopEnd, usePreRollOut);
+    }
+
     struct StereoSample { float left = 0.0f, right = 0.0f; };
 
     StereoSample getNextSample (const Params& p) noexcept
@@ -99,7 +118,10 @@ public:
         computeLoopBounds (p, len, loopStart, loopEnd);
 
         if (p.loop && position >= loopEnd)
+        {
             position = loopStart + std::fmod (position - loopEnd, juce::jmax (1.0, loopEnd - loopStart));
+            wrapped = true;
+        }
 
         if (position >= lastSample)
         {
@@ -107,18 +129,33 @@ public:
             return {};
         }
 
-        const auto i0 = (int) position;
-        const auto frac = (float) (position - (double) i0);
         const auto& audio = p.sample->audio;
+        const auto rightChan = audio.getNumChannels() > 1 ? 1 : 0;
 
-        const auto* ch0 = audio.getReadPointer (0);
-        const auto left = ch0[i0] + frac * (ch0[i0 + 1] - ch0[i0]);
+        bool usePreRoll = true;
+        const auto X = p.loop ? computeXfadeSamples (p, lastSample, loopStart, loopEnd, usePreRoll) : 0.0;
 
-        auto right = left;
-        if (audio.getNumChannels() > 1)
+        float left, right;
+
+        if (X > 0.0)
         {
-            const auto* ch1 = audio.getReadPointer (1);
-            right = ch1[i0] + frac * (ch1[i0 + 1] - ch1[i0]);
+            left  = readLoopCrossfaded (audio, 0, position, wrapped, loopStart, loopEnd, X, usePreRoll);
+            right = readLoopCrossfaded (audio, rightChan, position, wrapped, loopStart, loopEnd, X, usePreRoll);
+        }
+        else
+        {
+            const auto i0 = (int) position;
+            const auto frac = (float) (position - (double) i0);
+
+            const auto* ch0 = audio.getReadPointer (0);
+            left = ch0[i0] + frac * (ch0[i0 + 1] - ch0[i0]);
+
+            right = left;
+            if (audio.getNumChannels() > 1)
+            {
+                const auto* ch1 = audio.getReadPointer (1);
+                right = ch1[i0] + frac * (ch1[i0 + 1] - ch1[i0]);
+            }
         }
 
         position += p.rateRatio;
@@ -126,6 +163,103 @@ public:
     }
 
 private:
+    // Crossfade room: we only ever borrow audio that exists OUTSIDE the loop
+    // -- the run-up before loopStart, or the tail after loopEnd -- so the
+    // loop period is never shortened (product decision: XFADE must not
+    // change timing, which would drift against SYNC's beat grid). Capped at
+    // half the loop so a short loop can't crossfade into itself end-to-end.
+    // Shared by BOTH the classic path and the SYNC stretcher's per-grain
+    // reads (see readLoopCrossfaded) -- the stretcher's overlap-add smooths
+    // GRAIN boundaries, not the loop seam itself: each grain's read position
+    // still folds from loopEnd back to loopStart mid-grain, so a real
+    // discontinuity survives there too, worse on a beat-locked loop that
+    // hits the same seam on every repeat.
+    //
+    // Direction (pre-roll vs. post-roll) is chosen from which side has MORE
+    // available room, INDEPENDENT of the knob (loopXfade)/X. Comparing
+    // against X instead would make the direction depend on knob position --
+    // on a sample with a small run-up but a large tail, low knob values
+    // would borrow from the run-up and then, as the knob passed the point
+    // where X exceeds preRoom, silently flip to borrowing from the tail,
+    // audibly changing character mid-sweep. Choosing by room is stable
+    // across the whole knob range; since room == max(preRoom, postRoom),
+    // maxX (and therefore X) is unchanged by this -- only the direction is.
+    static double computeXfadeSamples (const Params& p, double lastSample,
+                                       double loopStart, double loopEnd,
+                                       bool& usePreRollOut) noexcept
+    {
+        usePreRollOut = true;
+        if (! p.loop || p.loopXfade <= 0.0)
+            return 0.0;
+
+        const auto preRoom  = loopStart;
+        const auto postRoom = juce::jmax (0.0, lastSample - loopEnd);
+        const auto usePreRoll = (preRoom >= postRoom);
+        const auto room = usePreRoll ? preRoom : postRoom;
+        const auto maxX = juce::jmin ((loopEnd - loopStart) * 0.5, room);
+        const auto X = juce::jlimit (0.0, maxX, p.loopXfade * maxX);
+
+        usePreRollOut = usePreRoll;
+        return X;
+    }
+
+    // Reads the source at `pos` (already folded into the loop) applying the
+    // loop crossfade. Shared by the classic path (getNextSample) and the
+    // SYNC stretcher's per-grain reads (getNextStretchedSample) so the two
+    // can never disagree. `hasWrapped` says whether this read head has
+    // already passed loopEnd at least once: the post-roll form must not
+    // blend post-loop tail material into the very FIRST pass through the
+    // loop start, because at that point nothing has been heard from after
+    // loopEnd yet. Returns the plain interpolated sample unchanged when
+    // xfadeSamples <= 0 or pos is outside the crossfade window.
+    // Position-domain (source samples), so it's rate-agnostic: correct under
+    // both classic playback and time-stretch, since X naturally stretches
+    // with the material.
+    static float readLoopCrossfaded (const juce::AudioBuffer<float>& audio, int channel,
+                                     double pos, bool hasWrapped,
+                                     double loopStart, double loopEnd,
+                                     double xfadeSamples, bool usePreRoll) noexcept
+    {
+        const auto X = xfadeSamples;
+
+        if (X > 0.0 && usePreRoll && pos < loopEnd && pos >= loopEnd - X)
+        {
+            // Pre-roll: crossfade the last X samples before the wrap into a
+            // preview of what plays immediately after it (the same
+            // material, read one loop-length ahead of loopStart) -- so by
+            // the time the wrap actually fires, we're already fully on the
+            // incoming side and the wrap itself is inaudible. Correct on
+            // the very first pass through the tail, no state needed.
+            const auto d = pos - (loopEnd - X);
+            const auto w = juce::jlimit (0.0, 1.0, d / X);
+            const auto ang = w * juce::MathConstants<double>::halfPi;
+            const auto gOut = (float) std::cos (ang);
+            const auto gIn  = (float) std::sin (ang);
+            const auto incomingPos = pos - (loopEnd - loopStart);
+
+            return gOut * readClamped (audio, channel, pos) + gIn * readClamped (audio, channel, incomingPos);
+        }
+
+        if (X > 0.0 && hasWrapped && ! usePreRoll && pos >= loopStart && (pos - loopStart) < X)
+        {
+            // Post-roll: no run-up room before loopStart, so instead the
+            // material just after loopStart (incoming) is crossfaded with
+            // the tail that would have played had the previous lap
+            // continued past loopEnd (outgoing) -- borrowed from just after
+            // loopEnd. Only valid once we've actually wrapped once.
+            const auto d = pos - loopStart;
+            const auto w = juce::jlimit (0.0, 1.0, d / X);
+            const auto ang = w * juce::MathConstants<double>::halfPi;
+            const auto gOut = (float) std::cos (ang);
+            const auto gIn  = (float) std::sin (ang);
+            const auto outgoingPos = loopEnd + d;
+
+            return gIn * readClamped (audio, channel, pos) + gOut * readClamped (audio, channel, outgoingPos);
+        }
+
+        return readClamped (audio, channel, pos);
+    }
+
     // Effective loop bounds in source samples: raw loopStartNorm/loopEndNorm
     // * length, optionally quantised to the beat grid (see snapToGrid), then
     // clamped/degenerate-guarded exactly as before snapping was added. The
@@ -225,6 +359,10 @@ private:
         double loopStart, loopEnd;
         computeLoopBounds (p, len, loopStart, loopEnd);
         const auto loopSpan = juce::jmax (1.0, loopEnd - loopStart);
+        const auto rightChan = audio.getNumChannels() > 1 ? 1 : 0;
+
+        bool usePreRoll = true;
+        const auto X = p.loop ? computeXfadeSamples (p, lastSample, loopStart, loopEnd, usePreRoll) : 0.0;
 
         // ~40 ms grains, halved to ~20 ms right at a detected onset.
         const auto baseLenOut = 0.04 * juce::jmax (1.0, p.engineSampleRate);
@@ -266,8 +404,18 @@ private:
             }
 
             const auto w = hann (juce::jlimit (0.0, 1.0, g.outPhase / juce::jmax (1.0, g.lenOut)));
-            left  += w * readClamped (audio, 0, readPos);
-            right += w * readClamped (audio, audio.getNumChannels() > 1 ? 1 : 0, readPos);
+            // `wrapped` (has the PLAYHEAD looped at least once, not this
+            // grain individually) is shared by every grain so overlapping
+            // grains reading the same region always agree on which
+            // crossfade form applies -- otherwise two grains straddling a
+            // wrap could disagree about the source value at the same
+            // position and the overlap-add would reconstruct a hybrid
+            // rather than the intended equal-power law. It is also more
+            // correct: a grain spawned just before the wrap and still
+            // ringing across it is genuinely reading its own continuation,
+            // not borrowed material from an unrelated earlier pass.
+            left  += w * readLoopCrossfaded (audio, 0, readPos, wrapped, loopStart, loopEnd, X, usePreRoll);
+            right += w * readLoopCrossfaded (audio, rightChan, readPos, wrapped, loopStart, loopEnd, X, usePreRoll);
 
             g.outPhase += 1.0;
             if (g.outPhase >= g.lenOut)
@@ -280,7 +428,10 @@ private:
         if (p.loop)
         {
             if (stretch.playheadSource >= loopEnd)
+            {
                 stretch.playheadSource = loopStart + std::fmod (stretch.playheadSource - loopStart, loopSpan);
+                wrapped = true;
+            }
         }
         else if (stretch.playheadSource >= lastSample)
         {
@@ -298,6 +449,7 @@ private:
 
     double position = 0.0;   // in source samples
     bool done = true;
+    bool wrapped = false;    // has looped at least once since noteOn (post-roll crossfade gate)
 };
 
 } // namespace spa::dsp

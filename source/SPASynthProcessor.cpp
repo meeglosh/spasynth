@@ -61,6 +61,7 @@ SPASynthProcessor::SPASynthProcessor()
         rs.loop        = apvts.getRawParameterValue (pid (params::id::osc::loop));
         rs.loopStart   = apvts.getRawParameterValue (pid (params::id::osc::loopStart));
         rs.loopEnd     = apvts.getRawParameterValue (pid (params::id::osc::loopEnd));
+        rs.loopXfade   = apvts.getRawParameterValue (pid (params::id::osc::loopXfade));
         rs.keytrack    = apvts.getRawParameterValue (pid (params::id::osc::keytrack));
         rs.rootNote    = apvts.getRawParameterValue (pid (params::id::osc::rootNote));
         rs.syncToBpm         = apvts.getRawParameterValue (pid (params::id::osc::syncToBpm));
@@ -1514,6 +1515,9 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.loop        = rs.loop->load() >= 0.5f;
         slot.loopStart   = rs.loopStart->load();
         slot.loopEnd     = rs.loopEnd->load();
+        // Param is 0..100%, the DSP/voice side wants 0..1 -- normalize here,
+        // the one place that conversion happens.
+        slot.loopXfade   = rs.loopXfade->load() * 0.01f;
         slot.keytrack    = rs.keytrack->load() >= 0.5f;
         slot.rootNote    = (int) rs.rootNote->load();
         slot.grainPitch  = rs.grainPitch->load();

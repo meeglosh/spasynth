@@ -459,6 +459,7 @@ private:
         std::atomic<float>* loop = nullptr;
         std::atomic<float>* loopStart = nullptr;
         std::atomic<float>* loopEnd = nullptr;
+        std::atomic<float>* loopXfade = nullptr;
         std::atomic<float>* keytrack = nullptr;
         std::atomic<float>* rootNote = nullptr;
         std::atomic<float>* syncToBpm = nullptr;

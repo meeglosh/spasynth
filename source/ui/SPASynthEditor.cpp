@@ -1482,33 +1482,26 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     popupFocusAnchor.setInterceptsMouseClicks (false, false);
     popupFocusAnchor.setBounds (0, 0, 1, 1);
     addAndMakeVisible (popupFocusAnchor);
-    matrixPanel.onAssignToggled = [this] (spa::ui::MatrixPanel::AssignMode mode)
+    matrixPanel.onAssignToggled = [this] (spa::ui::MatrixPanel::AssignMode mode,
+                                          spa::ui::MatrixPanel::AssignKind kind)
     {
         // Entering ASSIGN mode clears any mod-route reveal highlight --
         // a knob click means something else entirely once assign is active.
         if (mode != spa::ui::MatrixPanel::AssignMode::off)
             matrixPanel.clearRevealedRoutes();
-        else
-            matrixPanel.setWaitingRoute (-1);   // leaving ASSIGN clears any half-filled-row callout
 
         assignOverlay->setOneShotMode (mode == spa::ui::MatrixPanel::AssignMode::oneShot);
+        assignOverlay->setAssignKind (kind);
         assignOverlay->setAssignMode (mode != spa::ui::MatrixPanel::AssignMode::off, *this,
-            matrixPanel.assignButton().getBounds()
+            matrixPanel.assignButtonsBounds()
                 .translated (matrixPanel.getX(), matrixPanel.getY()));
     };
     // One-shot mode's self-exit (see MatrixPanel::AssignMode::oneShot and
     // AssignOverlay::maybeCompleteOneShot): route it through the SAME exit
-    // path a manual click-off uses, so the button/overlay/property all stay
-    // in sync via MatrixPanel::applyMode.
+    // path a manual click-off uses, so the buttons/overlay/property all stay
+    // in sync via MatrixPanel::applyMode. setAssignOn(false) keeps whatever
+    // kind was active -- turning off doesn't care which.
     assignOverlay->onOneShotComplete = [this] { matrixPanel.setAssignOn (false); };
-    // Half-filled-row feedback (see MatrixPanel::setWaitingRoute): after
-    // EVERY ASSIGN write, show the "waiting" callout on that row unless it's
-    // now complete -- routeIsComplete is the same predicate one-shot exit
-    // uses, so the two can't disagree about what "done" means.
-    assignOverlay->onRouteWritten = [this] (int route)
-    {
-        matrixPanel.setWaitingRoute (routeIsComplete (processor.getAPVTS(), route) ? -1 : route);
-    };
 
     // Tab clicks must keep switching tabs while ASSIGN is active (see
     // AssignOverlay::hitTest), and once they do, newly revealed controls on

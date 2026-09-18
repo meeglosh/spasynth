@@ -39,6 +39,7 @@ struct SharedState
         bool loop = true;
         float loopStart = 0.0f;
         float loopEnd = 1.0f;
+        float loopXfade = 0.0f;   // 0..1, normalized (processor divides the 0..100% param by 100)
         bool keytrack = true;
         int rootNote = 60;
         float grainPitch = 0.0f;

@@ -95,6 +95,12 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
     auto* loopEndPtr = loopEndKnob.get();
     sampleKnobs.push_back (std::move (loopStartKnob));
     sampleKnobs.push_back (std::move (loopEndKnob));
+    auto xfadeKnob = knob (pid (id::osc::loopXfade), "XFADE");
+    xfadeKnob->slider.setTooltip ("Crossfades the loop point so the seam is inaudible. The "
+                                  "crossfade borrows audio from outside the loop, so the loop "
+                                  "length never changes.");
+    auto* loopXfadePtr = xfadeKnob.get();
+    sampleKnobs.push_back (std::move (xfadeKnob));
     sampleKnobs.push_back (knob (pid (id::osc::rootNote), "ROOT"));
     loop = std::make_unique<Toggle> (apvts, pid (id::osc::loop), "LOOP");
     keytrackSample = std::make_unique<Toggle> (apvts, pid (id::osc::keytrack), "KEY");
@@ -111,11 +117,14 @@ OscStrip::OscStrip (SPASynthProcessor& p, int slotIndex)
                                "loop -- set it differently from the project (or other "
                                "oscillators) for polyrhythms.");
 
-    // LOOP ST/END only matter while looping is on -- independent of the
-    // mode-driven visibility switch below, so it survives mode round-trips.
+    // LOOP ST/END/XFADE only matter while looping is on -- independent of
+    // the mode-driven visibility switch below, so it survives mode
+    // round-trips. XFADE is meaningful in BOTH sync states (the SYNC
+    // stretcher applies the same crossfade per-grain -- see SamplePlayer's
+    // readLoopCrossfaded), so it dims with LOOP alone, exactly like ST/END.
     loopRangeEnable = std::make_unique<DependentEnable> (
         apvts, pid (id::osc::loop), [] (float v) { return v >= 0.5f; },
-        std::vector<juce::Component*> { loopStartPtr, loopEndPtr });
+        std::vector<juce::Component*> { loopStartPtr, loopEndPtr, loopXfadePtr });
 
     granularKnobs.push_back (knob (pid (id::osc::grainSize), "SIZE"));
     granularKnobs.push_back (knob (pid (id::osc::grainDensity), "DENSITY"));

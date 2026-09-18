@@ -1240,6 +1240,309 @@ namespace
         }
     }
 
+    // XFADE (loopXfade): turning it up must never change the loop's timing
+    // -- it only borrows audio from OUTSIDE the loop (the pre-loopStart
+    // run-up, or the post-loopEnd tail) to smooth the seam. Drives
+    // SamplePlayer directly with synthetic constant-valued zones so a
+    // genuine crossfade (vs. a hard cut) is unambiguous from the raw sample
+    // values, and with rateRatio=1.0 and integer start positions the exact
+    // output sample index of every event is known in advance -- so this
+    // asserts real values at real indices rather than scanning for
+    // patterns. Also covers the SYNC time-stretch path (getNextStretchedSample):
+    // its per-grain overlap-add smooths GRAIN boundaries, not the loop seam
+    // -- each grain's read position still folds from loopEnd back to
+    // loopStart mid-grain, so the same seam discontinuity survives there
+    // too, and the crossfade is shared (readLoopCrossfaded) to fix it.
+    static void sampleLoopXfadeTest()
+    {
+        std::cout << "sampleLoopXfadeTest\n";
+
+        constexpr double sampleRate = 48000.0;
+        constexpr float eps = 1.0e-4f;
+
+        bool anyNonFinite = false;
+
+        const auto render = [&] (const spa::dsp::SampleData& sample, double startNorm,
+                                 double loopStartNorm, double loopEndNorm, double loopXfade,
+                                 int numOut)
+        {
+            spa::dsp::SamplePlayer player;
+            player.noteOn (&sample, startNorm);
+            spa::dsp::SamplePlayer::Params p;
+            p.sample = &sample;
+            p.rateRatio = 1.0;
+            p.loop = true;
+            p.loopStartNorm = loopStartNorm;
+            p.loopEndNorm = loopEndNorm;
+            p.loopXfade = loopXfade;
+
+            std::vector<float> out;
+            out.reserve ((size_t) numOut);
+            for (int i = 0; i < numOut; ++i)
+            {
+                const auto s = player.getNextSample (p);
+                if (! std::isfinite (s.left) || ! std::isfinite (s.right))
+                    anyNonFinite = true;
+                out.push_back (s.left);
+            }
+            return out;
+        };
+
+        // --- Case A: pre-roll (loopStart well inside the file, loopEnd at
+        // the file's end -- no tail room, forces the pre-roll direction). --
+        {
+            constexpr int numSamples = 4000;
+            constexpr int loopStartI = 1000;
+            constexpr int zoneBoundary = 2999;   // == loopEnd(3999) - X(1000)
+            constexpr float valA = 0.3f;         // run-up + most of the loop interior
+            constexpr float valB = -0.3f;        // last 1000 samples before loopEnd
+
+            spa::dsp::SampleData sample;
+            sample.sourceSampleRate = sampleRate;
+            sample.audio.setSize (1, numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                sample.audio.setSample (0, i, i < zoneBoundary ? valA : valB);
+
+            const auto loopStartNorm = (double) loopStartI / numSamples;
+            constexpr int numOut = 3 * 2999;   // several loop wraps
+
+            const auto outHard  = render (sample, loopStartNorm, loopStartNorm, 1.0, 0.0, numOut);
+            const auto outXfade = render (sample, loopStartNorm, loopStartNorm, 1.0, 1.0, numOut);
+
+            // (a) loopXfade 0 is bit-identical to the pre-1.0.19 hard loop:
+            // the fade window (i = 1999..2998, positions 2999..3998, just
+            // before the wrap at loopEnd=3999) reads the real (unfaded)
+            // zone-B value, and the very next sample (i = 2999, freshly
+            // wrapped to loopStart) jumps straight to zone A -- the audible
+            // seam XFADE exists to fix.
+            bool hardMatchesZones = true;
+            for (int i = 1999; i < 2999; ++i)
+                if (std::abs (outHard[(size_t) i] - valB) > eps) hardMatchesZones = false;
+            if (std::abs (outHard[2999] - valA) > eps) hardMatchesZones = false;
+            expect (hardMatchesZones, "loopXfade=0 reproduces the exact hard-loop values/seam (pre-roll case)");
+
+            // (b) loopXfade 1: the same window is now a genuine blend -- it
+            // differs from the hard-cut value and moves monotonically from
+            // the outgoing (zone B) value toward the incoming (zone A) one.
+            bool differsFromHard = false;
+            bool monotonic = true;
+            for (int i = 1999; i < 2999; ++i)
+            {
+                if (std::abs (outXfade[(size_t) i] - outHard[(size_t) i]) > eps)
+                    differsFromHard = true;
+                if (i > 1999 && outXfade[(size_t) i] + eps < outXfade[(size_t) i - 1])
+                    monotonic = false;
+            }
+            expect (differsFromHard, "loopXfade=1 output differs from the hard-loop value inside the crossfade window");
+            expect (monotonic, "loopXfade=1 output moves monotonically across the crossfade window");
+            expect (std::abs (outXfade[1999] - valB) < eps, "crossfade window starts at the outgoing (zone B) value");
+            expect (outXfade[2998] > outXfade[1999] && outXfade[2998] < valA + eps,
+                    "crossfade window ends close to the incoming (zone A) value");
+            expect (std::abs (outXfade[2999] - outXfade[2998]) < std::abs (valA - valB) * 0.5f,
+                    "no hard jump across the wrap once crossfaded");
+
+            // (c) the loop PERIOD is unchanged between loopXfade 0 and 1 --
+            // the position sequence (hence timing) never depends on X, only
+            // the sample VALUES read at each position do.
+            {
+                spa::dsp::SamplePlayer playerHard, playerXfade;
+                playerHard.noteOn (&sample, loopStartNorm);
+                playerXfade.noteOn (&sample, loopStartNorm);
+                spa::dsp::SamplePlayer::Params pHard, pXfade;
+                pHard.sample = pXfade.sample = &sample;
+                pHard.rateRatio = pXfade.rateRatio = 1.0;
+                pHard.loop = pXfade.loop = true;
+                pHard.loopStartNorm = pXfade.loopStartNorm = loopStartNorm;
+                pHard.loopEndNorm = pXfade.loopEndNorm = 1.0;
+                pHard.loopXfade = 0.0;
+                pXfade.loopXfade = 1.0;
+
+                double maxPosDiff = 0.0;
+                for (int i = 0; i < numOut; ++i)
+                {
+                    playerHard.getNextSample (pHard);
+                    playerXfade.getNextSample (pXfade);
+                    maxPosDiff = juce::jmax (maxPosDiff,
+                        std::abs (playerHard.positionSeconds (&sample) - playerXfade.positionSeconds (&sample)));
+                }
+                expect (maxPosDiff < 1.0e-9, "loop period/timing is identical regardless of loopXfade (max position diff "
+                                                 + juce::String (maxPosDiff) + ")");
+            }
+        }
+
+        // --- Case D: post-roll (loopStart at 0 -- no pre-loop run-up,
+        // forces the post-roll direction, borrowing the tail past loopEnd).
+        {
+            constexpr int numSamples = 4000;
+            constexpr int loopEndI = 2000;
+            constexpr float valIn = 0.4f;    // the whole loop (played every lap)
+            constexpr float valOut = -0.4f;  // the 1000-sample tail just past loopEnd
+
+            spa::dsp::SampleData sample;
+            sample.sourceSampleRate = sampleRate;
+            sample.audio.setSize (1, numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if (i < loopEndI) sample.audio.setSample (0, i, valIn);
+                else if (i < loopEndI + 1000) sample.audio.setSample (0, i, valOut);
+                else sample.audio.setSample (0, i, 0.0f);
+            }
+
+            constexpr int numOut = 3000;   // one full lap (2000) + into the second
+
+            const auto outXfade = render (sample, 0.0, 0.0, 0.5, 1.0, numOut);
+            const auto outHard  = render (sample, 0.0, 0.0, 0.5, 0.0, numOut);
+
+            // First pass through [loopStart, loopStart+X) has no outgoing
+            // tail yet (the loop hasn't wrapped once) -- must NOT be
+            // crossfaded.
+            bool firstPassPlain = true;
+            for (int i = 0; i < 1000; ++i)
+                if (std::abs (outXfade[(size_t) i] - valIn) > eps) firstPassPlain = false;
+            expect (firstPassPlain, "post-roll direction: the first pass through loopStart is not crossfaded (no outgoing tail exists yet)");
+
+            // After the wrap at i=2000, the post-roll window (i=2000..2999)
+            // blends the tail (valOut) toward the normal continuation (valIn).
+            bool differsFromHard = false;
+            bool monotonic = true;
+            for (int i = 2000; i < 2999; ++i)
+            {
+                if (std::abs (outXfade[(size_t) i] - outHard[(size_t) i]) > eps)
+                    differsFromHard = true;
+                if (i > 2000 && outXfade[(size_t) i] + eps < outXfade[(size_t) i - 1])
+                    monotonic = false;
+            }
+            expect (differsFromHard, "post-roll crossfade differs from the hard-loop value after the wrap");
+            expect (monotonic, "post-roll crossfade moves monotonically across its window");
+            expect (std::abs (outXfade[2000] - valOut) < eps, "post-roll window starts at the outgoing (tail) value");
+        }
+
+        // (e) whole-file loop (loopStart=0, loopEnd=1.0): no room to
+        // crossfade (nothing exists outside the loop), so loopXfade must
+        // have no effect and must not crash or read out of bounds.
+        {
+            constexpr int numSamples = 500;
+            spa::dsp::SampleData sample;
+            sample.sourceSampleRate = sampleRate;
+            sample.audio.setSize (1, numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                sample.audio.setSample (0, i, std::sin (juce::MathConstants<float>::twoPi
+                                                          * 5.0f * (float) i / (float) numSamples));
+
+            const auto outHard  = render (sample, 0.0, 0.0, 1.0, 0.0, numSamples * 3);
+            const auto outXfade = render (sample, 0.0, 0.0, 1.0, 1.0, numSamples * 3);
+
+            bool identical = outHard.size() == outXfade.size();
+            for (size_t i = 0; identical && i < outHard.size(); ++i)
+                if (std::abs (outHard[i] - outXfade[i]) > eps) identical = false;
+            expect (identical, "whole-file loop: loopXfade has no room to act, output is unchanged");
+        }
+
+        // --- SYNC time-stretch path: the shared crossfade must reduce the
+        // same seam discontinuity there too. Source material has a large,
+        // obvious step at the seam so the effect is unambiguous; exercises
+        // a stretchRatio both below and above 1.0. ------------------------
+        {
+            constexpr int numSamples = 4000;
+            constexpr int loopStartI = 1000;
+            constexpr int loopEndI = 3000;
+            constexpr float valA = 1.0f;
+            constexpr float valB = -1.0f;
+
+            spa::dsp::SampleData sample;
+            sample.sourceSampleRate = sampleRate;
+            sample.audio.setSize (1, numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                sample.audio.setSample (0, i, i < loopEndI ? valA : valB);
+
+            const auto renderStretch = [&] (double stretchRatio, double loopXfade, int numOut)
+            {
+                spa::dsp::SamplePlayer player;
+                player.noteOn (&sample, (double) loopStartI / numSamples);
+                spa::dsp::SamplePlayer::Params p;
+                p.sample = &sample;
+                p.syncOn = true;
+                p.stretchRatio = stretchRatio;
+                p.pitchRatio = 1.0;
+                p.engineSampleRate = sampleRate;
+                p.loop = true;
+                p.loopStartNorm = (double) loopStartI / numSamples;
+                p.loopEndNorm = (double) loopEndI / numSamples;
+                p.loopXfade = loopXfade;
+
+                std::vector<float> out;
+                out.reserve ((size_t) numOut);
+                bool allFinite = true;
+                for (int i = 0; i < numOut; ++i)
+                {
+                    const auto s = player.getNextSample (p);
+                    if (! std::isfinite (s.left) || ! std::isfinite (s.right)) allFinite = false;
+                    out.push_back (s.left);
+                }
+                expect (allFinite, "SYNC stretch output stays finite (stretchRatio "
+                                       + juce::String (stretchRatio) + ", loopXfade " + juce::String (loopXfade) + ")");
+                return out;
+            };
+
+            const auto maxStepDiff = [] (const std::vector<float>& out)
+            {
+                float m = 0.0f;
+                for (size_t i = 1; i < out.size(); ++i)
+                    m = juce::jmax (m, std::abs (out[i] - out[i - 1]));
+                return m;
+            };
+
+            for (double stretchRatio : { 0.7, 1.2 })
+            {
+                constexpr int numOut = 20000;   // several loop periods regardless of ratio
+
+                const auto outHard  = renderStretch (stretchRatio, 0.0, numOut);
+                const auto outXfade = renderStretch (stretchRatio, 1.0, numOut);
+
+                const auto hardMaxStep  = maxStepDiff (outHard);
+                const auto xfadeMaxStep = maxStepDiff (outXfade);
+
+                expect (hardMaxStep > 0.3f,
+                        "sanity: the hard-loop stretch has an obvious step at the seam (stretchRatio "
+                            + juce::String (stretchRatio) + ", max step " + juce::String (hardMaxStep) + ")");
+                expect (xfadeMaxStep < hardMaxStep * 0.7f,
+                        "loopXfade measurably reduces the seam discontinuity under SYNC (stretchRatio "
+                            + juce::String (stretchRatio) + ": hard " + juce::String (hardMaxStep)
+                            + " vs xfade " + juce::String (xfadeMaxStep) + ")");
+
+                // Loop period/timing under SYNC is also unchanged by loopXfade.
+                spa::dsp::SamplePlayer playerHard, playerXfade;
+                playerHard.noteOn (&sample, (double) loopStartI / numSamples);
+                playerXfade.noteOn (&sample, (double) loopStartI / numSamples);
+                spa::dsp::SamplePlayer::Params pHard, pXfade;
+                pHard.sample = pXfade.sample = &sample;
+                pHard.syncOn = pXfade.syncOn = true;
+                pHard.stretchRatio = pXfade.stretchRatio = stretchRatio;
+                pHard.pitchRatio = pXfade.pitchRatio = 1.0;
+                pHard.engineSampleRate = pXfade.engineSampleRate = sampleRate;
+                pHard.loop = pXfade.loop = true;
+                pHard.loopStartNorm = pXfade.loopStartNorm = (double) loopStartI / numSamples;
+                pHard.loopEndNorm = pXfade.loopEndNorm = (double) loopEndI / numSamples;
+                pHard.loopXfade = 0.0;
+                pXfade.loopXfade = 1.0;
+
+                double maxPosDiff = 0.0;
+                for (int i = 0; i < numOut; ++i)
+                {
+                    playerHard.getNextSample (pHard);
+                    playerXfade.getNextSample (pXfade);
+                    maxPosDiff = juce::jmax (maxPosDiff,
+                        std::abs (playerHard.positionSeconds (&sample) - playerXfade.positionSeconds (&sample)));
+                }
+                expect (maxPosDiff < 1.0e-9, "SYNC loop period/timing is identical regardless of loopXfade (stretchRatio "
+                                                 + juce::String (stretchRatio) + ", max diff " + juce::String (maxPosDiff) + ")");
+            }
+        }
+
+        // (f) finite everywhere, across every render above.
+        expect (! anyNonFinite, "loop crossfade output stays finite in every case rendered above");
+    }
+
     // Writes a click-train WAV: numClicks short percussive bursts (2.5 kHz
     // ring, ~15 ms exponential decay -- a sharp attack for onset detection
     // to grab) spaced `periodSeconds` apart, with every accentEvery-th click
@@ -5073,28 +5376,44 @@ namespace
         // seed originally found to roll Arp Phrase mode at wildness 1.0 --
         // but the registry's RNG draw sequence shifts whenever a new
         // randomizable param is added anywhere before the arp params (most
-        // recently: the analog SUB knob), so the seed that reproduces this
-        // scenario isn't permanent. Rather than re-hardcode a new magic
-        // number every time that happens, search forward from 44 for the
-        // first seed that still rolls the scenario -- the comment below's
-        // "that's fine, this makes the mismatch visible" premise, automated.
+        // recently: the loop crossfade XFADE knob), so the seed that
+        // reproduces this scenario isn't permanent. Rather than re-hardcode
+        // a new magic number every time that happens, search forward from
+        // 44 for the first seed that still rolls the scenario -- the
+        // comment below's "that's fine, this makes the mismatch visible"
+        // premise, automated.
+        //
+        // The scenario requires BOTH Arp On AND Arp Mode = Phrase, not mode
+        // alone: arp::enable is itself randomizable and biased toward OFF
+        // (RandomSpec.biasCentre = 0.15f in ParameterRegistry.cpp), and
+        // arp::mode is randomized independently of it. A seed can roll
+        // Phrase mode while the arp is switched off -- randomizeAll()'s
+        // fast-retrigger attack clamp is correctly gated on
+        // `arpUnlocked && arp::enable >= 0.5f`, so on such a seed the clamp
+        // legitimately does not fire and the attack assertion below would
+        // fail for a reason that has nothing to do with the clamp being
+        // broken. Searching on mode alone found exactly such a seed once
+        // the XFADE param shifted the RNG stream.
         juce::int64 seed = 44;
         for (; seed < 44 + 500; ++seed)
         {
             juce::Random::getSystemRandom() = juce::Random (seed * 7919 + 13);
             proc.randomizeAll();
-            if ((params::ArpMode) (int) realValue (params::id::arp::mode) == params::ArpMode::phrase)
+            if (realValue (params::id::arp::enable) >= 0.5f
+                && (params::ArpMode) (int) realValue (params::id::arp::mode) == params::ArpMode::phrase)
                 break;
         }
 
         // The roll must still land on the scenario this test exists to
-        // cover (Arp Phrase mode, a fast-ish division) -- if a future,
-        // unrelated randomizeAll() change stops rolling this combination for
-        // every seed in the search window, that's fine, but this assertion
-        // makes the mismatch visible rather than silently testing nothing.
+        // cover (Arp On, Arp Phrase mode, a fast-ish division) -- if a
+        // future, unrelated randomizeAll() change stops rolling this
+        // combination for every seed in the search window, that's fine, but
+        // this assertion makes the mismatch visible rather than silently
+        // testing nothing.
+        const auto arpEnabled = realValue (params::id::arp::enable) >= 0.5f;
         const auto arpMode = (params::ArpMode) (int) realValue (params::id::arp::mode);
-        expect (arpMode == params::ArpMode::phrase,
-                "seed " + juce::String (seed) + " @ wildness 1.0 still rolls Arp Mode = Phrase "
+        expect (arpEnabled && arpMode == params::ArpMode::phrase,
+                "seed " + juce::String (seed) + " @ wildness 1.0 still rolls Arp On + Arp Mode = Phrase "
                     "(this test's premise)");
 
         // The fix itself: attack must have been clamped to a small fraction
@@ -8171,6 +8490,11 @@ namespace
 
         if (overlay != nullptr && oscStripA != nullptr)
         {
+            // An osc strip (tagged "oscSlot") is a SOURCE-kind target (see
+            // AssignOverlay::rebuildTargets' kind filtering) -- must set the
+            // session kind before arming, or it's filtered out entirely and
+            // the click below selects nothing.
+            overlay->setAssignKind (spa::ui::MatrixPanel::AssignKind::source);
             overlay->setAssignMode (true, *content, juce::Rectangle<int>());
             pumpFor (20);
 
@@ -10965,18 +11289,24 @@ namespace
         }
     }
 
-    // ASSIGN mode: click a destination (filter 1 cutoff), route it into two
-    // matrix rows (selection persists across assignments), click a source
-    // (LFO 2's tab) and route it into row 0's SOURCE menu, verify overwrite
-    // (a second destination replaces the first for a row already routed),
-    // and confirm Esc exits assign mode and fades/stops the overlay so a
-    // normal click on the knob afterwards is not intercepted.
+    // ASSIGN mode: latch the DEST session, click a destination (filter 1
+    // cutoff), route it into two matrix rows (selection persists across
+    // assignments), verify overwrite (a second destination replaces the
+    // first for a row already routed), then double-click the SOURCE button
+    // to switch into a latched SOURCE session and route LFO 2 into row 0's
+    // SOURCE menu, and confirm Esc exits assign mode and fades/stops the
+    // overlay so a normal click on the knob afterwards is not intercepted.
+    // (Two-button model -- see MatrixPanel::AssignKind: a single session is
+    // now always one kind only, so this is two latched sessions in
+    // sequence rather than one session doing both, which is how the old
+    // single-button ASSIGN worked.)
     static void modAssignModeTest()
     {
         std::cout << "modAssignModeTest\n";
 
         namespace params = spa::params;
         namespace id = spa::params::id;
+        using AssignKind = spa::ui::MatrixPanel::AssignKind;
 
         spa::SPASynthProcessor proc;
         proc.prepareToPlay (48000.0, 512);
@@ -10987,7 +11317,8 @@ namespace
         spa::ui::ContentComponent* content = nullptr;
         spa::ui::AssignOverlay* overlay = nullptr;
         spa::ui::MatrixPanel* matrixPanel = nullptr;
-        juce::Button* assignBtn = nullptr;
+        juce::Button* assignSourceBtn = nullptr;
+        juce::Button* assignDestBtn = nullptr;
         std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
         {
             if (content == nullptr)
@@ -10996,16 +11327,20 @@ namespace
                 overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
             if (matrixPanel == nullptr)
                 matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
-            if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
-                assignBtn = dynamic_cast<juce::Button*> (&c);
+            if (assignSourceBtn == nullptr && c.getComponentID() == "matrixAssignSource")
+                assignSourceBtn = dynamic_cast<juce::Button*> (&c);
+            if (assignDestBtn == nullptr && c.getComponentID() == "matrixAssignDest")
+                assignDestBtn = dynamic_cast<juce::Button*> (&c);
             for (auto* child : c.getChildren())
                 findParts (*child);
         };
         findParts (*editor);
 
-        expect (content != nullptr && overlay != nullptr && matrixPanel != nullptr && assignBtn != nullptr,
-                "ContentComponent/AssignOverlay/MatrixPanel/ASSIGN button all found");
-        if (content == nullptr || overlay == nullptr || matrixPanel == nullptr || assignBtn == nullptr)
+        expect (content != nullptr && overlay != nullptr && matrixPanel != nullptr
+                    && assignSourceBtn != nullptr && assignDestBtn != nullptr,
+                "ContentComponent/AssignOverlay/MatrixPanel/both ASSIGN buttons all found");
+        if (content == nullptr || overlay == nullptr || matrixPanel == nullptr
+                || assignSourceBtn == nullptr || assignDestBtn == nullptr)
             return;
 
         expect (! overlay->isAssignActive() && ! overlay->isVisible(),
@@ -11013,14 +11348,15 @@ namespace
 
         // This test exercises the old always-on ASSIGN behaviour (assign
         // several routes, overwrite one, stay on throughout) -- that is now
-        // LATCH mode (see assignModeTest for one-shot's self-exit-on-
-        // complete-route behaviour, which a single click would trigger
+        // LATCH mode (see assignModeTest for one-shot's self-exit-after-
+        // its-own-write behaviour, which a single click would trigger
         // partway through this sequence). simulateDoubleClick() applies
         // synchronously (no async command-message post like a real
         // Button::triggerClick), so no wait loop is needed here.
-        matrixPanel->simulateDoubleClick();
-        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched,
-                "entered latch mode for this test");
+        matrixPanel->simulateDoubleClick (AssignKind::dest);
+        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched
+                    && matrixPanel->getAssignKind() == AssignKind::dest,
+                "entered latched DEST mode for this test");
         expect (overlay->isAssignActive() && overlay->isVisible(),
                 "ASSIGN toggled on: overlay active + visible");
 
@@ -11061,7 +11397,30 @@ namespace
         expect (readChoice (id::routeParam (1, id::route::dest)) == cutoffDestChoice,
                 "row 1 dest == filter1Cutoff too (selection persisted)");
 
-        // Source: click LFO 2's tab button (tagged modSource == ModSource::lfo2).
+        // Overwrite: select a different destination (osc A level), assign
+        // into row 0 again -- it must replace filter1Cutoff, not stack.
+        auto* oscALevel = findByParamID (*editor, id::oscSlot (0, id::osc::level));
+        expect (oscALevel != nullptr, "osc A level knob found");
+        if (oscALevel != nullptr)
+        {
+            clickAt (*oscALevel);
+            expect (overlay->isSelected (oscALevel) && ! overlay->isSelected (cutoffKnob),
+                    "clicking a different knob replaces the destination selection");
+            clickAt (*row0Dest);
+            const int levelDestChoice = params::modDestIndex (id::oscSlot (0, id::osc::level)) + 1;
+            expect (readChoice (id::routeParam (0, id::route::dest)) == levelDestChoice,
+                    "row 0 dest OVERWRITTEN to osc A level");
+        }
+
+        // Switch to a latched SOURCE session (double-click the SOURCE
+        // button -- per the product-owner rule a double click always means
+        // latch, whatever the DEST session was doing). Source: click LFO 2's
+        // tab button (tagged modSource == ModSource::lfo2).
+        matrixPanel->simulateDoubleClick (AssignKind::source);
+        expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched
+                    && matrixPanel->getAssignKind() == AssignKind::source,
+                "switched to a latched SOURCE session");
+
         juce::Component* lfo2Tab = nullptr;
         std::function<void (juce::Component&)> findLfo2 = [&] (juce::Component& c)
         {
@@ -11087,21 +11446,6 @@ namespace
         clickAt (*row0Source);
         expect (readChoice (id::routeParam (0, id::route::source)) == (int) params::ModSource::lfo2,
                 "row 0 source == ModSource::lfo2 after click");
-
-        // Overwrite: select a different destination (osc A level), assign
-        // into row 0 again -- it must replace filter1Cutoff, not stack.
-        auto* oscALevel = findByParamID (*editor, id::oscSlot (0, id::osc::level));
-        expect (oscALevel != nullptr, "osc A level knob found");
-        if (oscALevel != nullptr)
-        {
-            clickAt (*oscALevel);
-            expect (overlay->isSelected (oscALevel) && ! overlay->isSelected (cutoffKnob),
-                    "clicking a different knob replaces the destination selection");
-            clickAt (*row0Dest);
-            const int levelDestChoice = params::modDestIndex (id::oscSlot (0, id::osc::level)) + 1;
-            expect (readChoice (id::routeParam (0, id::route::dest)) == levelDestChoice,
-                    "row 0 dest OVERWRITTEN to osc A level");
-        }
 
         // Esc exits assign mode; after the ~300ms fade the overlay stops
         // painting/intercepting entirely. Wait on the actual state change
@@ -11156,7 +11500,9 @@ namespace
         {
             if (keyboard == nullptr)
                 keyboard = dynamic_cast<juce::MidiKeyboardComponent*> (&c);
-            if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
+            // Either ASSIGN button exercises the same focus-retention/sweep
+            // logic (see the class comment); DEST is picked arbitrarily.
+            if (assignBtn == nullptr && c.getComponentID() == "matrixAssignDest")
                 assignBtn = dynamic_cast<juce::Button*> (&c);
             if (browser == nullptr)
                 browser = dynamic_cast<spa::ui::PresetBrowser*> (&c);
@@ -11165,7 +11511,7 @@ namespace
         };
         findParts (*editor);
         expect (keyboard != nullptr && assignBtn != nullptr,
-                "on-screen keyboard + ASSIGN button found");
+                "on-screen keyboard + DEST ASSIGN button found");
 
         if (keyboard != nullptr)
         {
@@ -11266,13 +11612,15 @@ namespace
         {
             if (overlay == nullptr)
                 overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
-            if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
+            // DEST session, since this test exercises a destination knob +
+            // a matrix DEST combo halo.
+            if (assignBtn == nullptr && c.getComponentID() == "matrixAssignDest")
                 assignBtn = dynamic_cast<juce::Button*> (&c);
             for (auto* child : c.getChildren())
                 findParts (*child);
         };
         findParts (*editor);
-        expect (overlay != nullptr && assignBtn != nullptr, "overlay + ASSIGN button found");
+        expect (overlay != nullptr && assignBtn != nullptr, "overlay + DEST ASSIGN button found");
         if (overlay == nullptr || assignBtn == nullptr)
             return;
 
@@ -11553,7 +11901,7 @@ namespace
         // 5) ASSIGN mode takes precedence: latch it on, click the (still
         // violet) cutoff knob directly -- must mark nothing -- but assign
         // mode's OWN click-to-select behaviour must still work.
-        matrixPanel->simulateDoubleClick();
+        matrixPanel->simulateDoubleClick (spa::ui::MatrixPanel::AssignKind::dest);
         expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::latched,
                 "entered latch mode for this check");
         clickCentre (*cutoffSlider);
@@ -11565,7 +11913,7 @@ namespace
             expect (overlay->isSelected (cutoffSlider),
                     "ASSIGN mode's own click-to-select still works while reveal is suppressed");
         }
-        matrixPanel->simulateClick();   // latched -> off
+        matrixPanel->simulateClick (spa::ui::MatrixPanel::AssignKind::dest);   // latched DEST -> off
         expect (matrixPanel->getAssignMode() == spa::ui::MatrixPanel::AssignMode::off,
                 "left assign mode");
 
@@ -11652,12 +12000,15 @@ namespace
     }
 
     // ASSIGN gains two modes (product-owner spec): one-shot (single click
-    // from off) self-exits the instant the matrix row just written becomes
-    // fully populated (source AND dest both non-"None"); latch (double
-    // click from off) behaves like the old always-on ASSIGN. Covers the
-    // pure state machine (MatrixPanel::nextModeOnClick/nextModeOnDoubleClick,
-    // no real mouse timing involved) plus the actual one-shot/latch
-    // behaviour through a real editor + AssignOverlay fixture.
+    // from off) self-exits after its own write; latch (double click from
+    // off) behaves like the old always-on ASSIGN. Since Phil's two-button
+    // follow-up (see MatrixPanel::AssignKind), each session also has a
+    // kind (source or dest), and a single click on the OTHER kind's button
+    // while a session is active SWITCHES to that kind rather than turning
+    // assign off. Covers the pure state machine
+    // (MatrixPanel::nextStateOnClick/nextStateOnDoubleClick, no real mouse
+    // timing involved) plus the actual one-shot/latch behaviour through a
+    // real editor + AssignOverlay fixture.
     static void assignModeTest()
     {
         std::cout << "assignModeTest\n";
@@ -11665,55 +12016,98 @@ namespace
         namespace params = spa::params;
         namespace id = spa::params::id;
         using AssignMode = spa::ui::MatrixPanel::AssignMode;
+        using AssignKind = spa::ui::MatrixPanel::AssignKind;
+        using AssignState = spa::ui::MatrixPanel::AssignState;
 
         // --- Pure state machine -----------------------------------------
-        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::off) == AssignMode::oneShot,
-                "single click from off -> one-shot");
-        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::oneShot) == AssignMode::off,
-                "single click from one-shot -> off");
-        expect (spa::ui::MatrixPanel::nextModeOnClick (AssignMode::latched) == AssignMode::off,
-                "single click from latched -> off");
+        // Single click on the button of kind K, from off -> arms one-shot
+        // for K, whichever K is clicked.
+        expect (spa::ui::MatrixPanel::nextStateOnClick ({ AssignMode::off, AssignKind::dest }, AssignKind::dest).mode
+                    == AssignMode::oneShot,
+                "single click on DEST from off -> one-shot");
+        expect (spa::ui::MatrixPanel::nextStateOnClick ({ AssignMode::off, AssignKind::dest }, AssignKind::source).mode
+                    == AssignMode::oneShot,
+                "single click on SOURCE from off -> one-shot");
+        expect (spa::ui::MatrixPanel::nextStateOnClick ({ AssignMode::off, AssignKind::dest }, AssignKind::source).kind
+                    == AssignKind::source,
+                "single click on SOURCE from off arms the SOURCE kind");
+
+        // Single click on the ALREADY-ACTIVE kind's own button, from any
+        // non-off mode -> off (kind is irrelevant to this transition).
+        for (auto mode : { AssignMode::oneShot, AssignMode::latched })
+        {
+            expect (spa::ui::MatrixPanel::nextStateOnClick ({ mode, AssignKind::dest }, AssignKind::dest).mode
+                        == AssignMode::off,
+                    "single click on DEST while a DEST session is active -> off");
+            expect (spa::ui::MatrixPanel::nextStateOnClick ({ mode, AssignKind::source }, AssignKind::source).mode
+                        == AssignMode::off,
+                    "single click on SOURCE while a SOURCE session is active -> off");
+        }
+
+        // Single click on the OTHER kind's button while a session is
+        // active -- Phil's follow-up rule: this SWITCHES to the other half,
+        // it does NOT turn assign off. Re-arms as one-shot for the new kind
+        // regardless of whether the session being left was one-shot or
+        // latched.
+        for (auto mode : { AssignMode::oneShot, AssignMode::latched })
+        {
+            const auto switched = spa::ui::MatrixPanel::nextStateOnClick ({ mode, AssignKind::dest }, AssignKind::source);
+            expect (switched.mode == AssignMode::oneShot && switched.kind == AssignKind::source,
+                    "single click on SOURCE while a DEST session is active SWITCHES to one-shot SOURCE, doesn't turn off");
+
+            const auto switchedBack = spa::ui::MatrixPanel::nextStateOnClick ({ mode, AssignKind::source }, AssignKind::dest);
+            expect (switchedBack.mode == AssignMode::oneShot && switchedBack.kind == AssignKind::dest,
+                    "single click on DEST while a SOURCE session is active SWITCHES to one-shot DEST, doesn't turn off");
+        }
 
         // A double click is, at the JUCE level, click 1's onClick + click
-        // 2's onClick (each independently a plain nextModeOnClick step)
-        // followed by mouseDoubleClick's nextModeOnDoubleClick -- see
-        // MatrixPanel::nextModeOnDoubleClick's comment for why click 2's
+        // 2's onClick (each independently a plain nextStateOnClick step)
+        // followed by mouseDoubleClick's nextStateOnDoubleClick -- see
+        // MatrixPanel::nextStateOnDoubleClick's comment for why click 2's
         // own onClick fires BEFORE mouseDoubleClick. Per the product owner,
-        // a double click ALWAYS means latch, unconditionally -- "the same
-        // way caps lock does not care what the shift key was doing" -- so
-        // this must hold no matter what the two individual clicks landed on.
-        const auto simulateDouble = [] (AssignMode start)
+        // a double click ALWAYS means latch THAT BUTTON'S kind,
+        // unconditionally -- "the same way caps lock does not care what the
+        // shift key was doing" -- so this must hold no matter what the two
+        // individual clicks landed on.
+        const auto simulateDouble = [] (AssignState start, AssignKind clickedKind)
         {
-            const auto afterClick1 = spa::ui::MatrixPanel::nextModeOnClick (start);
-            const auto afterClick2 = spa::ui::MatrixPanel::nextModeOnClick (afterClick1);
-            return spa::ui::MatrixPanel::nextModeOnDoubleClick (afterClick2);
+            const auto afterClick1 = spa::ui::MatrixPanel::nextStateOnClick (start, clickedKind);
+            const auto afterClick2 = spa::ui::MatrixPanel::nextStateOnClick (afterClick1, clickedKind);
+            return spa::ui::MatrixPanel::nextStateOnDoubleClick (afterClick2, clickedKind);
         };
-        expect (simulateDouble (AssignMode::off) == AssignMode::latched,
-                "double click from off ends in latch");
+        expect (simulateDouble ({ AssignMode::off, AssignKind::dest }, AssignKind::dest).mode == AssignMode::latched,
+                "double click DEST from off ends in latch");
         // A user who armed one-shot and then decides they want several
         // assignments double-clicks to upgrade -- this must land in latch,
         // not silently stay in one-shot (that was the bug: the old
         // nextModeOnDoubleClick only promoted when the two clicks' naive
         // result happened to be off, which a starting mode of one-shot
         // never produces: oneShot->off->oneShot).
-        expect (simulateDouble (AssignMode::oneShot) == AssignMode::latched,
-                "double click from one-shot ends in latch");
+        expect (simulateDouble ({ AssignMode::oneShot, AssignKind::dest }, AssignKind::dest).mode == AssignMode::latched,
+                "double click DEST from one-shot DEST ends in latch");
         // Double-clicking an already-latched button is a no-op in effect,
         // but must still resolve to latched, not fall through to whatever
         // the two intermediate clicks landed on.
-        expect (simulateDouble (AssignMode::latched) == AssignMode::latched,
-                "double click from latched stays latched");
+        expect (simulateDouble ({ AssignMode::latched, AssignKind::dest }, AssignKind::dest).mode == AssignMode::latched,
+                "double click DEST from latched DEST stays latched");
 
         // A double click must never land in a contradictory state: MatrixPanel
         // has no separate "visually on" flag (applyMode always derives the
-        // button's toggle from the mode itself -- see applyMode). With the
-        // unconditional rule above this is now a stronger, exact check (every
-        // starting mode resolves to the SAME mode -- latched) rather than
-        // just "some well-defined mode".
-        for (auto start : { AssignMode::off, AssignMode::oneShot, AssignMode::latched })
+        // buttons' toggle from the mode/kind itself -- see applyMode). With
+        // the unconditional rule above this is now a stronger, exact check
+        // (every starting state, whatever kind is clicked, resolves to
+        // { latched, clickedKind }) rather than just "some well-defined mode".
+        for (auto startMode : { AssignMode::off, AssignMode::oneShot, AssignMode::latched })
         {
-            expect (simulateDouble (start) == AssignMode::latched,
-                    "double click from every starting mode lands in latched, never a contradictory state");
+            for (auto startKind : { AssignKind::source, AssignKind::dest })
+            {
+                for (auto clicked : { AssignKind::source, AssignKind::dest })
+                {
+                    const auto result = simulateDouble ({ startMode, startKind }, clicked);
+                    expect (result.mode == AssignMode::latched && result.kind == clicked,
+                            "double click always lands in { latched, clickedKind }, never a contradictory state");
+                }
+            }
         }
 
         // --- One-shot / latch behaviour, real editor + overlay fixture ---
@@ -11760,11 +12154,18 @@ namespace
             return found;
         };
 
-        // Case 1: one-shot, assign a DEST into a row with no source yet ->
-        // must stay on; then assign a SOURCE into the SAME row -> completes
-        // it, must turn off. Reverts if the completion check is dropped
-        // entirely (mode would stay one-shot the whole time) OR if it fires
-        // too early (mode would already be off after the first assignment).
+        // Case 1: one-shot DEST session -- exits IMMEDIATELY after its own
+        // single write, even though the row's SOURCE is still "None" and so
+        // the row is left half-filled. This is the NEW rule (Phil's
+        // follow-up): a two-button session only ever writes its own kind,
+        // so "the row is now complete" can no longer be the exit condition
+        // -- a SOURCE-only or DEST-only session leaving a half-filled row is
+        // now a deliberately valid end state, not something to wait out.
+        // Then a SEPARATE one-shot SOURCE session completes the same row and
+        // also exits immediately after its own (single) write. Reverts if
+        // the exit is dropped entirely (mode would stay one-shot) or if it
+        // still waits for routeIsComplete (mode would stay on after the
+        // dest-only write, which is exactly the old, now-wrong, behaviour).
         {
             spa::SPASynthProcessor proc;
             std::unique_ptr<juce::AudioProcessorEditor> editor;
@@ -11775,34 +12176,59 @@ namespace
             if (matrixPanel == nullptr || overlay == nullptr)
                 return;
 
-            matrixPanel->simulateClick();
-            expect (matrixPanel->getAssignMode() == AssignMode::oneShot, "entered one-shot (case 1)");
+            matrixPanel->simulateClick (AssignKind::dest);
+            expect (matrixPanel->getAssignMode() == AssignMode::oneShot
+                        && matrixPanel->getAssignKind() == AssignKind::dest,
+                    "entered one-shot DEST (case 1)");
 
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
             auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
-            auto* lfo2Tab = findLfo2Tab (*editor);
-            expect (cutoffKnob != nullptr && row0Dest != nullptr && row0Source != nullptr
-                        && lfo2Tab != nullptr,
-                    "all targets found (case 1)");
-            if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
+            expect (cutoffKnob != nullptr && row0Dest != nullptr && row0Source != nullptr,
+                    "dest targets found (case 1)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr)
                 return;
 
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
-            expect (matrixPanel->isAssignOn(),
-                    "one-shot STAYS ON: row has a dest but no source yet");
+            expect (! matrixPanel->isAssignOn(),
+                    "one-shot DEST turns OFF immediately after its own write, "
+                    "even though the row's source is still None (half-filled by design)");
+
+            auto readChoice = [&] (const juce::String& pid) -> int
+            {
+                auto* p = proc.getAPVTS().getParameter (pid);
+                return p == nullptr ? -1 : (int) p->convertFrom0to1 (p->getValue());
+            };
+            expect (readChoice (id::routeParam (0, id::route::source)) == spa::ui::kNoneRouteChoiceIndex,
+                    "row 0's source is genuinely still None after the DEST-only session (case 1)");
+
+            // A separate one-shot SOURCE session then completes the SAME
+            // row, and also exits immediately after its own single write.
+            matrixPanel->simulateClick (AssignKind::source);
+            expect (matrixPanel->getAssignMode() == AssignMode::oneShot
+                        && matrixPanel->getAssignKind() == AssignKind::source,
+                    "entered one-shot SOURCE (case 1)");
+
+            auto* lfo2Tab = findLfo2Tab (*editor);
+            expect (lfo2Tab != nullptr, "LFO 2 tab found (case 1)");
+            if (lfo2Tab == nullptr)
+                return;
 
             clickAt (*overlay, *lfo2Tab);
             clickAt (*overlay, *row0Source);
             expect (! matrixPanel->isAssignOn(),
-                    "one-shot turns OFF once the row is complete (dest, then source)");
+                    "one-shot SOURCE also turns OFF immediately after its own write");
+            expect (spa::ui::routeIsComplete (proc.getAPVTS(), 0),
+                    "the row IS now complete, as a side effect of the two separate sessions -- "
+                    "but that completeness was never the exit condition for either one");
         }
 
-        // Case 2: one-shot, row's source pre-set before assign mode even
-        // starts; assigning only a DEST into it must complete + exit
-        // immediately. Reverts if completion is only checked for the field
-        // just written rather than the whole row.
+        // Case 2: one-shot DEST session -- writing a dest into a row whose
+        // SOURCE was already pre-set (before assign mode even started) still
+        // exits immediately after its own write, exactly like case 1's
+        // half-filled row did. The pre-existing source is irrelevant to the
+        // NEW exit rule (it only cared about the OLD routeIsComplete rule).
         {
             spa::SPASynthProcessor proc;
             setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo2);
@@ -11814,8 +12240,8 @@ namespace
             if (matrixPanel == nullptr || overlay == nullptr)
                 return;
 
-            matrixPanel->simulateClick();
-            expect (matrixPanel->isAssignOn(), "one-shot armed (case 2)");
+            matrixPanel->simulateClick (AssignKind::dest);
+            expect (matrixPanel->isAssignOn(), "one-shot DEST armed (case 2)");
 
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
@@ -11826,11 +12252,11 @@ namespace
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
             expect (! matrixPanel->isAssignOn(),
-                    "one-shot exits IMMEDIATELY: writing a dest into an already-sourced row completes it");
+                    "one-shot DEST exits IMMEDIATELY after its own write, pre-set source or not");
         }
 
-        // Case 3: latch mode, the same completed-route case as case 2 --
-        // must NOT exit. Reverts if the one-shot exit fires regardless of
+        // Case 3: latch DEST mode, the same completed-route case as case 2
+        // -- must NOT exit. Reverts if the one-shot exit fires regardless of
         // mode (i.e. the oneShotActive gate is dropped).
         {
             spa::SPASynthProcessor proc;
@@ -11843,8 +12269,8 @@ namespace
             if (matrixPanel == nullptr || overlay == nullptr)
                 return;
 
-            matrixPanel->simulateDoubleClick();
-            expect (matrixPanel->getAssignMode() == AssignMode::latched, "entered latched mode (case 3)");
+            matrixPanel->simulateDoubleClick (AssignKind::dest);
+            expect (matrixPanel->getAssignMode() == AssignMode::latched, "entered latched DEST mode (case 3)");
 
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
@@ -11855,7 +12281,7 @@ namespace
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
             expect (matrixPanel->isAssignOn() && matrixPanel->getAssignMode() == AssignMode::latched,
-                    "latch mode does NOT exit on a completed route");
+                    "latch mode does NOT exit on a write, complete-route or otherwise");
         }
 
         // --- Case 4: tab clicks pass through, and newly revealed controls
@@ -11864,6 +12290,14 @@ namespace
         // back to swallowing every click (FILTER 2's tab button would report
         // hit even though it isn't a target), or if the target list is never
         // rebuilt after the switch (filter2Cutoff would stay unselectable).
+        //
+        // Split into a DEST sub-case and a SOURCE sub-case (rather than one
+        // session doing both, like the old single-button test did): with
+        // kind filtering (see AssignOverlay::rebuildTargets), an ENV tab
+        // button is only a target inside a SOURCE session -- inside a DEST
+        // session it is NOT a target either, so it now passes through the
+        // overlay too (isOverPassthroughTabBar), same as any other plain tab
+        // button. FILTER 2's own tab button is never a target in either kind.
         {
             spa::SPASynthProcessor proc;
             std::unique_ptr<juce::AudioProcessorEditor> editor;
@@ -11893,38 +12327,36 @@ namespace
             if (filterTabs == nullptr || envTabs == nullptr)
                 return;
 
-            matrixPanel->simulateDoubleClick();   // latch, so it stays on across the switch
-            expect (matrixPanel->isAssignOn(), "assign armed for case 4");
+            auto& filterBar = filterTabs->getTabbedButtonBar();
+            auto* filter2Button = filterBar.getTabButton (filterTabs->getTabNames().indexOf ("FILTER 2"));
+            auto& envBar = envTabs->getTabbedButtonBar();
+            auto* env2Button = envBar.getTabButton (envTabs->getTabNames().indexOf ("ENV 2"));
+            expect (filter2Button != nullptr && env2Button != nullptr,
+                    "FILTER 2 / ENV 2 tab buttons found (case 4)");
+            if (filter2Button == nullptr || env2Button == nullptr)
+                return;
+
+            // --- DEST sub-case ---
+            matrixPanel->simulateDoubleClick (AssignKind::dest);   // latch, so it stays on across the switch
+            expect (matrixPanel->isAssignOn(), "DEST assign armed for case 4");
 
             // filter2.cutoff isn't even in the tree yet (its tab isn't shown).
             expect (findByParamID (*editor, id::filter2Cutoff) == nullptr,
                     "FILTER 2's controls aren't in the tree before switching to it");
 
-            // A click landing on FILTER 2's own tab button (not an assign
-            // target -- only env/lfo tab buttons double as sources) must be
-            // let through, not swallowed.
-            auto& filterBar = filterTabs->getTabbedButtonBar();
-            auto* filter2Button = filterBar.getTabButton (filterTabs->getTabNames().indexOf ("FILTER 2"));
-            expect (filter2Button != nullptr, "FILTER 2 tab button found (case 4)");
-            if (filter2Button == nullptr)
-                return;
             {
                 const auto p = overlay->getLocalArea (filter2Button, filter2Button->getLocalBounds()).getCentre();
                 expect (! overlay->hitTest (p.x, p.y),
                         "a plain (non-target) tab button passes clicks through the overlay while assign is active");
             }
 
-            // An ENV tab button, by contrast, IS a target (ModSource::env2)
-            // and must keep being caught by the overlay, not passed through.
-            auto& envBar = envTabs->getTabbedButtonBar();
-            auto* env2Button = envBar.getTabButton (envTabs->getTabNames().indexOf ("ENV 2"));
-            expect (env2Button != nullptr, "ENV 2 tab button found (case 4)");
-            if (env2Button == nullptr)
-                return;
+            // In a DEST session, the ENV tab button is not a target either
+            // (kind filtering -- see rebuildTargets), so it now passes
+            // through too, same as FILTER 2's.
             {
                 const auto p = overlay->getLocalArea (env2Button, env2Button->getLocalBounds()).getCentre();
-                expect (overlay->hitTest (p.x, p.y),
-                        "an assign-target tab button (ENV 2 / ModSource::env2) is NOT passed through");
+                expect (! overlay->hitTest (p.x, p.y),
+                        "in a DEST session, ENV 2's tab button is NOT a target and passes through too");
             }
 
             // Actually switch (a real click drives the same TabbedButtonBar
@@ -11950,12 +12382,45 @@ namespace
             expect (overlay->isSelected (filter2Cutoff),
                     "filter2.cutoff became assignable the moment its tab was revealed -- "
                     "the target list was rebuilt on the tab switch");
+
+            matrixPanel->setAssignOn (false);
+
+            // --- SOURCE sub-case ---
+            matrixPanel->simulateDoubleClick (AssignKind::source);
+            expect (matrixPanel->isAssignOn() && matrixPanel->getAssignKind() == AssignKind::source,
+                    "SOURCE assign armed for case 4");
+
+            // FILTER 2's tab button is STILL never a target, in either kind.
+            {
+                const auto p = overlay->getLocalArea (filter2Button, filter2Button->getLocalBounds()).getCentre();
+                expect (! overlay->hitTest (p.x, p.y),
+                        "FILTER 2's tab button passes through in a SOURCE session too");
+            }
+
+            // An ENV tab button, in a SOURCE session, IS a target
+            // (ModSource::env2) and must be caught by the overlay, not
+            // passed through.
+            {
+                const auto p = overlay->getLocalArea (env2Button, env2Button->getLocalBounds()).getCentre();
+                expect (overlay->hitTest (p.x, p.y),
+                        "in a SOURCE session, an assign-target tab button (ENV 2 / ModSource::env2) "
+                        "is NOT passed through");
+            }
+
+            clickAt (*overlay, *env2Button);
+            expect (overlay->isSelected (env2Button),
+                    "ENV 2 became selectable as a source in the SOURCE session");
         }
 
-        // --- Case 5: staged glow. Stage 1 (nothing selected) glows
-        // parameters, not the matrix; stage 2 (something selected) glows
-        // only the matching matrix side. Reverts if paint()/shouldGlow ever
-        // goes back to "glow everything unconditionally".
+        // --- Case 5: staged glow, now single-kind-only (see AssignKind).
+        // Stage 1 (nothing selected) glows the session's own object kind,
+        // not the matrix; stage 2 (something selected) glows only the
+        // matching matrix side. Reverts if paint()/shouldGlow ever goes back
+        // to "glow everything unconditionally". Also proves kind filtering
+        // directly: the OTHER kind's controls (lfo2Tab/row0Source in the
+        // DEST sub-case) are not even targets, so they never glow and a
+        // click on them selects nothing -- Phil's "I don't care if the left
+        // side is missing" request.
         {
             spa::SPASynthProcessor proc;
             std::unique_ptr<juce::AudioProcessorEditor> editor;
@@ -11975,33 +12440,60 @@ namespace
             if (cutoffKnob == nullptr || lfo2Tab == nullptr || row0Dest == nullptr || row0Source == nullptr)
                 return;
 
-            matrixPanel->simulateDoubleClick();
+            // --- DEST sub-case ---
+            matrixPanel->simulateDoubleClick (AssignKind::dest);
 
-            // Stage 1: destination AND source targets glow; the matrix does not.
-            expect (overlay->isGlowingForTest (cutoffKnob), "stage 1: destination targets glow");
-            expect (overlay->isGlowingForTest (lfo2Tab), "stage 1: source targets glow");
+            // Stage 1: the destination target glows; its matrix column does
+            // not; the SOURCE-kind controls aren't targets at all (kind
+            // filtering), so they don't glow either.
+            expect (overlay->isGlowingForTest (cutoffKnob), "stage 1: destination target glows (DEST session)");
             expect (! overlay->isGlowingForTest (row0Dest), "stage 1: DEST matrix column does not glow");
-            expect (! overlay->isGlowingForTest (row0Source), "stage 1: SOURCE matrix column does not glow");
+            expect (! overlay->isGlowingForTest (lfo2Tab),
+                    "a source target does not glow in a DEST session -- it isn't a target at all");
+            expect (! overlay->isGlowingForTest (row0Source),
+                    "the SOURCE matrix column does not glow in a DEST session -- it isn't a target at all");
 
-            // Stage 2 (destination picked): it reads selected; only the
-            // matching (DEST) matrix side glows, not the source side.
+            // A click on the off-kind source target must select NOTHING.
+            clickAt (*overlay, *lfo2Tab);
+            expect (! overlay->isSelected (lfo2Tab),
+                    "clicking a source target in a DEST session selects nothing (not a target)");
+
+            // Stage 2 (destination picked): it reads selected; the matching
+            // (DEST) matrix side glows.
             clickAt (*overlay, *cutoffKnob);
-            expect (overlay->isSelected (cutoffKnob), "cutoff selected (case 5)");
+            expect (overlay->isSelected (cutoffKnob), "cutoff selected (case 5, DEST)");
             expect (overlay->isGlowingForTest (row0Dest), "stage 2: matching (DEST) matrix side glows");
-            expect (! overlay->isGlowingForTest (row0Source), "stage 2: non-matching (SOURCE) side does not glow");
             expect (! overlay->isGlowingForTest (cutoffKnob) || overlay->isSelected (cutoffKnob),
                     "the picked destination itself still reads (selected, not merely 'glowing')");
 
-            // The still-unpicked side (source) stays in its stage-1 glow --
-            // this is the fix for "assign mode doesn't reset": the missing
-            // half keeps inviting a pick.
-            expect (overlay->isGlowingForTest (lfo2Tab),
-                    "the unpicked SOURCE side keeps glowing while only a destination is selected");
+            matrixPanel->setAssignOn (false);
+
+            // --- SOURCE sub-case (mirrored) ---
+            matrixPanel->simulateDoubleClick (AssignKind::source);
+
+            expect (overlay->isGlowingForTest (lfo2Tab), "stage 1: source target glows (SOURCE session)");
+            expect (! overlay->isGlowingForTest (row0Source), "stage 1: SOURCE matrix column does not glow");
+            expect (! overlay->isGlowingForTest (cutoffKnob),
+                    "a destination target does not glow in a SOURCE session -- it isn't a target at all");
+            expect (! overlay->isGlowingForTest (row0Dest),
+                    "the DEST matrix column does not glow in a SOURCE session -- it isn't a target at all");
+
+            clickAt (*overlay, *cutoffKnob);
+            expect (! overlay->isSelected (cutoffKnob),
+                    "clicking a destination target in a SOURCE session selects nothing (not a target)");
+
+            clickAt (*overlay, *lfo2Tab);
+            expect (overlay->isSelected (lfo2Tab), "lfo2 selected (case 5, SOURCE)");
+            expect (overlay->isGlowingForTest (row0Source), "stage 2: matching (SOURCE) matrix side glows");
         }
 
-        // --- Case 6: half-filled row shows the waiting state, and it clears
-        // once the row completes. Reverts if MatrixPanel::setWaitingRoute is
-        // never wired, or never cleared on completion.
+        // --- Case 6: a one-shot session ends after its own single
+        // half-assignment, leaving the row half-filled -- and this produces
+        // NO callout (Phil's follow-up request; the old "waiting for its
+        // other half" amber highlight, MatrixPanel::setWaitingRoute, is
+        // gone entirely). The half-filled row instead reads as quietly
+        // dimmed, via the SAME mechanism as an inert destination
+        // (isRouteDimmedForTest) -- no highlight, no colour call-out.
         {
             spa::SPASynthProcessor proc;
             std::unique_ptr<juce::AudioProcessorEditor> editor;
@@ -12013,65 +12505,39 @@ namespace
                 return;
 
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
-            auto* lfo2Tab = findLfo2Tab (*editor);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
-            auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
-            expect (cutoffKnob != nullptr && lfo2Tab != nullptr && row0Dest != nullptr && row0Source != nullptr,
-                    "targets found (case 6)");
-            if (cutoffKnob == nullptr || lfo2Tab == nullptr || row0Dest == nullptr || row0Source == nullptr)
+            expect (cutoffKnob != nullptr && row0Dest != nullptr, "targets found (case 6)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr)
                 return;
 
-            matrixPanel->simulateClick();   // one-shot
+            // A brand-new row starts with BOTH halves at None, so it already
+            // reads as dimmed (missing-half rule) before any write at all --
+            // this isn't a regression, it's the same quiet "not live yet"
+            // treatment the row keeps after the DEST-only write below.
+            expect (matrixPanel->isRouteDimmedForTest (0),
+                    "row 0 already reads dimmed before any write -- both halves start at None (case 6)");
 
-            expect (! matrixPanel->isRouteWaitingForTest (0), "no waiting row before any write (case 6)");
+            matrixPanel->simulateClick (AssignKind::dest);   // one-shot DEST
 
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
-            expect (matrixPanel->isAssignOn(), "one-shot still armed: row 0 has a dest but no source");
-            expect (matrixPanel->isRouteWaitingForTest (0),
-                    "row 0 shows the waiting state after a dest-only write");
-
-            // The waiting decoration must never overlap any of the row's own
-            // controls at any width -- a prior version painted a "WAITING
-            // FOR SOURCE" label straight across the depth slider (the
-            // slider's handle showed through it, reading as a glitch).
-            // Computed via the same geometry paint() itself uses
-            // (waitingRingBounds, exposed for test), so this can't drift
-            // from what's actually drawn, and reverting to a row-wide label
-            // would fail it immediately.
-            {
-                const auto ring = matrixPanel->getWaitingRingBoundsForTest (0);
-                const auto sourceB = matrixPanel->getRowSourceBoundsForTest (0);
-                const auto destB = matrixPanel->getRowDestBoundsForTest (0);
-                const auto depthB = matrixPanel->getRowDepthBoundsForTest (0);
-                juce::String offenders;
-                if (! ring.isEmpty())
-                {
-                    // The ring legitimately hugs and slightly exceeds its OWN
-                    // (empty) field's bounds by design -- only flag it
-                    // against whichever of the three controls it ISN'T
-                    // wrapping.
-                    if (ring != sourceB.expanded (2) && ring.intersects (sourceB)) offenders << "source combo ";
-                    if (ring != destB.expanded (2) && ring.intersects (destB)) offenders << "dest combo ";
-                    if (ring.intersects (depthB)) offenders << "depth slider ";
-                }
-                expect (offenders.isEmpty(),
-                        "waiting decoration does not overlap any other row control, offender(s): " + offenders);
-            }
-
-            clickAt (*overlay, *lfo2Tab);
-            clickAt (*overlay, *row0Source);
-            expect (! matrixPanel->isAssignOn(), "one-shot exits once row 0 completes");
-            expect (! matrixPanel->isRouteWaitingForTest (0),
-                    "the waiting state clears once the row completes");
+            expect (! matrixPanel->isAssignOn(),
+                    "one-shot DEST exits after its own single write, row 0 left half-filled (case 6)");
+            expect (matrixPanel->isRouteDimmedForTest (0),
+                    "row 0 reads as quietly dimmed (missing its source half) -- no callout, just a quiet dim");
         }
 
         // --- Case 7: a matrix row targeting chaos.rate dims while chaos SYNC
         // is on, and undims when SYNC is off. Reverts if
         // isModDestinationInert only ever returns false, or if it's not
-        // wired to any actual chaos.rate/chaos.syncToBpm check.
+        // wired to any actual chaos.rate/chaos.syncToBpm check. The row is
+        // given a real SOURCE too (not just the dest) so it's a COMPLETE
+        // route -- isRouteDimmedForTest also dims a half-filled row (see
+        // paintInertRows), which would otherwise be a second, unrelated
+        // reason for the dim and defeat the point of this isolated check.
         {
             spa::SPASynthProcessor proc;
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) params::ModSource::lfo1);
             setParam (proc, id::routeParam (0, id::route::dest),
                       (float) (params::modDestIndex (id::chaos::rate) + 1));
             setParam (proc, id::chaos::syncToBpm, 0.0f);
@@ -12165,6 +12631,11 @@ namespace
         const int cutoffDestChoice = params::modDestIndex (id::filter1Cutoff) + 1;
 
         // --- 1. ASSIGN path: completing a route with depth at 0 -> 0.5. ---
+        // Two SEPARATE one-shot sessions now (DEST, then SOURCE -- see
+        // MatrixPanel::AssignKind): a one-shot session exits after its own
+        // single write, so the old single-session "dest click, dest write,
+        // source click, source write" sequence would never reach the source
+        // half (assign mode would already be off after the dest write).
         // Reverts if the fill is dropped entirely (depth would stay 0) or if
         // it fires on the dest-only step (depth would already be 0.5 before
         // the source is even assigned).
@@ -12178,8 +12649,6 @@ namespace
             if (matrixPanel == nullptr || overlay == nullptr)
                 return;
 
-            matrixPanel->simulateClick();   // one-shot
-
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
             auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
@@ -12189,20 +12658,23 @@ namespace
             if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
                 return;
 
+            matrixPanel->simulateClick (spa::ui::MatrixPanel::AssignKind::dest);   // one-shot DEST
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
             expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
                     "depth untouched with dest-only (source still None)");
 
+            matrixPanel->simulateClick (spa::ui::MatrixPanel::AssignKind::source);   // separate one-shot SOURCE
             clickAt (*overlay, *lfo2Tab);
             clickAt (*overlay, *row0Source);
             expect (std::abs (readDepth (proc, 0) - 0.5f) < 1.0e-6f,
-                    "ASSIGN completing a route with depth at 0 sets it to 0.5");
+                    "ASSIGN completing a route (across two separate one-shot sessions) with depth at 0 sets it to 0.5");
         }
 
         // --- 2. ASSIGN path: completing when depth is already non-zero
-        // (including negative) leaves it alone. Reverts if the "still at 0"
-        // guard inside maybeAutoFillRouteDepth is dropped.
+        // (including negative) leaves it alone. Same two-separate-sessions
+        // structure as test 1. Reverts if the "still at 0" guard inside
+        // maybeAutoFillRouteDepth is dropped.
         {
             spa::SPASynthProcessor proc;
             setParam (proc, id::routeParam (0, id::route::depth), -0.35f);
@@ -12214,8 +12686,6 @@ namespace
             if (matrixPanel == nullptr || overlay == nullptr)
                 return;
 
-            matrixPanel->simulateClick();
-
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
             auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
             auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source));
@@ -12225,8 +12695,11 @@ namespace
             if (cutoffKnob == nullptr || row0Dest == nullptr || row0Source == nullptr || lfo2Tab == nullptr)
                 return;
 
+            matrixPanel->simulateClick (spa::ui::MatrixPanel::AssignKind::dest);
             clickAt (*overlay, *cutoffKnob);
             clickAt (*overlay, *row0Dest);
+
+            matrixPanel->simulateClick (spa::ui::MatrixPanel::AssignKind::source);
             clickAt (*overlay, *lfo2Tab);
             clickAt (*overlay, *row0Source);
             expect (std::abs (readDepth (proc, 0) - (-0.35f)) < 1.0e-6f,
@@ -12411,6 +12884,155 @@ namespace
                     "route still wired after RANDOMIZE ALL with the matrix locked");
             expect (std::abs (readDepth (proc, 0) - 0.0f) < 1.0e-6f,
                     "GUARD: RANDOMIZE ALL (matrix locked) leaves a wired route's zero depth at 0");
+        }
+    }
+
+    // Dedicated coverage for Phil's two-button follow-up (see
+    // MatrixPanel::AssignKind), on top of what assignModeTest's cases
+    // already exercise: the pure state-machine table via the real editor's
+    // two buttons (not just the static functions), that neither button
+    // grabs keyboard focus (a cheap direct check, ahead of the tree-walking
+    // sweeps in modAssignFocusTest/presetBrowserFocusGrabTest), and that the
+    // old "waiting for its other half" callout API is genuinely gone (this
+    // is provable at compile time -- MatrixPanel no longer declares
+    // setWaitingRoute/isRouteWaitingForTest/getWaitingRingBoundsForTest at
+    // all, so any attempt to call them here would fail to build; the
+    // runtime half of "no callout" is that a half-filled row reads only as
+    // quietly dimmed, via isRouteDimmedForTest, same as modAssignModeTest's
+    // case 6).
+    static void matrixAssignTwoButtonTest()
+    {
+        std::cout << "matrixAssignTwoButtonTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using AssignMode = spa::ui::MatrixPanel::AssignMode;
+        using AssignKind = spa::ui::MatrixPanel::AssignKind;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        spa::ui::AssignOverlay* overlay = nullptr;
+        juce::Button* assignSourceBtn = nullptr;
+        juce::Button* assignDestBtn = nullptr;
+        std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+        {
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            if (overlay == nullptr)
+                overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+            if (assignSourceBtn == nullptr && c.getComponentID() == "matrixAssignSource")
+                assignSourceBtn = dynamic_cast<juce::Button*> (&c);
+            if (assignDestBtn == nullptr && c.getComponentID() == "matrixAssignDest")
+                assignDestBtn = dynamic_cast<juce::Button*> (&c);
+            for (auto* child : c.getChildren())
+                findParts (*child);
+        };
+        findParts (*editor);
+        expect (matrixPanel != nullptr && overlay != nullptr
+                    && assignSourceBtn != nullptr && assignDestBtn != nullptr,
+                "MatrixPanel/AssignOverlay/both ASSIGN buttons found");
+        if (matrixPanel == nullptr || overlay == nullptr
+                || assignSourceBtn == nullptr || assignDestBtn == nullptr)
+            return;
+
+        // --- Neither button grabs keyboard focus on click (QWERTY rule;
+        // see CLAUDE.md's FOCUS TRAP note and Controls.h's Knob comment).
+        // Cheap direct assertion, ahead of the full tree-walking sweeps.
+        expect (! assignSourceBtn->getWantsKeyboardFocus() && ! assignSourceBtn->getMouseClickGrabsKeyboardFocus(),
+                "SOURCE button never grabs/wants keyboard focus");
+        expect (! assignDestBtn->getWantsKeyboardFocus() && ! assignDestBtn->getMouseClickGrabsKeyboardFocus(),
+                "DEST button never grabs/wants keyboard focus");
+
+        // --- Two-button state machine, driven through the real editor's
+        // buttons via triggerClick() (async command message -- wait on the
+        // actual toggle state) rather than the static functions directly
+        // (those are covered exhaustively in assignModeTest already).
+        const auto waitForState = [&] (AssignMode wantMode, AssignKind wantKind)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+            while ((matrixPanel->getAssignMode() != wantMode || matrixPanel->getAssignKind() != wantKind)
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+        // Convenience overload for waits that only care about the mode
+        // (used where the kind can't have changed by the click in question).
+        const auto waitForMode = [&] (AssignMode want)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+            while (matrixPanel->getAssignMode() != want && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        expect (matrixPanel->getAssignMode() == AssignMode::off, "starts off");
+
+        // SOURCE click arms a one-shot SOURCE session.
+        assignSourceBtn->triggerClick();
+        waitForMode (AssignMode::oneShot);
+        expect (matrixPanel->getAssignKind() == AssignKind::source, "SOURCE click armed the SOURCE kind");
+        expect (assignSourceBtn->getToggleState() && ! assignDestBtn->getToggleState(),
+                "only the SOURCE button lights up");
+
+        // Clicking DEST while a SOURCE session is live SWITCHES to DEST --
+        // it does NOT turn assign off (Phil's follow-up rule). Mode is
+        // already one-shot going in, so wait on the KIND changing, not just
+        // the mode (which wouldn't observably change at all here).
+        assignDestBtn->triggerClick();
+        waitForState (AssignMode::oneShot, AssignKind::dest);
+        expect (matrixPanel->isAssignOn() && matrixPanel->getAssignKind() == AssignKind::dest,
+                "clicking DEST while SOURCE was active switched to DEST, stayed on");
+        expect (assignDestBtn->getToggleState() && ! assignSourceBtn->getToggleState(),
+                "only the DEST button lights up after the switch");
+
+        // Clicking the ACTIVE kind's own button again turns assign off.
+        assignDestBtn->triggerClick();
+        waitForMode (AssignMode::off);
+        expect (! matrixPanel->isAssignOn(), "clicking DEST again (already active) turns assign off");
+        expect (! assignSourceBtn->getToggleState() && ! assignDestBtn->getToggleState(),
+                "neither button lit once assign is off");
+
+        // Double-click on either button always latches THAT kind.
+        matrixPanel->simulateDoubleClick (AssignKind::source);
+        expect (matrixPanel->getAssignMode() == AssignMode::latched && matrixPanel->getAssignKind() == AssignKind::source,
+                "double click SOURCE latches the SOURCE kind");
+        matrixPanel->setAssignOn (false);
+
+        matrixPanel->simulateDoubleClick (AssignKind::dest);
+        expect (matrixPanel->getAssignMode() == AssignMode::latched && matrixPanel->getAssignKind() == AssignKind::dest,
+                "double click DEST latches the DEST kind");
+        matrixPanel->setAssignOn (false);
+
+        // --- A half-filled row (Phil's follow-up: no callout, just a quiet
+        // dim -- see MatrixPanel::paintInertRows). Assign a DEST-only route
+        // via a one-shot session and confirm there is nothing resembling a
+        // callout: the row reads as dimmed via isRouteDimmedForTest (the
+        // SAME mechanism used for an inert destination -- there is no
+        // separate "waiting" concept left to query at all, which is the
+        // point: the old setWaitingRoute/isRouteWaitingForTest API simply
+        // doesn't exist on MatrixPanel any more).
+        {
+            auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
+            auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+            expect (cutoffKnob != nullptr && row0Dest != nullptr, "dest targets found (callout check)");
+            if (cutoffKnob == nullptr || row0Dest == nullptr)
+                return;
+
+            matrixPanel->simulateClick (AssignKind::dest);   // one-shot DEST
+            const auto clickAt = [&] (juce::Component& target)
+            {
+                const auto p = overlay->getLocalArea (&target, target.getLocalBounds()).getCentre();
+                overlay->handleClickAt (p);
+            };
+            clickAt (*cutoffKnob);
+            clickAt (*row0Dest);
+
+            expect (! matrixPanel->isAssignOn(), "one-shot DEST exited after its single write");
+            expect (matrixPanel->isRouteDimmedForTest (0),
+                    "the half-filled row reads as quietly dimmed, not as a callout");
         }
     }
 
@@ -13693,6 +14315,211 @@ namespace
         file.deleteFile();
     }
 
+    // Idle sample mode's START marker now spans the full waveform height
+    // (was a short ~10px top tick) so it reads clearly against the whole
+    // waveform, like the loop markers. Renders WaveDisplay into an offscreen
+    // image with LOOP off (so no loop band/edges compete) and checks the
+    // marker's pixel column has non-background pixels near BOTH the top and
+    // the bottom of the wave area, while a column away from the marker does
+    // not -- a real geometry assertion rather than a claim about the source
+    // unread.
+    static void sampleStartMarkerFullHeightTest()
+    {
+        std::cout << "sampleStartMarkerFullHeightTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto file = writeRampSine (1.0, 48000.0);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads for start-marker test");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);   // isolate: no loop band/edges
+        setParam (proc, id::oscSlot (0, id::osc::sampleStart), 0.5f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+
+        spa::ui::WaveDisplay* wave = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (wave == nullptr)
+                wave = dynamic_cast<spa::ui::WaveDisplay*> (&c);
+            for (auto* child : c.getChildren())
+                if (wave == nullptr)
+                    find (*child);
+        };
+        find (*editor);
+        expect (wave != nullptr, "WaveDisplay found for start-marker test");
+        if (wave == nullptr)
+        {
+            file.deleteFile();
+            return;
+        }
+
+        const auto area = wave->waveArea();
+        const auto markerX = wave->normToX (0.5f, area);
+
+        juce::Image image (juce::Image::ARGB, juce::jmax (1, wave->getWidth()),
+                           juce::jmax (1, wave->getHeight()), true);
+        juce::Graphics g (image);
+        wave->paintEntireComponent (g, false);
+
+        const auto bg = image.getPixelAt (2, 2);   // corner, definitely background
+        const auto differsFromBg = [&] (int x, int y)
+        {
+            if (x < 0 || x >= image.getWidth() || y < 0 || y >= image.getHeight())
+                return false;
+            return image.getPixelAt (x, y).getARGB() != bg.getARGB();
+        };
+
+        const auto markerCol = juce::roundToInt (markerX);
+        const auto topY = juce::roundToInt (area.getY()) + 1;
+        const auto bottomY = juce::roundToInt (area.getBottom()) - 2;
+
+        bool nearTop = false, nearBottom = false;
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            if (differsFromBg (markerCol + dx, topY)) nearTop = true;
+            if (differsFromBg (markerCol + dx, bottomY)) nearBottom = true;
+        }
+        expect (nearTop, "start marker has non-background pixels near the top of the wave area");
+        expect (nearBottom, "start marker has non-background pixels near the bottom of the wave area");
+
+        // A column well away from the marker (and away from waveform fill
+        // variance) should not show the marker's colour at both extremes at
+        // once the way the marker column does -- check a column near the
+        // left edge, far from the 0.5-norm marker, has no marker pixel at
+        // the very bottom row (below typical waveform fill, only the marker
+        // itself reaches there in LOOP-off idle mode).
+        const auto farCol = juce::roundToInt (area.getX()) + 2;
+        expect (std::abs (farCol - markerCol) > 4, "sanity: far column is not the marker column");
+        bool farNearBottom = false;
+        for (int dx = -1; dx <= 1; ++dx)
+            if (differsFromBg (farCol + dx, bottomY)) farNearBottom = true;
+        expect (! farNearBottom, "a column away from the marker has no marker pixel at the bottom extreme");
+
+        file.deleteFile();
+    }
+
+    // Loop crossfade (XFADE) visualization geometry, via the
+    // getXfadeRamps() accessor -- asserted directly rather than by
+    // reading pixels, and computed through the same engine call paint()
+    // uses, so this is asserting the real gating/geometry logic.
+    static void sampleLoopXfadeVisualizationTest()
+    {
+        std::cout << "sampleLoopXfadeVisualizationTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto file = writeRampSine (2.0, 48000.0);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.loadSampleFromFile (0, file);
+        expect (waitForSample (proc, 0, 15000), "sample loads for xfade visualization test");
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.3f);
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.7f);
+        setParam (proc, id::oscSlot (0, id::osc::loopXfade), 100.0f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+
+        spa::ui::WaveDisplay* wave = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (wave == nullptr)
+                wave = dynamic_cast<spa::ui::WaveDisplay*> (&c);
+            for (auto* child : c.getChildren())
+                if (wave == nullptr)
+                    find (*child);
+        };
+        find (*editor);
+        expect (wave != nullptr, "WaveDisplay found for xfade visualization test");
+        if (wave == nullptr)
+        {
+            file.deleteFile();
+            return;
+        }
+
+        // Pre-roll case: loopStart(0.3)/loopEnd(0.7) of a 2s file leaves
+        // ~0.6s of run-up before loopStart and ~0.6s of tail after loopEnd
+        // -- with SYNC off (no beat-grid snap here), preRoom == postRoom
+        // exactly at the raw knob values, so preRoom >= X always holds and
+        // pre-roll is used (see computeXfadeSamples).
+        {
+            const auto regions = wave->getXfadeRamps();
+            expect (regions.size() == 2, "pre-roll case: two crossfade ramps drawn ("
+                                              + juce::String ((int) regions.size()) + ")");
+            if (regions.size() == 2)
+            {
+                const auto insideCount = (regions[0].insideBand ? 1 : 0) + (regions[1].insideBand ? 1 : 0);
+                expect (insideCount == 1, "exactly one ramp sits inside the loop band, the other outside");
+
+                const auto& inside  = regions[0].insideBand ? regions[0] : regions[1];
+                const auto& outside = regions[0].insideBand ? regions[1] : regions[0];
+
+                expect (std::abs (inside.toNorm - 0.7f) < 1.0e-3f,
+                        "pre-roll inside ramp lands at loopEnd (" + juce::String (inside.toNorm) + ")");
+                expect (inside.fromNorm < 0.7f, "pre-roll inside ramp starts before loopEnd");
+                expect (std::abs (outside.toNorm - 0.3f) < 1.0e-3f,
+                        "pre-roll outside ramp lands at loopStart (" + juce::String (outside.toNorm) + ")");
+                expect (outside.fromNorm < 0.3f,
+                        "pre-roll outside ramp sits entirely before loopStart (borrowed run-up)");
+            }
+        }
+
+        // Post-roll case: loopStart at 0 leaves no run-up room at all.
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.4f);
+        {
+            const auto regions = wave->getXfadeRamps();
+            expect (regions.size() == 2, "post-roll case: two crossfade ramps drawn ("
+                                              + juce::String ((int) regions.size()) + ")");
+            if (regions.size() == 2)
+            {
+                const auto& inside  = regions[0].insideBand ? regions[0] : regions[1];
+                const auto& outside = regions[0].insideBand ? regions[1] : regions[0];
+
+                expect (std::abs (inside.fromNorm - 0.0f) < 1.0e-3f,
+                        "post-roll inside ramp starts at loopStart (" + juce::String (inside.fromNorm) + ")");
+                expect (inside.toNorm > 0.0f, "post-roll inside ramp extends past loopStart");
+                expect (std::abs (outside.fromNorm - 0.4f) < 1.0e-3f,
+                        "post-roll outside ramp starts at loopEnd (" + juce::String (outside.fromNorm) + ")");
+                expect (outside.toNorm > 0.4f,
+                        "post-roll outside ramp sits entirely after loopEnd (borrowed tail)");
+            }
+        }
+
+        // Nothing drawn when XFADE is 0.
+        setParam (proc, id::oscSlot (0, id::osc::loopXfade), 0.0f);
+        expect (wave->getXfadeRamps().empty(), "no crossfade ramps when XFADE is 0");
+
+        // Nothing drawn when LOOP is off.
+        setParam (proc, id::oscSlot (0, id::osc::loopXfade), 100.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 0.0f);
+        expect (wave->getXfadeRamps().empty(), "no crossfade ramps when LOOP is off");
+
+        // SYNC on: ramps are STILL drawn (the stretcher applies the same
+        // crossfade per-grain now too), on the snapped bounds -- this is
+        // the corrected behaviour, replacing an earlier plan to suppress
+        // the visual under SYNC.
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::syncToBpm), 1.0f);
+        expect (! wave->getXfadeRamps().empty(),
+                "crossfade ramps are still drawn when SYNC is on (uses the snapped bounds)");
+
+        file.deleteFile();
+    }
+
     static void chaosDisplayPaintTest()
     {
         std::cout << "chaosDisplayPaintTest\n";
@@ -14684,6 +15511,88 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Temporary visual-review render for the loop crossfade (XFADE)
+    // visualization: LOOP on, non-default loop points, XFADE knob pushed to
+    // 100% so the ramps actually have geometry to draw (the default is 0,
+    // which the seeded --snapshot render above deliberately leaves alone).
+    // Own dedicated dump so the ramps can actually be looked at, not just
+    // asserted via getXfadeRamps() -- see sampleLoopXfadeVisualizationTest.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-xfade")
+    {
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto file = writeRampSine (2.0, 48000.0);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.loadSampleFromFile (0, file);
+        waitForSample (proc, 0, 15000);
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+        setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+        setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.3f);
+        setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.7f);
+        setParam (proc, id::oscSlot (0, id::osc::loopXfade), 100.0f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+
+        spa::ui::WaveDisplay* wave = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (wave == nullptr)
+                wave = dynamic_cast<spa::ui::WaveDisplay*> (&c);
+            for (auto* child : c.getChildren())
+                if (wave == nullptr)
+                    find (*child);
+        };
+        find (*editor);
+        if (wave != nullptr)
+            wave->repaint();
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+
+        // Full editor, for context.
+        {
+            const auto outFile = outDir.getChildFile ("spasynth-xfade.png");
+            outFile.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (outFile);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        }
+
+        // Tight crop on OSC A's wave display alone, upscaled, so the ramps
+        // and loop edge lines are actually legible.
+        if (wave != nullptr)
+        {
+            const auto topLeft = editor->getLocalPoint (wave, juce::Point<int> (0, 0));
+            const auto bounds = juce::Rectangle<int> (topLeft.x, topLeft.y, wave->getWidth(), wave->getHeight())
+                                     .expanded (4)
+                                     .getIntersection (editor->getLocalBounds());
+            auto crop = image.getClippedImage (bounds);
+            juce::Image upscaled (juce::Image::ARGB, crop.getWidth() * 3, crop.getHeight() * 3, true);
+            juce::Graphics g (upscaled);
+            g.drawImage (crop, upscaled.getBounds().toFloat());
+
+            const auto outFile = outDir.getChildFile ("spasynth-xfade-crop.png");
+            outFile.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (outFile);
+            if (stream.openedOk())
+                png.writeImageToStream (upscaled, stream);
+            std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        }
+
+        file.deleteFile();
+        return 0;
+    }
+
     // Temporary visual-review render for the ASSIGN mode feature: assign
     // mode on, filter 1 cutoff selected (destination, yellow), LFO 2
     // selected (source, yellow), everything else pulsing blue. Writes into
@@ -14706,7 +15615,9 @@ int main (int argc, char* argv[])
         {
             if (overlay == nullptr)
                 overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
-            if (assignBtn == nullptr && c.getComponentID() == "matrixAssign")
+            // DEST session for this manual review render (see MatrixPanel::
+            // AssignKind -- a single session is now always one kind only).
+            if (assignBtn == nullptr && c.getComponentID() == "matrixAssignDest")
                 assignBtn = dynamic_cast<juce::Button*> (&c);
             for (auto* child : c.getChildren())
                 findParts (*child);
@@ -14721,21 +15632,8 @@ int main (int argc, char* argv[])
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
 
             auto* cutoffKnob = findByParamID (*editor, id::filter1Cutoff);
-            juce::Component* lfo2Tab = nullptr;
-            std::function<void (juce::Component&)> findLfo2 = [&] (juce::Component& c)
-            {
-                if (lfo2Tab == nullptr && c.getProperties().contains ("modSource")
-                    && (int) c.getProperties()["modSource"] == (int) params::ModSource::lfo2)
-                    lfo2Tab = &c;
-                for (auto* child : c.getChildren())
-                    findLfo2 (*child);
-            };
-            findLfo2 (*editor);
-
             if (cutoffKnob != nullptr)
                 overlay->handleClickAt (overlay->getLocalArea (cutoffKnob, cutoffKnob->getLocalBounds()).getCentre());
-            if (lfo2Tab != nullptr)
-                overlay->handleClickAt (overlay->getLocalArea (lfo2Tab, lfo2Tab->getLocalBounds()).getCentre());
         }
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
@@ -14950,6 +15848,10 @@ int main (int argc, char* argv[])
     RUN (waveDisplayZoomTest);
     RUN (moduleHeaderPowerColourTest);
     RUN (chaosPanelLayoutTest);
+    RUN (sampleLoopXfadeTest);
+    RUN (sampleStartMarkerFullHeightTest);
+    RUN (sampleLoopXfadeVisualizationTest);
+    RUN (matrixAssignTwoButtonTest);
 
    #undef RUN
 

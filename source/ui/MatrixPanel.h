@@ -126,43 +126,71 @@ class MatrixPanel : public juce::Component
 {
 public:
     // off      : ASSIGN is not active.
-    // oneShot  : entered by a single click from off; switches itself back to
-    //            off the moment the matrix row just written becomes fully
-    //            populated (source AND dest both set) -- see AssignOverlay's
-    //            onOneShotComplete.
+    // oneShot  : entered by a single click from off; self-exits the instant
+    //            THIS session's own write happens (one destination or one
+    //            source pick), regardless of whether the row it touched is
+    //            now fully populated -- see AssignOverlay's onOneShotComplete.
+    //            A SOURCE-only (or DEST-only) session inherently leaves the
+    //            row half-filled, by design (Phil's follow-up request), so
+    //            "the row completed" can no longer be the exit condition.
     // latched  : entered by a double click from off (or by promotion, see
     //            nextModeOnDoubleClick); behaves like the old ASSIGN mode,
     //            staying on through any number of assignments until another
     //            click or Esc.
     enum class AssignMode { off, oneShot, latched };
 
+    // Which half of the matrix this ASSIGN session targets (Phil's tester
+    // request: two separate single-purpose buttons instead of one that
+    // arms both a destination pick AND a source pick at once, which read as
+    // two competing invitations at the moment the user most needed to know
+    // what to click next).
+    enum class AssignKind { source, dest };
+
+    // Bundles mode + kind so the pure state-machine steps below can return
+    // both at once (a kind switch can change the mode too -- see
+    // nextModeOnClick's comment).
+    struct AssignState { AssignMode mode; AssignKind kind; };
+
     // Pure state-machine steps, exposed so tests can drive them directly
     // instead of depending on real mouse double-click timing.
     //
-    // A single click always toggles: off->oneShot, anything else->off.
-    static AssignMode nextModeOnClick (AssignMode current)
+    // Single click on the button of kind `clicked`, per the product-owner
+    // spec:
+    //  - mode == off              -> oneShot, kind = clicked (arm that half)
+    //  - mode != off, kind != K   -> oneShot, kind = clicked (SWITCH to the
+    //                                other half -- clicking DEST while a
+    //                                SOURCE session is live does not turn
+    //                                assign off, it re-arms for DEST)
+    //  - mode != off, kind == K   -> off (clicking the ALREADY-active
+    //                                button's own kind again turns it off)
+    static AssignState nextStateOnClick (AssignState current, AssignKind clicked)
     {
-        return current == AssignMode::off ? AssignMode::oneShot : AssignMode::off;
+        if (current.mode == AssignMode::off)
+            return { AssignMode::oneShot, clicked };
+        if (current.kind != clicked)
+            return { AssignMode::oneShot, clicked };
+        return { AssignMode::off, current.kind };
     }
 
     // A genuine double click is, at the JUCE level, two ordinary clicks
     // followed by a mouseDoubleClick callback (Component::internalMouseUp:
     // the second click's mouseUp -- which fires its own click/onClick --
     // runs BEFORE mouseDoubleClick). So by the time this runs,
-    // nextModeOnClick has already been applied twice by the two clicks
-    // themselves (e.g. off->oneShot->off, or oneShot->off->oneShot) --
-    // `afterClick` is that already-applied, and now stale, result.
+    // nextStateOnClick has already been applied twice by the two clicks
+    // themselves -- `afterClick` is that already-applied, and now stale,
+    // result.
     //
-    // Product-owner rule: a double click ALWAYS means latch, unconditionally,
-    // regardless of what mode the two individual clicks landed on -- "the
-    // same way caps lock does not care what the shift key was doing". So
-    // this ignores `afterClick` entirely and always returns latched; the
-    // parameter stays for symmetry with nextModeOnClick and because a real
-    // double click's mouseDoubleClick callback naturally has "the mode after
-    // click 2" as its input, even though this function doesn't need it.
-    static AssignMode nextModeOnDoubleClick (AssignMode /*afterClick*/)
+    // Product-owner rule: a double click ALWAYS means latch THAT BUTTON'S
+    // kind, unconditionally, regardless of what mode/kind the two individual
+    // clicks landed on -- "the same way caps lock does not care what the
+    // shift key was doing". So this ignores `afterClick` entirely and always
+    // returns { latched, clicked }; the parameter stays for symmetry with
+    // nextStateOnClick and because a real double click's mouseDoubleClick
+    // callback naturally has "the state after click 2" as its input, even
+    // though this function doesn't need it.
+    static AssignState nextStateOnDoubleClick (AssignState /*afterClick*/, AssignKind clicked)
     {
-        return AssignMode::latched;
+        return { AssignMode::latched, clicked };
     }
 
     explicit MatrixPanel (juce::AudioProcessorValueTreeState& apvtsIn) : apvts (apvtsIn)
@@ -229,25 +257,29 @@ public:
         viewport.setScrollBarsShown (true, false);
         addAndMakeVisible (viewport);
 
-        // ASSIGN toggle: click-to-route mode (see AssignOverlay). Styled like
-        // any other header text button; focus-grab disabled per the QWERTY
-        // rule (Controls.h's Knob comment has the full explanation).
-        // Toggle state is driven entirely by our own mode state machine
-        // (applyMode), not JUCE's built-in click-toggles-state, so it can't
-        // fight the double-click promotion logic -- see nextModeOnDoubleClick.
-        assignBtn.setClickingTogglesState (false);
-        assignBtn.setWantsKeyboardFocus (false);
-        assignBtn.setMouseClickGrabsKeyboardFocus (false);
-        assignBtn.setComponentID ("matrixAssign");
-        assignBtn.onClick = [this]
-        {
-            applyMode (nextModeOnClick (assignMode));
-        };
-        assignBtn.onDoubleClick = [this]
-        {
-            applyMode (nextModeOnDoubleClick (assignMode));
-        };
-        addAndMakeVisible (assignBtn);
+        // ASSIGN toggles: click-to-route mode (see AssignOverlay), one button
+        // per half of the matrix (Phil's tester request -- see AssignKind).
+        // Styled like any other header text button; focus-grab disabled per
+        // the QWERTY rule (Controls.h's Knob comment has the full
+        // explanation). Toggle state is driven entirely by our own mode
+        // state machine (applyMode), not JUCE's built-in click-toggles-state,
+        // so it can't fight the double-click promotion logic -- see
+        // nextStateOnDoubleClick.
+        assignSourceBtn.setClickingTogglesState (false);
+        assignSourceBtn.setWantsKeyboardFocus (false);
+        assignSourceBtn.setMouseClickGrabsKeyboardFocus (false);
+        assignSourceBtn.setComponentID ("matrixAssignSource");
+        assignSourceBtn.onClick = [this] { applyMode (nextStateOnClick ({ assignMode, assignKind }, AssignKind::source)); };
+        assignSourceBtn.onDoubleClick = [this] { applyMode (nextStateOnDoubleClick ({ assignMode, assignKind }, AssignKind::source)); };
+        addAndMakeVisible (assignSourceBtn);
+
+        assignDestBtn.setClickingTogglesState (false);
+        assignDestBtn.setWantsKeyboardFocus (false);
+        assignDestBtn.setMouseClickGrabsKeyboardFocus (false);
+        assignDestBtn.setComponentID ("matrixAssignDest");
+        assignDestBtn.onClick = [this] { applyMode (nextStateOnClick ({ assignMode, assignKind }, AssignKind::dest)); };
+        assignDestBtn.onDoubleClick = [this] { applyMode (nextStateOnDoubleClick ({ assignMode, assignKind }, AssignKind::dest)); };
+        addAndMakeVisible (assignDestBtn);
 
         // Repaint the matrix whenever anything an inert-destination rule
         // gates might have changed (currently just chaos SYNC), so a dimmed
@@ -264,34 +296,57 @@ public:
         apvts.removeParameterListener (params::id::chaos::syncToBpm, &inertWatcher);
     }
 
-    juce::Button& assignButton() { return assignBtn; }
+    juce::Button& assignSourceButton() { return assignSourceBtn; }
+    juce::Button& assignDestButton() { return assignDestBtn; }
+    // Union of both ASSIGN buttons' bounds, for the overlay's click
+    // exclusion (see ContentComponent's wiring). Safe to treat as a single
+    // rectangle: the two buttons sit adjacent in the header with nothing
+    // else between them, so their union contains no other component's area.
+    juce::Rectangle<int> assignButtonsBounds() const
+    {
+        return assignSourceBtn.getBounds().getUnion (assignDestBtn.getBounds());
+    }
     bool isAssignOn() const { return assignMode != AssignMode::off; }
     AssignMode getAssignMode() const { return assignMode; }
+    AssignKind getAssignKind() const { return assignKind; }
     // Sets the toggle and fires onAssignToggled if the state actually
-    // changed (used by ContentComponent::keyPressed's Esc handling). Only
-    // off/one-shot are meaningful entry points here (Esc always wants off;
-    // nothing currently forces latch on programmatically).
-    void setAssignOn (bool on)
+    // changed (used by ContentComponent::keyPressed's Esc handling and by
+    // AssignOverlay::onOneShotComplete's self-exit). Only off/one-shot are
+    // meaningful entry points here (nothing currently forces latch on
+    // programmatically). Turning OFF keeps whatever kind was already active
+    // (the `kind` argument only matters when turning on); turning ON with
+    // the session already on the same kind is a no-op.
+    void setAssignOn (bool on, AssignKind kind = AssignKind::dest)
     {
-        if (isAssignOn() == on)
-            return;
-        applyMode (on ? AssignMode::oneShot : AssignMode::off);
+        if (on)
+        {
+            if (isAssignOn() && assignKind == kind)
+                return;
+            applyMode ({ AssignMode::oneShot, kind });
+        }
+        else
+        {
+            if (! isAssignOn())
+                return;
+            applyMode ({ AssignMode::off, assignKind });
+        }
     }
 
-    std::function<void(AssignMode)> onAssignToggled;
+    std::function<void (AssignMode, AssignKind)> onAssignToggled;
 
-    // Test hooks: apply exactly what a real single/double click does,
-    // without needing real mouse-event timing (see the class comment on
-    // nextModeOnDoubleClick for why a double click is three separate
-    // applyMode calls -- click 1's onClick, click 2's onClick, then
-    // mouseDoubleClick -- and simulateDoubleClick reproduces all three from
-    // whatever the current mode is, exactly like AssignButton would).
-    void simulateClick() { applyMode (nextModeOnClick (assignMode)); }
-    void simulateDoubleClick()
+    // Test hooks: apply exactly what a real single/double click on the
+    // button of kind `kind` does, without needing real mouse-event timing
+    // (see the class comment on nextStateOnDoubleClick for why a double
+    // click is three separate applyMode calls -- click 1's onClick, click
+    // 2's onClick, then mouseDoubleClick -- and simulateDoubleClick
+    // reproduces all three from whatever the current state is, exactly like
+    // AssignButton would).
+    void simulateClick (AssignKind kind) { applyMode (nextStateOnClick ({ assignMode, assignKind }, kind)); }
+    void simulateDoubleClick (AssignKind kind)
     {
-        applyMode (nextModeOnClick (assignMode));
-        applyMode (nextModeOnClick (assignMode));
-        applyMode (nextModeOnDoubleClick (assignMode));
+        applyMode (nextStateOnClick ({ assignMode, assignKind }, kind));
+        applyMode (nextStateOnClick ({ assignMode, assignKind }, kind));
+        applyMode (nextStateOnDoubleClick ({ assignMode, assignKind }, kind));
     }
 
     // Test hook: applies exactly what picking `choiceIndex` from row
@@ -361,52 +416,21 @@ public:
     int getViewPositionYForTest() const { return viewport.getViewPositionY(); }
     int getViewHeightForTest() const { return viewport.getViewHeight(); }
 
-    // Waiting-for-other-half state (see AssignOverlay::setRouteChoice /
-    // ContentComponent's onRouteWritten wiring): set right after an ASSIGN
-    // click writes one half of a route, and it's the only "row" concept
-    // driven from outside a real user click on the row itself, so it's kept
-    // separate from revealedRoutes (which is knob-reveal only, a different
-    // feature). Pass -1 to clear. A no-op repaint guard, same as
-    // clearRevealedRoutes, since this is called on every ASSIGN write.
-    void setWaitingRoute (int route)
-    {
-        waitingRoute = route;
-        // Unconditional (not gated on the value actually changing): this is
-        // called right after every ASSIGN write, including ones that leave
-        // `route` the same waiting row it already was, and the inert-dim
-        // wash (a different row concept, painted in the same pass) needs a
-        // fresh look at the just-written DEST choice regardless.
-        content.repaint();
-    }
-    bool isRouteWaitingForTest (int route) const { return waitingRoute == route; }
-
-    // Test hooks for the waiting-ring geometry (see waitingRingBounds's own
-    // comment): the exact ring rectangle paintWaitingHighlight draws, plus
-    // the three controls it must never overlap, all in `content`'s local
-    // coordinate space (what paint() itself works in).
-    juce::Rectangle<int> getWaitingRingBoundsForTest (int route) const { return waitingRingBounds (route); }
-    juce::Rectangle<int> getRowSourceBoundsForTest (int route) const
-    {
-        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->source.getBounds();
-    }
-    juce::Rectangle<int> getRowDestBoundsForTest (int route) const
-    {
-        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->dest.getBounds();
-    }
-    juce::Rectangle<int> getRowDepthBoundsForTest (int route) const
-    {
-        return (route < 0 || route >= (int) rows.size()) ? juce::Rectangle<int>() : rows[(size_t) route]->depth.getBounds();
-    }
-
-    // Test hook: is `route`'s row currently painted dimmed because its
-    // destination is inert right now (see isModDestIndexInert)? Reads the
-    // combo's live selection exactly like paintInertRows does.
+    // Test hook: is `route`'s row currently painted dimmed -- either because
+    // its destination is inert right now (see isModDestIndexInert) or
+    // because the row is missing either half (source or dest still "None").
+    // The latter replaced the old "waiting for its other half" callout
+    // (Phil's follow-up request: don't chase the user about a half-filled
+    // row, just show it quietly as not-live-yet, same visual language as an
+    // inert destination) -- see paintInertRows. Reads the combos' live
+    // selection exactly like paintInertRows does.
     bool isRouteDimmedForTest (int route) const
     {
         if (route < 0 || route >= (int) rows.size())
             return false;
-        const int destIndex = rows[(size_t) route]->dest.getSelectedItemIndex() - 1;
-        return isModDestIndexInert (apvts, destIndex);
+        auto& row = *rows[(size_t) route];
+        const int destIndex = row.dest.getSelectedItemIndex() - 1;
+        return isModDestIndexInert (apvts, destIndex) || rowMissingEitherHalf (row);
     }
 
     void paint (juce::Graphics& g) override
@@ -419,8 +443,15 @@ public:
     void resized() override
     {
         {
+            // Two buttons now share the space the single ASSIGN button used
+            // to have; DEST first (rightmost) since it's the more commonly
+            // used half, SOURCE to its left. See the class comment on
+            // AssignKind for why the header no longer has room for the
+            // "Mod Matrix" title to be threatened by this -- both buttons
+            // stay clear of it, same as the old single button did.
             auto headerArea = getLocalBounds().removeFromTop (metrics::sectionHeaderHeight);
-            assignBtn.setBounds (headerArea.removeFromRight (70).reduced (6, 5));
+            assignDestBtn.setBounds (headerArea.removeFromRight (56).reduced (5, 5));
+            assignSourceBtn.setBounds (headerArea.removeFromRight (56).reduced (5, 5));
         }
         auto area = getLocalBounds().withTrimmedTop (metrics::sectionHeaderHeight).reduced (6, 4);
 
@@ -578,19 +609,28 @@ private:
         }
     };
 
-    // Single place that changes the mode: keeps the button's toggle state,
+    // Single place that changes the mode: keeps BOTH buttons' toggle state,
     // the "assignLatched" property the lock glyph reads (see
-    // SPASynthLookAndFeel::drawButtonText), and the outside world (via
-    // onAssignToggled) all in sync, so no caller can leave the button
-    // visually on but functionally off or vice versa.
-    void applyMode (AssignMode newMode)
+    // SPASynthLookAndFeel::drawButtonText -- gated on componentID prefix
+    // "matrixAssign" so it fires for whichever button is latched), and the
+    // outside world (via onAssignToggled) all in sync, so no caller can
+    // leave a button visually on but functionally off or vice versa. Only
+    // the active kind's button ever lights; the other is always cleared.
+    void applyMode (AssignState newState)
     {
-        assignMode = newMode;
-        assignBtn.setToggleState (newMode != AssignMode::off, juce::dontSendNotification);
-        assignBtn.getProperties().set ("assignLatched", newMode == AssignMode::latched);
-        assignBtn.repaint();
+        assignMode = newState.mode;
+        assignKind = newState.kind;
+        const bool on = assignMode != AssignMode::off;
+        const bool sourceOn = on && assignKind == AssignKind::source;
+        const bool destOn = on && assignKind == AssignKind::dest;
+        assignSourceBtn.setToggleState (sourceOn, juce::dontSendNotification);
+        assignDestBtn.setToggleState (destOn, juce::dontSendNotification);
+        assignSourceBtn.getProperties().set ("assignLatched", sourceOn && assignMode == AssignMode::latched);
+        assignDestBtn.getProperties().set ("assignLatched", destOn && assignMode == AssignMode::latched);
+        assignSourceBtn.repaint();
+        assignDestBtn.repaint();
         if (onAssignToggled)
-            onAssignToggled (assignMode);
+            onAssignToggled (assignMode, assignKind);
     }
 
     static constexpr int rowHeight = 25;
@@ -639,84 +679,52 @@ private:
         }
     }
 
-    // Waiting-row highlight (see setWaitingRoute): amber, distinct from both
-    // the reveal violet and the ASSIGN overlay's own blue/yellow. Originally
-    // also carried a right-aligned "WAITING FOR SOURCE/DEST" label, but the
-    // row has NO free space anywhere -- source/dest/depth (see resized())
-    // pack its full width with only 4px gutters between them -- so that text
-    // was painted straight across the depth slider (the slider handle showed
-    // through it), which read as a glitch rather than a deliberate state.
-    // Text placed inside either combo would equally overlap a real control.
-    // Dropped in favour of exactly two elements that both sit clear of every
-    // control: a translucent row wash + outline (painted in the background
-    // pass, i.e. genuinely BEHIND the opaque combo/slider faces, not
-    // fighting them for pixels) and a ring drawn just outside the specific
-    // empty field's own bounds (expanded 2px, well inside the 4px column
-    // gutters -- getWaitingRingBoundsForTest() below is the exact rectangle,
-    // and a test asserts it never intersects the row's other controls at any
-    // width). The ring alone already answers "which half" unambiguously.
-    // Reads combo selections live (index 0 == None, see kNoneRouteChoiceIndex);
-    // never mutates.
-    void paintWaitingHighlight (juce::Graphics& g) const
+    // Is `row` missing either half (source or dest still "None")? Shared by
+    // isRouteDimmedForTest and paintInertRows -- see paintInertRows' comment
+    // for why this replaced the old "waiting for its other half" callout.
+    // Reads combo selections live (index 0 == None, see kNoneRouteChoiceIndex).
+    static bool rowMissingEitherHalf (const Row& row)
     {
-        if (waitingRoute < 0 || waitingRoute >= (int) rows.size())
-            return;
-        auto& row = *rows[(size_t) waitingRoute];
-        const bool sourceEmpty = row.source.getSelectedItemIndex() <= 0;
-        const bool destEmpty = row.dest.getSelectedItemIndex() <= 0;
-        if (! sourceEmpty && ! destEmpty)
-            return;   // completed since -- caller clears this, but paint must never assume timing
-
-        const auto colour = currentTheme().assignWaiting;
-        const juce::Rectangle<int> rowBounds (0, waitingRoute * rowHeight, content.getWidth(), rowHeight);
-        g.setColour (colour.withAlpha (0.16f));
-        g.fillRect (rowBounds);
-        g.setColour (colour.withAlpha (0.9f));
-        g.drawRect (rowBounds, 2);
-
-        const auto ring = waitingRingBounds (waitingRoute);
-        if (! ring.isEmpty())
-        {
-            g.setColour (colour);
-            g.drawRoundedRectangle (ring.toFloat(), 4.0f, 2.0f);
-        }
+        return row.source.getSelectedItemIndex() <= 0 || row.dest.getSelectedItemIndex() <= 0;
     }
 
-    // The exact rectangle paintWaitingHighlight rings around the still-empty
-    // field of `route` -- factored out so a test can assert it never
-    // intersects the row's other controls without duplicating paint's own
-    // geometry (and so it can never drift from what's actually drawn).
-    // Empty if `route` isn't the waiting row or the row has since completed.
-    juce::Rectangle<int> waitingRingBounds (int route) const
-    {
-        if (route < 0 || route >= (int) rows.size())
-            return {};
-        auto& row = *rows[(size_t) route];
-        const bool sourceEmpty = row.source.getSelectedItemIndex() <= 0;
-        const bool destEmpty = row.dest.getSelectedItemIndex() <= 0;
-        if (! sourceEmpty && ! destEmpty)
-            return {};
-        auto& emptyBox = sourceEmpty ? row.source : row.dest;
-        return emptyBox.getBounds().expanded (2);
-    }
-
-    // Dims any row whose DEST is currently inert (isModDestIndexInert) --
+    // Dims any row whose DEST is currently inert (isModDestIndexInert), OR
+    // that is simply not live yet because one half is still "None"
+    // (rowMissingEitherHalf). Both cases use the same quiet dim wash --
     // painted OVER the children (paintOverChildren), not in the background
     // pass, so the wash actually darkens the combo boxes/slider drawn on top
     // of it rather than just showing through the gaps between them.
+    //
+    // Phil's follow-up tester request: don't complain that a row is
+    // half-filled (the old "waiting for its other half" amber callout,
+    // removed -- it fought the two-button model directly, since a
+    // SOURCE-only or DEST-only session is now a deliberately valid, common
+    // end state, not a state to chase the user out of). A plain, quiet
+    // statement that the row isn't live yet is enough, in the same visual
+    // language already used for an inert destination -- no highlight, no
+    // colour call-out, nothing that draws the eye or nags. The
+    // "INERT WHILE SYNCED" text itself is reserved for the genuinely-inert
+    // case only; an incomplete-but-otherwise-fine row gets the wash with no
+    // label (there is nothing actionable to say about it).
     void paintInertRows (juce::Graphics& g) const
     {
         for (int r = 0; r < (int) rows.size(); ++r)
         {
-            const int destIndex = rows[(size_t) r]->dest.getSelectedItemIndex() - 1;
-            if (! isModDestIndexInert (apvts, destIndex))
+            auto& row = *rows[(size_t) r];
+            const int destIndex = row.dest.getSelectedItemIndex() - 1;
+            const bool inert = isModDestIndexInert (apvts, destIndex);
+            const bool incomplete = rowMissingEitherHalf (row);
+            if (! inert && ! incomplete)
                 continue;
             const juce::Rectangle<int> rowBounds (0, r * rowHeight, content.getWidth(), rowHeight);
             g.setColour (currentTheme().background.withAlpha (0.6f));
             g.fillRect (rowBounds);
-            g.setColour (currentTheme().textSecondary.withAlpha (0.85f));
-            g.setFont (metrics::smallFont());
-            g.drawText ("INERT WHILE SYNCED", rowBounds.reduced (4, 0), juce::Justification::centredRight);
+            if (inert)
+            {
+                g.setColour (currentTheme().textSecondary.withAlpha (0.85f));
+                g.setFont (metrics::smallFont());
+                g.drawText ("INERT WHILE SYNCED", rowBounds.reduced (4, 0), juce::Justification::centredRight);
+            }
         }
     }
 
@@ -743,7 +751,6 @@ private:
         void paint (juce::Graphics& g) override
         {
             owner->paintRevealHighlights (g);
-            owner->paintWaitingHighlight (g);
         }
         void paintOverChildren (juce::Graphics& g) override { owner->paintInertRows (g); }
     };
@@ -752,10 +759,11 @@ private:
     RowsHost content;
     juce::Viewport viewport;
     std::vector<std::unique_ptr<Row>> rows;
-    AssignButton assignBtn { "ASSIGN" };
+    AssignButton assignSourceBtn { "SOURCE" };
+    AssignButton assignDestBtn { "DEST" };
     AssignMode assignMode = AssignMode::off;
+    AssignKind assignKind = AssignKind::dest;
     std::set<int> revealedRoutes;
-    int waitingRoute = -1;
     InertGateWatcher inertWatcher;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)

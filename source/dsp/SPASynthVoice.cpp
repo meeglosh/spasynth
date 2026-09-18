@@ -501,6 +501,7 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                     stat.loop,
                     (double) stat.loopStart,
                     (double) stat.loopEnd,
+                    (double) stat.loopXfade,
                     stat.syncToBpm,
                     stat.gridBeatSeconds,
                     stat.gridOffsetSeconds,

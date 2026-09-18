@@ -244,6 +244,10 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
     p.push_back ({ pid (id::osc::loopEnd), letter + "Loop End", section,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 1.0f, "",
                    false, { .enabled = true, .biasCentre = 0.9f, .biasStrength = 0.5f } });
+    p.push_back ({ pid (id::osc::loopXfade), letter + "Loop XFade", section,
+                   ParamKind::floatParam, { 0.0f, 100.0f }, 0.0f, "%",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.2f,
+                            .biasStrength = 0.5f } });
     p.push_back ({ pid (id::osc::keytrack), letter + "Keytrack", section,
                    ParamKind::boolParam, {}, 1.0f, "", false, { .enabled = true } });
     p.push_back ({ pid (id::osc::rootNote), letter + "Root Note", section,

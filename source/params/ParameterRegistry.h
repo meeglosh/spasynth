@@ -219,6 +219,9 @@ namespace id
         inline constexpr const char* loop         = "loop";
         inline constexpr const char* loopStart    = "loopStart";
         inline constexpr const char* loopEnd      = "loopEnd";
+        // Loop crossfade amount (0..100%). Borrows audio from outside the
+        // loop so the loop period never changes -- not a mod destination.
+        inline constexpr const char* loopXfade    = "loopXfade";
         inline constexpr const char* keytrack     = "keytrack";
         inline constexpr const char* rootNote     = "rootNote";
 

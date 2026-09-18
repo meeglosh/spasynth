@@ -1,9 +1,17 @@
-# SPASynth handoff (2026-09-13)
+# SPASynth handoff (2026-09-18)
 
 Quick "start here" for the next session. Full detail lives in `CLAUDE.md`; this
 is the short version.
 
 ## Where we are
+
+- **2026-09-18: v1.0.17 built + staged (main `b99beb9`), awaiting Mike's
+  install, then it goes to Paul and Phil.** Read the 1.0.17 section below
+  for what is in it and the lessons from the round. 1.0.15 and 1.0.16 both
+  shipped to the testers. The next round is **1.1.0** (direct audio input,
+  granular effect, FX params as mod destinations, ASIO), which changes the
+  plugin's shape rather than its behaviour; see "Planned for 1.1.0".
+  Everything below this bullet is history, newest first.
 
 - **2026-09-11: v1.0.15 built + staged (main `656a8bb`), awaiting Mike's
   install + gauntlet, then it goes to Paul and Phil.** The largest round
@@ -258,38 +266,72 @@ saved preset with a deliberately zeroed route still loading at zero.
 
 ## 1.0.17 BUILT + STAGED (2026-09-18, main `b99beb9`), awaiting Mike's install
 
-A round of small pre-launch polish items, batched so the bigger
-architecture work does not block launch. Version bumped to 1.0.17 at the
-start of the round, as usual. Items so far:
-- Arrow after the "LOCKS" caption pointing at the lock buttons, so the
-  relationship reads at a glance. Drawn as a vector chevron, not a Unicode
-  glyph, because the UI uses bundled fonts and a missing glyph would render
-  as a box. The hand-coupled caption width and layout inset became named
-  Theme metrics in the same change.
+Small pre-launch polish, batched so the 1.1.0 architecture work does not
+block launch. Version bumped at the start of the round, as usual. Eight
+code commits, all from Mike's and the testers' feedback:
 
+- `da3f536` **arrow after the "LOCKS" caption**, drawn as a vector chevron
+  rather than a Unicode glyph (bundled fonts; a missing glyph renders as a
+  box). The hand-coupled caption width and layout inset became named Theme
+  metrics so they cannot drift apart.
+- `b99beb9` **LOCKS spacing tightened**: the gap was mostly invisible slack,
+  since the text was left-justified in a box wider than the word. The box
+  now fits the glyphs, the text is right-justified in it, and a leading
+  indent moves the word off the window edge. The indent exactly offsets the
+  width removed, so the arrow and every lock button stayed put.
 - `df2036b` **oscillator copy/swap**: right-click an oscillator header for
   "Copy to Oscillator B/C" and "Swap with Oscillator B/C". No clipboard, by
   design: with three slots a direct destination is one action with no hidden
-  state. `copyOscSlot`/`swapOscSlots` on the processor enumerate the slot's
-  registry Section rather than a key list, so params added later are carried
-  automatically, and they reload the source's sample/wavetable into the
-  target (a slot is ~25 params PLUS content, and content is not a param).
-  Swap snapshots both slots before writing either; implementing it as two
-  copies clobbers its own source, and the test caught exactly that. Mod
-  matrix routes are deliberately NOT copied.
+  state. `copyOscSlot`/`swapOscSlots` enumerate the slot's registry Section
+  rather than a key list, so params added later are carried automatically,
+  and they reload the source's sample/wavetable into the target (a slot is
+  ~25 params PLUS content, and content is not a param). Swap snapshots both
+  slots before writing either; implementing it as two copies clobbers its
+  own source, and the test caught exactly that. Mod matrix routes are
+  deliberately NOT copied.
 - `84735d8` **chaos sync (ORGANIZED CHAOS)**: polyrhythmic lock, Mike's
   explicit choice over both a hard lock (too stepped) and rate-only (does
   not earn the name). Walkers keep individual speeds, quantised to whole
-  divisions of a tempo-derived base, with target changes landing on the beat
-  grid via the same host-position path the arp and sample SYNC use, and the
-  same free-run fallback when no advancing ppq exists. `chaos.syncToBpm` +
+  divisions of a tempo-derived base, landing on the beat grid via the same
+  host-position path the arp and sample SYNC use, with the same free-run
+  fallback when no advancing ppq exists. `chaos.syncToBpm` +
   `chaos.division` appended at the registry end, reusing the LFO division
   list, neither a mod destination. **Rate modulation is ignored while
-  synced** (rate becomes a division). Sync-off is guarded by a golden-value
-  test so refactors cannot drift it.
+  synced.** Sync-off is guarded by a golden-value test.
+- `d7cfe45` **chaos panel layout fix**: the sync feature shipped with
+  overlapping controls (Mike found it in a screenshot). The toggle took a
+  fourth cell in a three-cell row, and the division dropdown was carved out
+  of the rate cell's label row. The toggle moved into the section header
+  beside the title it renames, and the rate cell now shows either the knob
+  or the dropdown, never both stacked.
+- `70c1b99` **wired knobs render violet**, with a live reachable range.
+  Two causes behind Phil's complaint: the old indicator was driven by live
+  telemetry so a wired knob showed nothing while silent, and `accentMod` is
+  the same teal as the accent because the picker ships with LINK on. The
+  violet is a FIXED free function, deliberately outside the accent system so
+  it cannot be tinted away; a test proves changing accents leaves it alone.
+  `ModAssignTable` rebuilds per-destination reach on any route change,
+  including preset load, which is what makes the arc follow a depth slider
+  as it is dragged. Unipolar sources reach one way only.
+- `547242f` **click an assigned knob to find its matrix rows**: marks every
+  row targeting that parameter in the same violet and scrolls the first into
+  view, persisting until a click elsewhere or Esc. ASSIGN mode takes
+  precedence. A click is press+release with no drag inside the ring.
+- `0f62fbb` **module headers show power state**: enabled modules keep the
+  user's accent, disabled ones draw their title in the muted white the LOCKS
+  caption uses. Modules with no on/off switch (matrix, envelopes, LFOs) keep
+  the accent, since washing them out would read as switched off (Mike's
+  call). Ships with `chaosPanelLayoutTest`, which should have existed
+  before `d7cfe45`.
+- `5957190` **Convolve start position** (Paul): the impulse can begin
+  partway into the file, which drops the direct hit and leaves the diffuse
+  tail. Trims the raw IR before the existing decay/damping reshape, so it
+  reuses that path rather than re-reading the file; pre-delay stays
+  orthogonal. A 150 ms minimum tail is always retained so the knob can reach
+  the end without silencing the effect. Not a mod destination, deliberately.
 
-All six items landed. **Artifacts:** macOS pkg from `b99beb9`, signed +
-notarized + stapled, `spctl` accepted, universal, minos 11.0, md5
+**Artifacts:** macOS pkg from `b99beb9`, signed + notarized + stapled,
+`spctl` accepted, universal, minos 11.0, md5
 `552e1392be1c2e4acb1da8f9a4019a8c`. Windows exe from `ci-windows-b99beb9`,
 md5 `3b812f0bbdf70d9a4d20c115305b451e`. Both byte-identical across
 `dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.17/`. Dev
@@ -307,29 +349,18 @@ Tester note: `docs/tester-note-1.0.17.txt`.
   wildness or you will not catch it.
 - **A process-wide `getCurrentlyFocusedComponent()` check is flaky** unless
   it is baselined AND gated on `Process::isForegroundProcess()`: showing a
-  real window can make the OS focus it. The deterministic half of the rule
-  is the static sweep for controls that grab focus on click; keep that
-  ungated.
+  real window can make the OS focus it. It failed pass/fail/pass across
+  three runs. The deterministic half of the rule is the static sweep for
+  controls that grab focus on click; keep that ungated. Run a suspect test
+  FIVE times, not twice.
 - **Layout bugs need layout tests.** The chaos sync feature shipped with
-  overlapping controls because no test asserted panel geometry and I
-  reviewed it by reading code. `chaosPanelLayoutTest` now covers that
-  panel; consider the same for others.
-- Aggregate per-item assertions. A layout test briefly added 433 of them.
-
-### Open, awaiting Mike's answers
-- **Knob indicator for assigned mod destinations** (Phil: the current one is
-  not clear enough). Diagnosis: two separate causes. (1) `Theme::accentMod`
-  is `0xff51d0bf`, the SAME teal as the brand accent, so the mod arc reads
-  as more of the value arc rather than a different layer. (2) The indicator
-  is driven by live telemetry (`modDestActive`), so a wired knob shows
-  NOTHING while the synth is silent; the question a user asks is "is this
-  wired", but we only answer "is this moving". Proposed: mark assignment
-  statically from the matrix row params (no audio needed), give modulation
-  its own hue, and make the static mark the reachable range so it answers
-  "wired" and "by how much" at once. **Do NOT use a glow**: blue glow
-  already means "assignable" in ASSIGN mode and is reused by the drag-drop
-  highlight. Needs from Mike: the new hue, and whether a wired-but-zero-depth
-  route should still mark the knob.
+  overlapping controls because no test asserted panel geometry and the
+  review was code-reading plus a passing suite. Renders catch what tests
+  do not; ask for one on every visible UI change.
+- **Aggregate per-item assertions.** A layout test briefly added 433 of
+  them (one per control, one per pair, per state), which makes the suite
+  total meaningless. One assertion per property, offender named in the
+  failure message.
 
 ## Planned for 1.1.0 (Mike, 2026-09-16, confirmed 2026-09-17)
 
@@ -418,21 +449,6 @@ SPASynth's Set Library Folder path. If the paths differ it's the root
 resolver in SPAStation; if they match, we need the pack name + folder
 listing. Next: any further 1.0.16 findings, then build + send.
 
-### Original 1.0.16 queue note
-- **Library auto-refresh.** Phil installed a pack via SPAStation and it did
-  not appear in SPASynth (likely no Rescan/relaunch; root mismatch not yet
-  ruled out -- asked him for the two paths). Regardless: SPASynth should
-  watch its library root and refresh itself when a pack folder appears or
-  disappears. Design: message-thread timer (every ~3 s while an editor is
-  open, ~10 s otherwise) compares the root's immediate-subfolder listing
-  (names + mtimes) to the last scan; on change, `refreshLibrary()` (which
-  already generates presets for new packs), debounced so a pack mid-copy
-  is not scanned half-written (wait for the listing to be stable for two
-  ticks). Never on the audio thread; filesystem reads stay off the audio
-  path (they already do). Test: temp root, add a pack folder with a WAV
-  after construction, pump, assert the pack + its presets appear without a
-  manual rescan. Do not bump the version until a build is sent.
-
 ## Product decisions of record: editions (2026-09-16)
 
 - **One binary, forever.** Mike considered splitting Standard and Pro by
@@ -496,12 +512,13 @@ diffing before any release.
 
 ## What's actually left before launch
 
-1. Mike installs 1.0.15 (`sudo installer -pkg
-   /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.15-macOS.pkg
-   -target /`, Reset & Rescan, relaunch Logic), runs the gauntlet.
-2. Send both 1.0.15 installers + the tester note
-   (`docs/tester-note-1.0.15.txt`, paste-ready) to Paul and Phil (nothing
-   since 1.0.8 has gone out). Bump to 1.0.16 for anything after.
+1. Mike installs 1.0.17 (`sudo installer -pkg
+   /Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.17-macOS.pkg
+   -target /`, Reset & Rescan, relaunch Logic), runs the gauntlet. The one
+   check that matters most: open a preset saved in 1.0.16 and confirm it
+   sounds the same, since two changes this round touch saved work.
+2. Send both 1.0.17 installers + `docs/tester-note-1.0.17.txt` to Paul and
+   Phil. Bump to 1.0.18 (or start 1.1.0) for anything after.
 3. Decide: one more tester round after that, or send the announcement
    directly once Mike's happy.
 4. Shopify build-out per `docs/shopify-setup-guide.md`.

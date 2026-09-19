@@ -1,0 +1,17 @@
+SPASynth 1.0.21 - what's new since 1.0.20
+
+This round is one new LFO feature plus a display fix.
+
+- Added a SMOOTH knob to each LFO. Stepped shapes like Square and Sample and Hold jump instantly from one value to the next, which can click or pop in whatever they are modulating; SMOOTH rounds off those transitions instead. It works on every shape and defaults to 0, so existing presets sound exactly as they did before.
+- Added a JITTER knob to each LFO. It blends a random value into the chosen shape, renewed once per cycle so it follows the LFO's own rate or division; at 0 you get the pure shape, at full a purely random one. Turning up SMOOTH and JITTER together gives a smooth random drift, a genuinely useful modulation source on its own. Defaults to 0, so existing presets are unaffected.
+- The Organic Chaos division menu showed no value with SYNC on. The menu was too narrow to draw the selected division, so it looked empty until you opened it. We shortened the chaos meter slightly to make room. The LFO panel was also rearranged a little to fit the two new knobs, with the shape and division menus now stacked.
+
+Worth trying specifically
+- Put an LFO on Square or Sample and Hold, route it to something obvious like pitch or filter cutoff, and confirm SMOOTH removes the clicking.
+- Turn SMOOTH and JITTER up together on a Sine for a slow random drift.
+- Load a preset saved in 1.0.20 and confirm it sounds unchanged, since both new knobs default to 0.
+- Check the Organic Chaos division menu now shows its value with SYNC on.
+
+Install notes
+- macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

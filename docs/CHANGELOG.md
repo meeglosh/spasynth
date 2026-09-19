@@ -1,5 +1,26 @@
 # SPASynth changelog
 
+## 1.0.21
+
+- Added a SMOOTH knob to each LFO. Stepped shapes like Square and Sample and
+  Hold jump instantly from one value to the next, which can click or pop in
+  whatever they are modulating; SMOOTH rounds off those transitions instead.
+  It works on every shape and defaults to 0, so existing presets sound
+  exactly as they did before.
+- Added a JITTER knob to each LFO. It blends a random value into the chosen
+  shape, renewed once per cycle so it follows the LFO's own rate or
+  division; at 0 you get the pure shape, at full a purely random one.
+  Turning up SMOOTH and JITTER together gives a smooth random drift, a
+  useful modulation source in its own right. Defaults to 0, so existing
+  presets are unaffected.
+- The Organic Chaos division menu showed no value with SYNC on. The menu
+  was too narrow to draw the selected division, so it looked empty until
+  you opened it. We shortened the chaos meter slightly to make room. The
+  LFO panel was also rearranged a little to fit the two new knobs, with the
+  shape and division menus now stacked.
+
+
+
 ## 1.0.20
 
 - The loop XFADE display did not update until you moved a loop point.

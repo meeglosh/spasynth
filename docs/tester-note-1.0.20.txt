@@ -1,0 +1,16 @@
+SPASynth 1.0.20 - what's new since 1.0.19
+
+A small round, fixing three things reported on 1.0.19: no new features.
+
+- The loop XFADE display did not update until you moved a loop point. Setting XFADE looked like it was doing nothing until you nudged the loop start or end, at which point the crossfade shading suddenly appeared. The display simply was not listening for changes to XFADE itself; it now updates immediately. The same gap affected the per oscillator time signature and the beat grid overlay, both fixed the same way.
+- Organic Chaos, when routed through the mod matrix, did not run at the rate you chose. Each chaos walker uses its own rate multiplier so its internal drifts (pitch, position, amplitude and so on) move at different speeds against each other, which is what gives chaos its organic feel. That multiplier was also being applied to the one chaos signal you route yourself through the mod matrix, and it was re-rolled on every new note. So a routed chaos source ran at a random multiple of the rate or division you picked, and the speed changed every time you played a new note. It now runs at exactly the rate or division shown, and stays there note to note. The internal drifts keep their spread and notes still move independently, so chaos itself sounds no different; only its speed is now correct. All of the chaos movements share a single random sequence, and pinning the routed signal to the rate you chose changes when it reaches the end of its cycle, which changes how that shared sequence gets handed out to the other movements too. So any patch that uses Organic Chaos, not only one that routes it through the mod matrix, will wander slightly differently than it did in 1.0.19. The character, depth, rate and feel are all the same, and chaos is random drift by design, so this is not a fault, just a different wander than before.
+- The check mark beside the selected item in a menu was oversized. It now reads as a modest mark next to the label, in every menu with a selected item: reverb algorithm, EQ band type and slope, MIDI Learn, the oscillator sample list, and the settings menu.
+
+Worth trying specifically
+- Set XFADE and confirm the crossfade shading appears immediately, without touching the loop points.
+- Route Organic Chaos to something obvious, like an oscillator level, with SYNC on. Confirm the division you chose is actually the speed you hear, and that releasing and pressing a key again does not change the speed.
+- Open any menu with a selected item and check the check mark size.
+
+Install notes
+- macOS: signed and notarized. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

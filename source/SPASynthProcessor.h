@@ -481,6 +481,8 @@ private:
         std::atomic<float>* phase = nullptr;
         std::atomic<float>* retrig = nullptr;
         std::atomic<float>* unipolar = nullptr;
+        std::atomic<float>* smooth = nullptr;
+        std::atomic<float>* jitter = nullptr;
     };
 
     struct RawRoute

@@ -741,6 +741,8 @@ LFOPanel::LFOPanel (SPASynthProcessor& p, int lfoIndex)
       division (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::division)),
       rate (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::rate), "RATE", true),
       phase (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::phase), "PHASE", true),
+      smooth (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::smooth), "SMOOTH", true),
+      jitter (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::jitter), "JITTER", true),
       sync (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::sync), "SYNC"),
       retrig (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::retrig), "RETRIG"),
       unipolar (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::unipolar), "UNI"),
@@ -749,11 +751,18 @@ LFOPanel::LFOPanel (SPASynthProcessor& p, int lfoIndex)
       divisionEnable (p.getAPVTS(), id::lfoParam (lfoIndex, id::lfo::sync),
                       [] (float v) { return v >= 0.5f; }, { &division })
 {
+    smooth.slider.setTooltip ("Rounds off the LFO's edges, so stepped shapes like Square "
+                              "and S&H stop clicking.");
+    jitter.slider.setTooltip ("Blends a random value into the shape, renewed once per LFO "
+                              "cycle. Turn both this and SMOOTH up for a smooth random drift.");
+
     addAndMakeVisible (display);
     addAndMakeVisible (shape);
     addAndMakeVisible (division);
     addAndMakeVisible (rate);
     addAndMakeVisible (phase);
+    addAndMakeVisible (smooth);
+    addAndMakeVisible (jitter);
     addAndMakeVisible (sync);
     addAndMakeVisible (retrig);
     addAndMakeVisible (unipolar);
@@ -771,11 +780,28 @@ void LFOPanel::resized()
     retrig.setBounds (toggles.removeFromLeft (72));
     unipolar.setBounds (toggles.removeFromLeft (56));
 
+    // Five cells: RATE, PHASE, SMOOTH, JITTER, then a fifth cell holding
+    // SHAPE stacked above DIVISION (each combo keeps its existing height;
+    // stacking uses the knob row's spare vertical space instead of giving
+    // the combos their own inline cells). The combo cell is a fixed width,
+    // not an even fifth -- an even split leaves the combos too narrow to
+    // show their longest entries ("Triangle", "1/16T") at their existing
+    // 22px height (see comboTextFitsCellTest); 92px leaves ~59px of real
+    // text room, comfortably more than "Triangle"'s ~37px. The four knob
+    // cells then split whatever's left evenly.
+    constexpr int comboCellW = 92;
+    auto comboCell = knobRow.removeFromRight (comboCellW);
     const auto cellW = knobRow.getWidth() / 4;
     rate.setBounds (knobRow.removeFromLeft (cellW));
     phase.setBounds (knobRow.removeFromLeft (cellW));
-    shape.setBounds (knobRow.removeFromLeft (cellW).withSizeKeepingCentre (cellW - 6, 22));
-    division.setBounds (knobRow.withSizeKeepingCentre (knobRow.getWidth() - 6, 22));
+    smooth.setBounds (knobRow.removeFromLeft (cellW));
+    jitter.setBounds (knobRow);
+
+    const auto comboW = comboCell.getWidth() - 2;
+    auto shapeHalf = comboCell.removeFromTop (comboCell.getHeight() / 2);
+    auto divisionHalf = comboCell;
+    shape.setBounds (shapeHalf.withSizeKeepingCentre (comboW, 22));
+    division.setBounds (divisionHalf.withSizeKeepingCentre (comboW, 22));
 }
 
 // ============================== ChaosPanel =================================
@@ -878,7 +904,14 @@ void ChaosPanel::resized()
     auto area = getLocalBounds().withTrimmedTop (metrics::sectionHeaderHeight).reduced (7, 3);
 
     auto top = area.removeFromTop (juce::jmax (78, area.getHeight() - 84));
-    auto scope = top.removeFromLeft (juce::jmin (200, top.getWidth() / 2));
+    // Cap fixed at 130px UNCONDITIONALLY (never `top.getWidth() / 2`, and
+    // never dependent on SYNC state) -- 130px is comfortably wider than the
+    // ~35px "TRAJECTORY"-scale content this meter actually draws, and
+    // leaves the DEPTH/RATE/MIX row enough width for the division combo to
+    // show its longest entry ("1/16T") without clipping (see
+    // comboTextFitsCellTest). A width that depended on SYNC would make the
+    // meter and all three knobs jump sideways every time SYNC is toggled.
+    auto scope = top.removeFromLeft (juce::jmin (130, top.getWidth() / 2));
     display.setBounds (scope.reduced (0, 2));
 
     enable.setBounds (top.removeFromLeft (50).withSizeKeepingCentre (50, 20));
@@ -894,7 +927,9 @@ void ChaosPanel::resized()
     rate.setBounds (rateCell);
     auto divisionArea = rateCell;
     divisionLabel.setBounds (divisionArea.removeFromBottom (13));
-    division.setBounds (divisionArea.withSizeKeepingCentre (divisionArea.getWidth() - 6, 22));
+    // Was `- 6`; the combo needs the cell it has to show its longest entry
+    // ("1/16T") without the text clipping under the arrow.
+    division.setBounds (divisionArea.withSizeKeepingCentre (divisionArea.getWidth() - 2, 22));
     mix.setBounds (masters);
 
     // Drift strip: toggle above each amount knob.

@@ -19,17 +19,20 @@ namespace
     // parameter change leaves it silent) without editing the header.
     std::atomic<int> waveDisplayPaintCounter { 0 };
     std::atomic<int> chaosDisplayPaintCounter { 0 };
+    std::atomic<int> lfoDisplayPaintCounter { 0 };
 }
 
 // Prototypes live here (not in Displays.h, out of scope for this fix) --
-// SPASynthTests.cpp forward-declares these same two signatures itself to
+// SPASynthTests.cpp forward-declares these same signatures itself to
 // call them; this declaration just keeps this TU's own -Wmissing-prototypes
 // happy.
 int waveDisplayPaintCountForTest();
 int chaosDisplayPaintCountForTest();
+int lfoDisplayPaintCountForTest();
 
 int waveDisplayPaintCountForTest() { return waveDisplayPaintCounter.load (std::memory_order_relaxed); }
 int chaosDisplayPaintCountForTest() { return chaosDisplayPaintCounter.load (std::memory_order_relaxed); }
+int lfoDisplayPaintCountForTest() { return lfoDisplayPaintCounter.load (std::memory_order_relaxed); }
 
 // ========================== DisplayComponent ===============================
 
@@ -829,7 +832,9 @@ LFODisplay::LFODisplay (SPASynthProcessor& p, int lfoIndex)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::lfoParam (lfoIndex, params::id::lfo::shape),
                           params::id::lfoParam (lfoIndex, params::id::lfo::phase),
-                          params::id::lfoParam (lfoIndex, params::id::lfo::unipolar) },
+                          params::id::lfoParam (lfoIndex, params::id::lfo::unipolar),
+                          params::id::lfoParam (lfoIndex, params::id::lfo::smooth),
+                          params::id::lfoParam (lfoIndex, params::id::lfo::jitter) },
                         &p.getTelemetry()),
       lfo (lfoIndex)
 {
@@ -837,18 +842,35 @@ LFODisplay::LFODisplay (SPASynthProcessor& p, int lfoIndex)
 
 void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
+    lfoDisplayPaintCounter.fetch_add (1, std::memory_order_relaxed);
     const auto& t = currentTheme();
     const auto shape = (params::LFOShape) (int) value (
         params::id::lfoParam (lfo, params::id::lfo::shape));
     const auto phaseOffset = value (params::id::lfoParam (lfo, params::id::lfo::phase));
     const auto unipolar = value (params::id::lfoParam (lfo, params::id::lfo::unipolar)) >= 0.5f;
+    const auto smoothAmount = value (params::id::lfoParam (lfo, params::id::lfo::smooth)) * 0.01f;
+    const auto jitterAmount = value (params::id::lfoParam (lfo, params::id::lfo::jitter)) * 0.01f;
 
     juce::Random shRandom (42 + lfo);  // stable S&H preview
     float shValue = shRandom.nextFloat() * 2.0f - 1.0f;
     int shCycle = 0;
 
-    juce::Path curve;
+    // Fixed seed so the jitter trace is stable between repaints rather than
+    // shimmering every time this repaints.
+    juce::Random jitterRandom (142 + lfo);
+    float jitterValue = jitterRandom.nextFloat() * 2.0f - 1.0f;
+    int jitterCycle = 0;
+
+    // Chunk-rate one-pole slew preview: the drawn cycle stands in for a
+    // nominal 1-second span (the curve is phase-domain, not tempo-domain,
+    // same as the rest of this preview), so each of the `steps` segments
+    // previews one modulation chunk at that nominal rate.
     constexpr int steps = 160;
+    constexpr float previewDt = 1.0f / (float) steps;
+    float smoothed = 0.0f;
+    bool smoothPrimed = false;
+
+    juce::Path curve;
     for (int i = 0; i <= steps; ++i)
     {
         const auto raw = (float) i / steps + phaseOffset;
@@ -873,6 +895,35 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
                 v = shValue;
                 break;
             }
+        }
+
+        // Same order of operations as LFO::processChunk: shape, then jitter,
+        // then smoothing (on the bipolar value), then unipolar folding.
+        if (jitterAmount > 0.0f)
+        {
+            const auto cycle = (int) (raw * 6.0f);   // same fake-cycle clock as the S&H preview
+            if (cycle != jitterCycle)
+            {
+                jitterCycle = cycle;
+                jitterValue = jitterRandom.nextFloat() * 2.0f - 1.0f;
+            }
+            v = (1.0f - jitterAmount) * v + jitterAmount * jitterValue;
+        }
+
+        if (smoothAmount > 0.0f)
+        {
+            const auto tau = 0.001f * std::pow (300.0f, smoothAmount);
+            const auto alpha = 1.0f - std::exp (-previewDt / tau);
+            if (! smoothPrimed)
+            {
+                smoothed = v;
+                smoothPrimed = true;
+            }
+            else
+            {
+                smoothed += alpha * (v - smoothed);
+            }
+            v = smoothed;
         }
 
         if (unipolar)

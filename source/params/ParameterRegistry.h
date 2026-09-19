@@ -285,6 +285,8 @@ namespace id
         inline constexpr const char* phase    = "phase";
         inline constexpr const char* retrig   = "retrig";
         inline constexpr const char* unipolar = "unipolar";
+        inline constexpr const char* smooth   = "smooth";
+        inline constexpr const char* jitter   = "jitter";
     }
     juce::String lfoParam (int lfoIndex, const char* key);
 

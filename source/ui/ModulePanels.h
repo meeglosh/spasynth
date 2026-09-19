@@ -171,7 +171,7 @@ public:
 private:
     LFODisplay display;
     Choice shape, division;
-    Knob rate, phase;
+    Knob rate, phase, smooth, jitter;
     Toggle sync, retrig, unipolar;
 
     // Rate only means anything when free-running; division only means

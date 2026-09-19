@@ -374,6 +374,23 @@ static void addLFOParams (std::vector<ParamDef>& p, int lfoIndex)
     p.push_back ({ pid (id::lfo::unipolar), prefix + "Unipolar", section,
                    ParamKind::boolParam, {}, 0.0f, "",
                    false, { .enabled = true } });
+    // Chunk-rate one-pole slew on the LFO's output -- smooths the pops that
+    // stepped shapes (Square, S&H) produce at the 64-sample modulation-chunk
+    // boundary. Default 0 = no smoothing, bit-identical to pre-1.0.21 output
+    // (see LFO::processChunk). Not a mod destination: the mod-dest index
+    // space is append-only and tight, and modulating your own smoothing
+    // amount isn't a musically useful destination.
+    p.push_back ({ pid (id::lfo::smooth), prefix + "Smooth", section,
+                   ParamKind::floatParam, { 0.0f, 100.0f }, 0.0f, "%",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.2f,
+                            .biasStrength = 0.5f } });
+    // Blends a random value into the chosen shape, renewed once per LFO
+    // cycle on the same cycle clock sample & hold uses. Default 0 = pure
+    // shape, bit-identical to pre-1.0.21 output.
+    p.push_back ({ pid (id::lfo::jitter), prefix + "Jitter", section,
+                   ParamKind::floatParam, { 0.0f, 100.0f }, 0.0f, "%",
+                   false, { .enabled = true, .maxNorm = 0.6f, .biasCentre = 0.2f,
+                            .biasStrength = 0.5f } });
 }
 
 // Non-matrix parameter definitions, in registry order.

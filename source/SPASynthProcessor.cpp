@@ -90,6 +90,8 @@ SPASynthProcessor::SPASynthProcessor()
         rl.phase    = apvts.getRawParameterValue (pid (params::id::lfo::phase));
         rl.retrig   = apvts.getRawParameterValue (pid (params::id::lfo::retrig));
         rl.unipolar = apvts.getRawParameterValue (pid (params::id::lfo::unipolar));
+        rl.smooth   = apvts.getRawParameterValue (pid (params::id::lfo::smooth));
+        rl.jitter   = apvts.getRawParameterValue (pid (params::id::lfo::jitter));
     }
 
     for (int m = 0; m < params::numMacros; ++m)
@@ -1615,6 +1617,10 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         lp.phaseOffset = rl.phase->load();
         lp.retrig      = rl.retrig->load() >= 0.5f;
         lp.unipolar    = rl.unipolar->load() >= 0.5f;
+        // Params store 0..100%; the DSP wants 0..1 -- the one place this
+        // conversion happens (mirrors the loopXfade pattern below).
+        lp.smooth      = rl.smooth->load() * 0.01f;
+        lp.jitter      = rl.jitter->load() * 0.01f;
 
         const auto inc = (double) dsp::LFO::effectiveRateHz (lp, shared.bpm) / currentSampleRate;
         lfoPhaseAccum[(size_t) i] = std::fmod (lfoPhaseAccum[(size_t) i], 1.0);

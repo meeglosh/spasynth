@@ -6,6 +6,7 @@
 #include "dsp/Arpeggiator.h"
 #include "dsp/ChaosGenerator.h"
 #include "dsp/FXChain.h"
+#include "dsp/LFO.h"
 #include "dsp/MidiClockSync.h"
 #include "dsp/SamplePlayer.h"
 #include "dsp/WavetableFactory.h"
@@ -560,6 +561,416 @@ namespace
         expect (minPeak < maxPeak * 0.2f,
                 "square LFO->level pulses output (min " + juce::String (minPeak)
                 + " vs max " + juce::String (maxPeak) + ")");
+    }
+
+    // Reference re-implementation of dsp::LFO's private deterministic shape
+    // formulas (sine/triangle/sawUp/sawDown/square), so the SMOOTH/JITTER
+    // tests below can compare against explicitly computed expected values
+    // rather than a golden constant measured after the fact.
+    static float referenceShapeValue (float ph, spa::params::LFOShape s)
+    {
+        namespace params = spa::params;
+        switch (s)
+        {
+            case params::LFOShape::sine:     return std::sin (juce::MathConstants<float>::twoPi * ph);
+            case params::LFOShape::triangle: return 1.0f - 4.0f * std::abs (ph - 0.5f);
+            case params::LFOShape::sawUp:    return 2.0f * ph - 1.0f;
+            case params::LFOShape::sawDown:  return 1.0f - 2.0f * ph;
+            case params::LFOShape::square:   return ph < 0.5f ? 1.0f : -1.0f;
+            case params::LFOShape::sampleHold: return 0.0f;  // random -- not covered here
+        }
+        return 0.0f;
+    }
+
+    // SMOOTH at 0 must be bit-identical to the pre-smoothing LFO for every
+    // deterministic shape, at several phases, compared against the
+    // independently-computed reference formula above (not a golden
+    // constant).
+    static void lfoSmoothZeroBitIdenticalTest()
+    {
+        std::cout << "lfoSmoothZeroBitIdenticalTest\n";
+        namespace params = spa::params;
+        using LFO = spa::dsp::LFO;
+
+        const params::LFOShape shapes[] = { params::LFOShape::sine, params::LFOShape::triangle,
+                                            params::LFOShape::sawUp, params::LFOShape::sawDown,
+                                            params::LFOShape::square };
+        const float phases[] = { 0.0f, 0.1f, 0.25f, 0.37f, 0.5f, 0.63f, 0.75f, 0.9f };
+
+        bool allBitIdentical = true;
+        for (auto shape : shapes)
+        {
+            for (auto ph : phases)
+            {
+                LFO::Params p;
+                p.shape = shape;
+                p.retrig = false;   // basePhase comes straight from globalPhase
+                p.smooth = 0.0f;
+                p.jitter = 0.0f;
+                p.unipolar = false;
+                p.phaseOffset = 0.0f;
+
+                LFO lfo;
+                lfo.prepare (44100.0);
+                lfo.noteOn (p);
+                juce::Random rnd (1);
+                const auto got = lfo.processChunk (p, 64, 120.0, (double) ph, rnd);
+                const auto expected = referenceShapeValue (ph, shape);
+                if (! juce::exactlyEqual (got, expected))
+                    allBitIdentical = false;
+            }
+        }
+        expect (allBitIdentical,
+               "SMOOTH=0 is bit-identical to the explicitly-computed shape formula, every "
+               "deterministic shape, every phase checked");
+
+        // S&H is random, but with jitter also 0 the returned value is exactly
+        // the one random draw the old (pre-smoothing) code would have made --
+        // reproduce that same draw independently and compare.
+        {
+            LFO::Params p;
+            p.shape = params::LFOShape::sampleHold;
+            p.retrig = true;
+            p.smooth = 0.0f;
+            p.jitter = 0.0f;
+            p.unipolar = false;
+
+            LFO lfo;
+            lfo.prepare (44100.0);
+            lfo.noteOn (p);
+            juce::Random rnd (99);
+            const auto got = lfo.processChunk (p, 64, 120.0, 0.0, rnd);
+
+            juce::Random ref (99);
+            const auto expected = ref.nextFloat() * 2.0f - 1.0f;
+            expect (juce::exactlyEqual (got, expected),
+                   "SMOOTH=0 S&H first draw matches an independently-reproduced "
+                   "juce::Random draw with the same seed");
+        }
+    }
+
+    // SMOOTH above 0 measurably reduces the largest chunk-to-chunk jump for
+    // Square and S&H, and the reduction is monotonic as the knob goes up.
+    static void lfoSmoothReducesChunkJumpTest()
+    {
+        std::cout << "lfoSmoothReducesChunkJumpTest\n";
+        namespace params = spa::params;
+        using LFO = spa::dsp::LFO;
+
+        constexpr double sampleRate = 44100.0;
+        constexpr int chunkSize = 64;
+        constexpr int numChunks = 200;   // ~290ms, several cycles at 10Hz
+
+        const auto maxChunkJump = [&] (params::LFOShape shape, float smooth) -> float
+        {
+            LFO::Params p;
+            p.shape = shape;
+            p.rateHz = 10.0f;
+            p.retrig = true;
+            p.smooth = smooth;
+            p.jitter = 0.0f;
+            p.unipolar = false;
+
+            LFO lfo;
+            lfo.prepare (sampleRate);
+            lfo.noteOn (p);
+            juce::Random rnd (55);   // same seed every level -- isolates smoothing's effect
+
+            float prev = 0.0f;
+            float maxJump = 0.0f;
+            for (int i = 0; i < numChunks; ++i)
+            {
+                const auto v = lfo.processChunk (p, chunkSize, 120.0, 0.0, rnd);
+                if (i > 0)
+                    maxJump = juce::jmax (maxJump, std::abs (v - prev));
+                prev = v;
+            }
+            return maxJump;
+        };
+
+        const float smoothLevels[] = { 0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f };
+
+        for (auto shape : { params::LFOShape::square, params::LFOShape::sampleHold })
+        {
+            bool monotonic = true;
+            float prevJump = 1.0e9f;
+            for (auto s : smoothLevels)
+            {
+                const auto jump = maxChunkJump (shape, s);
+                if (jump > prevJump + 1.0e-6f)
+                    monotonic = false;
+                prevJump = jump;
+            }
+            const auto jumpAtZero = maxChunkJump (shape, 0.0f);
+            const auto jumpAtFull = maxChunkJump (shape, 1.0f);
+            const auto shapeName = shape == params::LFOShape::square ? "Square" : "S&H";
+
+            expect (monotonic,
+                   juce::String (shapeName) + ": max chunk-to-chunk jump shrinks "
+                   "monotonically as SMOOTH increases");
+            expect (jumpAtFull < jumpAtZero,
+                   juce::String (shapeName) + ": max chunk-to-chunk jump at SMOOTH=1 ("
+                   + juce::String (jumpAtFull) + ") is smaller than at SMOOTH=0 ("
+                   + juce::String (jumpAtZero) + ")");
+        }
+    }
+
+    // A note must not start with a swell: at high SMOOTH, the FIRST chunk's
+    // output should sit close to the unsmoothed first value (the smoother is
+    // seeded directly on the first chunk after noteOn), not ramp up from 0.
+    static void lfoSmoothNoSwellTest()
+    {
+        std::cout << "lfoSmoothNoSwellTest\n";
+        namespace params = spa::params;
+        using LFO = spa::dsp::LFO;
+
+        LFO::Params p;
+        p.shape = params::LFOShape::square;   // unsmoothed first value is exactly 1.0 at ph=0
+        p.retrig = true;
+        p.smooth = 1.0f;   // maximum smoothing (300ms time constant)
+        p.jitter = 0.0f;
+        p.unipolar = false;
+
+        LFO lfo;
+        lfo.prepare (44100.0);
+        lfo.noteOn (p);
+        juce::Random rnd (7);
+        const auto firstChunk = lfo.processChunk (p, 64, 120.0, 0.0, rnd);
+
+        expect (std::abs (firstChunk - 1.0f) < 1.0e-4f,
+               "first chunk after noteOn at SMOOTH=1 is close to the unsmoothed first value "
+               "(1.0), not near zero (got " + juce::String (firstChunk, 6) + ")");
+        expect (std::abs (firstChunk) > 0.5f,
+               "first chunk after noteOn is nowhere near a from-zero swell (got "
+               + juce::String (firstChunk, 6) + ")");
+    }
+
+    // JITTER=0 is bit-identical to the pure shape; JITTER=1 is fully random
+    // (output equals the random draw exactly); and the jitter value is
+    // renewed exactly once per LFO cycle, never within a cycle.
+    static void lfoJitterTest()
+    {
+        std::cout << "lfoJitterTest\n";
+        namespace params = spa::params;
+        using LFO = spa::dsp::LFO;
+
+        // JITTER=0 bit-identical to the pure shape.
+        {
+            LFO::Params p;
+            p.shape = params::LFOShape::sine;
+            p.retrig = false;
+            p.smooth = 0.0f;
+            p.jitter = 0.0f;
+
+            bool allBitIdentical = true;
+            for (float ph : { 0.0f, 0.13f, 0.31f, 0.5f, 0.77f, 0.9f })
+            {
+                LFO lfo;
+                lfo.prepare (44100.0);
+                lfo.noteOn (p);
+                juce::Random rnd (3);
+                const auto got = lfo.processChunk (p, 64, 120.0, (double) ph, rnd);
+                if (! juce::exactlyEqual (got, referenceShapeValue (ph, params::LFOShape::sine)))
+                    allBitIdentical = false;
+            }
+            expect (allBitIdentical, "JITTER=0 is bit-identical to the pure sine shape");
+        }
+
+        // JITTER=1 is fully random: output equals the random draw exactly
+        // (not blended with the shape at all).
+        {
+            LFO::Params p;
+            p.shape = params::LFOShape::sine;
+            p.retrig = true;
+            p.smooth = 0.0f;
+            p.jitter = 1.0f;
+
+            LFO lfo;
+            lfo.prepare (44100.0);
+            lfo.noteOn (p);
+            juce::Random rnd (321);
+            const auto got = lfo.processChunk (p, 64, 120.0, 0.0, rnd);
+
+            juce::Random ref (321);
+            const auto expected = ref.nextFloat() * 2.0f - 1.0f;
+            expect (juce::exactlyEqual (got, expected),
+                   "JITTER=1 returns exactly the random draw (fully random, no shape blend)");
+        }
+
+        // Renewed exactly once per cycle, not within a cycle: many small
+        // chunks per cycle, jitter=1 so the returned value IS the jitter
+        // value, tracked against an externally-mirrored cycle index using
+        // the same accumulation the LFO itself does internally.
+        {
+            constexpr double sampleRate = 44100.0;
+            constexpr int chunkSize = 512;
+            constexpr float rateHz = 1.0f;
+            constexpr int numChunks = 260;   // ~3 cycles at 1Hz
+
+            LFO::Params p;
+            p.shape = params::LFOShape::sine;
+            p.rateHz = rateHz;
+            p.retrig = true;
+            p.smooth = 0.0f;
+            p.jitter = 1.0f;
+
+            LFO lfo;
+            lfo.prepare (sampleRate);
+            lfo.noteOn (p);
+            juce::Random rnd (909);
+
+            const double inc = (double) rateHz / sampleRate;
+            double mirrorPhase = 0.0;
+
+            float prevValue = 0.0f;
+            juce::int64 prevCycle = -1;
+            bool everWithinCycleChange = false;
+            bool everCycleBoundaryUnchanged = false;
+            int cycleBoundariesSeen = 0;
+
+            for (int i = 0; i < numChunks; ++i)
+            {
+                const auto cycle = (juce::int64) mirrorPhase;
+                const auto v = lfo.processChunk (p, chunkSize, 120.0, 0.0, rnd);
+
+                if (i > 0)
+                {
+                    if (cycle == prevCycle && ! juce::exactlyEqual (v, prevValue))
+                        everWithinCycleChange = true;
+                    if (cycle != prevCycle)
+                    {
+                        ++cycleBoundariesSeen;
+                        if (juce::exactlyEqual (v, prevValue))
+                            everCycleBoundaryUnchanged = true;
+                    }
+                }
+                prevValue = v;
+                prevCycle = cycle;
+                mirrorPhase += inc * chunkSize;
+            }
+
+            expect (cycleBoundariesSeen >= 2,
+                   "jitter renewal test crosses at least 2 LFO cycle boundaries ("
+                   + juce::String (cycleBoundariesSeen) + " seen)");
+            expect (! everWithinCycleChange,
+                   "jitter value never changes between chunks that share the same LFO cycle");
+            expect (! everCycleBoundaryUnchanged,
+                   "jitter value changes at every observed LFO cycle boundary");
+        }
+    }
+
+    // Output stays finite and within the LFO's normal bounds (bipolar
+    // -1..1, unipolar 0..1) at every combination of extremes.
+    static void lfoBoundsTest()
+    {
+        std::cout << "lfoBoundsTest\n";
+        namespace params = spa::params;
+        using LFO = spa::dsp::LFO;
+
+        const params::LFOShape shapes[] = { params::LFOShape::sine, params::LFOShape::triangle,
+                                            params::LFOShape::sawUp, params::LFOShape::sawDown,
+                                            params::LFOShape::square, params::LFOShape::sampleHold };
+        const float extremes[] = { 0.0f, 1.0f };
+
+        bool allFinite = true;
+        bool allInBounds = true;
+
+        for (auto shape : shapes)
+            for (auto smooth : extremes)
+                for (auto jitter : extremes)
+                    for (auto unipolar : { false, true })
+                    {
+                        LFO::Params p;
+                        p.shape = shape;
+                        p.rateHz = 37.0f;   // fast, deliberately awkward relative to chunk size
+                        p.retrig = true;
+                        p.smooth = smooth;
+                        p.jitter = jitter;
+                        p.unipolar = unipolar;
+
+                        LFO lfo;
+                        lfo.prepare (44100.0);
+                        lfo.noteOn (p);
+                        juce::Random rnd (unipolar ? 1 : 2);
+
+                        for (int i = 0; i < 40; ++i)
+                        {
+                            const auto v = lfo.processChunk (p, 64, 120.0, 0.0, rnd);
+                            if (! std::isfinite (v))
+                                allFinite = false;
+                            const auto lo = unipolar ? 0.0f : -1.0f;
+                            const auto hi = 1.0f;
+                            if (v < lo - 1.0e-5f || v > hi + 1.0e-5f)
+                                allInBounds = false;
+                        }
+                    }
+
+        expect (allFinite, "LFO output is finite at every shape/smooth/jitter/unipolar extreme");
+        expect (allInBounds,
+               "LFO output stays within its normal bounds (bipolar -1..1, unipolar 0..1) at "
+               "every shape/smooth/jitter/unipolar extreme");
+    }
+
+    // Bug: the Organic Chaos division combo (and, with the SMOOTH/JITTER
+    // knobs added, potentially the LFO panel's shape/division combos too)
+    // could be squeezed into a cell too narrow to show its longest entry --
+    // the ComboBox arrow ate the whole box and the text clipped away
+    // entirely. Measures the REAL available text width inside each combo
+    // (LookAndFeel_V2::positionComboBoxText's label width, minus the
+    // default Label's 5px-each-side border) against the actual choice-list
+    // entries rendered in the actual combo font, so this fails if a future
+    // layout change re-squeezes any of them.
+    static void comboTextFitsCellTest()
+    {
+        std::cout << "comboTextFitsCellTest\n";
+        namespace id = spa::params::id;
+        namespace params = spa::params;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        const auto checkCombo = [&] (const juce::String& paramID, const juce::String& label)
+        {
+            auto* comp = findByParamID (*editor, paramID);
+            expect (comp != nullptr, label + ": combo component found");
+            if (comp == nullptr)
+                return;
+            auto* combo = dynamic_cast<juce::ComboBox*> (comp);
+            expect (combo != nullptr, label + ": tagged component is a ComboBox");
+            if (combo == nullptr)
+                return;
+
+            const auto* def = params::find (paramID);
+            expect (def != nullptr, label + ": parameter definition found");
+            if (def == nullptr)
+                return;
+
+            juce::String longest;
+            for (const auto& choice : def->choices)
+                if (choice.length() > longest.length())
+                    longest = choice;
+
+            const auto font = spa::ui::metrics::labelFont();
+            const auto textW = juce::GlyphArrangement::getStringWidth (font, longest);
+
+            // LookAndFeel_V2::positionComboBoxText: label width =
+            // comboWidth + 3 - comboHeight; the default juce::Label border
+            // then eats 5px on each side.
+            const auto availableW = (float) (combo->getWidth() + 3 - combo->getHeight()) - 10.0f;
+
+            expect (availableW >= textW,
+                   label + ": combo (" + juce::String (combo->getWidth()) + "x"
+                       + juce::String (combo->getHeight()) + ") has room for its longest entry \""
+                       + longest + "\" (" + juce::String (textW, 1) + "px text needed, "
+                       + juce::String (availableW, 1) + "px available)");
+        };
+
+        checkCombo (id::chaos::division, "Chaos division");
+        checkCombo (id::lfoParam (0, id::lfo::shape), "LFO1 shape");
+        checkCombo (id::lfoParam (0, id::lfo::division), "LFO1 division");
     }
 
     // Mike's mod-viz request: knobs under active modulation should visibly
@@ -16048,6 +16459,46 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Temporary visual-review render for the LFO SMOOTH/JITTER knobs and the
+    // Organic Chaos division-combo clipping fix, in one pass:
+    // - LFO 1: Square shape, SMOOTH and JITTER both pushed high, so the
+    //   drawn trace actually rounds off AND deviates (proving the display
+    //   reflects both new knobs, not just an idealised square).
+    // - Chaos: SYNC on with the longest division name selected ("1/16T"),
+    //   so the combo's full text is visible, not clipped under the arrow.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-lfo")
+    {
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        setParam (proc, id::lfoParam (0, id::lfo::shape), (float) (int) params::LFOShape::square);
+        setParam (proc, id::lfoParam (0, id::lfo::smooth), 80.0f);
+        setParam (proc, id::lfoParam (0, id::lfo::jitter), 40.0f);
+
+        setParam (proc, id::chaos::syncToBpm, 1.0f);
+        setParam (proc, id::chaos::division, 13.0f);   // "1/16T" -- the longest name
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+        const auto outFile = outDir.getChildFile ("spasynth-lfo-smooth-jitter.png");
+        outFile.deleteFile();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream stream (outFile);
+        if (stream.openedOk())
+            png.writeImageToStream (image, stream);
+        std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        return 0;
+    }
+
     // Temporary visual-review render for the ASSIGN mode feature: assign
     // mode on, filter 1 cutoff selected (destination, yellow), LFO 2
     // selected (source, yellow), everything else pulsing blue. Writes into
@@ -16311,6 +16762,12 @@ int main (int argc, char* argv[])
     RUN (displaySubscriptionRepaintTest);
     RUN (chaosMatrixSourceUnspreadTest);
     RUN (popupMenuTickSizeTest);
+    RUN (lfoSmoothZeroBitIdenticalTest);
+    RUN (lfoSmoothReducesChunkJumpTest);
+    RUN (lfoSmoothNoSwellTest);
+    RUN (lfoJitterTest);
+    RUN (lfoBoundsTest);
+    RUN (comboTextFitsCellTest);
 
    #undef RUN
 

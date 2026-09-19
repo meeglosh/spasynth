@@ -10,6 +10,142 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-19): v1.0.21 (main `177a626`) built + staged; LFO SMOOTH and JITTER, chaos division menu fix
+
+**1.0.20 WAS SENT to the testers**, so 1.0.21 is a genuine bump. A tester
+asked for LFO smoothing ("The S&H, square etc create aesthetically unwanted
+pops, can we smooth these?") plus a "jitter factor".
+
+**Why the pops happen -- the load-bearing detail**: `LFO::processChunk` is
+evaluated once per 64-sample modulation chunk, NOT per sample, and returns
+the value at the START of the chunk, so square and S&H jump instantaneously
+at a chunk boundary and whatever they modulate follows the step.
+
+- **SMOOTH** = chunk-rate one-pole slew on the LFO output,
+  `tau = 0.001f * std::pow (300.0f, s)` seconds (1ms..300ms), special-cased
+  bit-identical at 0. `smoothed` is seeded DIRECTLY to the first value on
+  the first chunk after `noteOn` rather than ramping from zero, else every
+  note opens with an audible swell.
+- **JITTER** = `out = (1 - j) * shapeValue + j * jitterValue`, a blend so
+  the result stays bounded. `jitterValue` renews ONCE PER LFO CYCLE on the
+  same cycle clock S&H already uses, so jitter follows the LFO's own
+  rate/division instead of being unrelated noise.
+- **Order of operations matters: shape, then jitter, then smoothing, THEN
+  the existing unipolar fold** -- smoothing must act on the bipolar value.
+- Both are per-LFO params, default 0, NOT mod destinations, so every
+  existing preset is bit-identical. Mike's source for "jitter" was a video
+  the agent could not watch; he described it as "adds a kind of random value
+  shape to it", which is why this is a VALUE blend and not timing jitter --
+  recorded so a future session does not re-litigate it. SMOOTH + JITTER up
+  together on a sine gives a smooth random drift, a modulation source the
+  synth had no equivalent for. `LFODisplay` draws both, applying the
+  identical blend-then-slew in the same order with a FIXED seed so the
+  jitter trace does not shimmer between repaints; both new IDs are in its
+  subscribed list, per the 1.0.20 rule above.
+
+**Chaos division menu rendered empty with SYNC on.** The meter claimed up to
+200px, the ON toggle 50px, and the three-way split of the remainder left the
+combo ~44px, so the ComboBox arrow consumed the box and the text clipped to
+nothing. Meter now capped at 130px UNCONDITIONALLY -- deliberately NOT gated
+on the SYNC state, so the meter and all three knobs do not jump sideways
+when SYNC is toggled -- and the combo inset cut from 6 to 2. Measured:
+`metrics::labelFont()` needs 28.5px for "1/16T", the longest entry in
+`lfoDivisionNames()`; the resulting combo has 35px available. **LFO panel
+layout** is now RATE / PHASE / SMOOTH / JITTER as four equal cells plus a
+FIXED 92px cell on the right holding SHAPE stacked above DIVISION (Mike's
+idea): an even fifth share measured too narrow for "Triangle" (needs 37.1px
+against 23px available), which is why that combo cell is reserved rather
+than shared. New `comboTextFitsCellTest` measures the longest entry of a
+combo against the cell it actually gets, generalising this whole bug class
+rather than fixing one instance.
+
+Suite **1708 -> 1735 assertions ALL PASS** in Debug, Release and ASan x3;
+both knobs verified to FAIL their tests with their effect forced off.
+**macOS 1.0.21 pkg** signed + notarized + stapled, `spctl` accepted,
+universal, minos 11.0, md5 `8cae49d29f92e5ad2d27ec5c093f3bc3`. **Windows exe
+from draft release `ci-windows-177a626`** (CI run `35449292627`), md5
+`09ee8d9b220aff7eb5681d425685dc9a`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.21/`. Repo
+is PUBLIC. Paste-ready tester note: `docs/tester-note-1.0.21.txt`.
+
+**Pending: Mike installs the 1.0.21 pkg (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.21-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic), runs
+the gauntlet, and sends both installers + the note to the testers. Bump to
+1.0.22 for anything after that.**
+
+**Considered and explicitly DECLINED by Mike**: evening up the chaos
+DEPTH/RATE/MIX knob sizes with the lower drift row to reclaim meter width.
+The finding is worth keeping -- those master knobs are only slightly fatter
+(cell ~66px wide with a 72px row cap giving ~59px diameter, versus ~63px and
+a 16px toggle giving ~55px) -- AND shrinking their cells would re-break the
+division combo, because that combo sets the floor on the RATE cell's width.
+Any future attempt needs to move the division combo out of the knob row
+first (for example into the header beside SYNC).
+
+## Current state (2026-09-19): v1.0.20 (main `510c948`) SENT to testers; three bug fixes from 1.0.19 feedback
+
+1.0.19 had shipped; three reports came back and became 1.0.20, which has
+since been sent to the testers too.
+
+- **XFADE visualization did not update until a loop point moved.**
+  `WaveDisplay` never subscribed to `osc::loopXfade`, so turning the knob
+  marked nothing dirty and it only repainted when `loopStart`/`loopEnd`
+  fired. `osc::timeSig` was missing from the same list and drives the
+  beat-grid overlay. Both added. **General rule: whenever a new parameter
+  gains a visual, add its ID to the owning display's subscribed-parameter
+  list or it will not repaint.**
+- **Organic Chaos routed through the mod matrix ran at a random multiple of
+  the chosen rate or division, re-rolled on every note.**
+  `ChaosGenerator::prepare` gives every walker a random power-of-two
+  `syncSpeedMul` (0.125x..8x). That spread is the wanted polyrhythm for the
+  INTERNAL walkers, but it also hit `matrixSource`, the one walker the user
+  routes explicitly and names a rate for. Now pinned to
+  `speedMul = syncSpeedMul = 1.0f` for `matrixSource` ONLY; every other
+  walker unchanged bit-for-bit. It had also silently defeated
+  `processSynced`'s own stated goal that every voice agrees on the renewal
+  instant, since `periodBeats = divisionBeats / syncSpeedMul` differed per
+  voice.
+- **Deliberate, documented side effect of that fix**: all walkers share ONE
+  `juce::Random` and a draw is consumed on each phase wrap, so pinning
+  matrixSource shifts the draw interleaving and EVERY chaos patch now
+  wanders slightly differently than in 1.0.19 (character, depth and rate
+  unchanged). `chaosSyncTest`'s golden unsynced value was re-frozen for
+  exactly this reason, with the reasoning recorded at the constant.
+- **A diagnosis that was WRONG and got caught before shipping**: the
+  reported "1/8 is not displayed" was initially attributed to `ChaosDisplay`
+  not subscribing to `chaos::division`/`chaos::syncToBpm`. That subscription
+  WAS missing and was added, but nothing `ChaosDisplay` draws depends on
+  either, so it fixes nothing visible -- the rate bug above was the whole
+  cause. The changelog was corrected before the build went out rather than
+  claiming a fix that was not made. **Caution: a plausible-looking
+  subscription gap is not automatically the cause of a "not displaying"
+  report.**
+- **The popup-menu tick was oversized.** `SPASynthLookAndFeel` did not
+  override `drawPopupMenuItem`, so JUCE's `LookAndFeel_V4` scaled the tick
+  to fill the icon column, which is oversized against `metrics::labelFont()`.
+  Now overridden, copied from V4 with only the tick rect shrunk about its
+  own centre by `tickSizeFactor = 0.575f` (measured 16px -> 8px of a 26px
+  row). `getTickShape` deliberately NOT touched, since `drawTickBox` shares
+  it and that would shrink ticks elsewhere in the UI. Affects every ticked
+  menu (reverb algorithm, EQ band type and slope, MIDI Learn, oscillator
+  sample list, settings menu).
+
+Suite **1672 -> 1708 assertions ALL PASS** in Debug, in the Release build,
+and clean under ASan x3; each of the three fixes was verified to FAIL with
+itself reverted. **macOS 1.0.20 pkg** signed + notarized + stapled, `spctl`
+accepted, universal, minos 11.0, md5 `038031541bf3afb47556080d01509a3d`.
+**Windows exe from draft release `ci-windows-510c948`** (CI run
+`35414542430`), md5 `3e7d13e277d3a06c2f6f4d5cc1116ce3`. Both byte-identical
+across `dist/installers/` and
+`dist/shopify/SPASynth-{Standard,Pro}-1.0.20/`. Paste-ready tester note:
+`docs/tester-note-1.0.20.txt`.
+
+**Changelog lesson**: the 1.0.20 Organic Chaos entry was written far too
+long and had to be cut down to four sentences after review (`05e57b1`).
+Changelog entries are three to five sentences, and internal mechanism
+(walker multipliers, shared RNG streams) does not belong in customer copy.
+
 ## Current state (2026-09-18): v1.0.19 (main `ed0e16f`) built + staged; sample loop crossfade, full-height start marker, two-button mod matrix assign
 
 **1.0.18 WAS SENT to the testers** (unlike several prior rounds), so 1.0.19

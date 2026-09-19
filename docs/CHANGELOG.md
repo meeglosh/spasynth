@@ -9,26 +9,12 @@
   redrew when the loop points moved. It updates immediately now. The same
   omission affected the per oscillator time signature and the beat grid
   overlay, which are fixed the same way.
-- Organic Chaos, when routed through the mod matrix, did not run at the
-  rate you chose. Each chaos walker gets its own rate multiplier so its
-  internal drifts (pitch, position, amplitude and so on) move at
-  different speeds against each other; that mismatch is what makes chaos
-  feel organic rather than mechanical. That multiplier was also being
-  applied to the one chaos signal you route yourself through the mod
-  matrix, and it was re-rolled for every new note. The result was that a
-  routed chaos source ran at a random multiple of the rate or division you
-  selected, and its speed changed every time you played a new note. Now
-  the routed chaos source runs at exactly the rate or division shown. The
-  internal drifts keep their spread and notes still produce independent
-  random movement, so chaos is no different in character; only its speed
-  is now the one you asked for. All of the chaos movements draw from one
-  shared random sequence, and pinning the routed signal to the rate you
-  chose changes when it reaches the end of its cycle, which changes how
-  that shared sequence gets handed out to the rest of the movements too.
-  So any patch that uses Organic Chaos, not only one that routes it
-  through the mod matrix, will wander slightly differently than it did in
-  1.0.19; the character, depth, rate, and feel are all unchanged, and
-  chaos is random drift by design, so this is expected, not a regression.
+- Organic Chaos, routed through the mod matrix, did not run at the rate
+  you chose. It ran at a random multiple of your chosen rate or division,
+  and re-rolled that multiple on every new note. It now runs at exactly
+  the rate or division shown, and stays there note to note. Chaos patches
+  will wander a little differently than they did in 1.0.19 as a result;
+  the character, depth and rate are unchanged.
 - The check mark next to the selected item in a menu was too large. It now
   reads as a modest mark beside the label. This applies to every menu with
   a selected item (reverb algorithm, EQ band type and slope, MIDI Learn,

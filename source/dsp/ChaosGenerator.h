@@ -57,6 +57,24 @@ public:
             constexpr float speedExponentScale = 4.8f;
             const auto exponent = std::round (std::log2 (w.speedMul) * speedExponentScale);
             w.syncSpeedMul = std::exp2 (juce::jlimit (-3.0f, 3.0f, exponent));
+
+            // matrixSource is the ONE walker the user routes explicitly
+            // through the mod matrix and names a rate/division for -- it
+            // must run at exactly that rate/division, not some random
+            // power-of-two multiple of it. The random spread above is a
+            // deliberate feature for the other (internal) walkers, which
+            // is what makes pitch/amp/etc drift at different, decorrelated
+            // rates (the polyrhythm described above); matrixSource has no
+            // such "internal decorrelation" purpose -- it IS the rate the
+            // user picked, so exempt it from the spread entirely. Leaving
+            // w.phase randomized above still lets it decorrelate WHERE in
+            // its cycle each voice starts, without touching HOW FAST it
+            // runs.
+            if (i == (size_t) matrixSource)
+            {
+                w.speedMul = 1.0f;
+                w.syncSpeedMul = 1.0f;
+            }
         }
     }
 
@@ -141,6 +159,7 @@ public:
     // the smoothed output.
     int64_t syncCycleIndexForTest (int index) const noexcept { return walkers[(size_t) index].lastSyncCycle; }
     float syncSpeedMulForTest (int index) const noexcept { return walkers[(size_t) index].syncSpeedMul; }
+    float speedMulForTest (int index) const noexcept { return walkers[(size_t) index].speedMul; }
 
     float slotPitch (int slot) const noexcept    { return value (pitchBase + slot); }
     float slotPhase (int slot) const noexcept    { return value (phaseBase + slot); }

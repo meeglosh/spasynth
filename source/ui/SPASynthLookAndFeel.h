@@ -82,6 +82,20 @@ public:
     void drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&,
                                        int w, int h) override;
 
+    // Same as LookAndFeel_V4::drawPopupMenuItem, except the tick mark drawn
+    // beside a ticked item is sized as a modest checkmark instead of filling
+    // the whole icon column (V4 scales it to the icon column's full height,
+    // which reads as cartoonishly large against our labelFont() row metrics
+    // -- see CLAUDE.md-tracked bug report). Everything else (separators,
+    // highlight, submenu arrow, shortcut text, enabled/disabled colours,
+    // icon drawable path) is unchanged from V4 by design -- do not let this
+    // drift from the JUCE source without re-checking it.
+    void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area,
+                            bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text,
+                            const juce::String& shortcutKeyText, const juce::Drawable* icon,
+                            const juce::Colour* textColourToUse) override;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SPASynthLookAndFeel)
 };
 

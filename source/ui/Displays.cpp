@@ -7,6 +7,30 @@
 namespace spa::ui
 {
 
+namespace
+{
+    // Test-only instrumentation, not declared in Displays.h (out of scope
+    // for the loopXfade/chaos-division subscription fixes) -- forward-
+    // declared instead directly in SPASynthTests.cpp. paintDisplay() always
+    // computes from LIVE parameter values, so a force-painted image looks
+    // correct regardless of whether the automatic dirty-flag + 24Hz-timer
+    // repaint (DisplayComponent::timerCallback) actually fires -- these
+    // counters are the only way to observe THAT path (an unsubscribed
+    // parameter change leaves it silent) without editing the header.
+    std::atomic<int> waveDisplayPaintCounter { 0 };
+    std::atomic<int> chaosDisplayPaintCounter { 0 };
+}
+
+// Prototypes live here (not in Displays.h, out of scope for this fix) --
+// SPASynthTests.cpp forward-declares these same two signatures itself to
+// call them; this declaration just keeps this TU's own -Wmissing-prototypes
+// happy.
+int waveDisplayPaintCountForTest();
+int chaosDisplayPaintCountForTest();
+
+int waveDisplayPaintCountForTest() { return waveDisplayPaintCounter.load (std::memory_order_relaxed); }
+int chaosDisplayPaintCountForTest() { return chaosDisplayPaintCounter.load (std::memory_order_relaxed); }
+
 // ========================== DisplayComponent ===============================
 
 DisplayComponent::DisplayComponent (juce::AudioProcessorValueTreeState& state,
@@ -84,8 +108,10 @@ WaveDisplay::WaveDisplay (SPASynthProcessor& p, int slotIndex)
                           params::id::oscSlot (slotIndex, params::id::osc::loop),
                           params::id::oscSlot (slotIndex, params::id::osc::loopStart),
                           params::id::oscSlot (slotIndex, params::id::osc::loopEnd),
+                          params::id::oscSlot (slotIndex, params::id::osc::loopXfade),
                           params::id::oscSlot (slotIndex, params::id::osc::syncToBpm),
                           params::id::oscSlot (slotIndex, params::id::osc::syncBeatsOverride),
+                          params::id::oscSlot (slotIndex, params::id::osc::timeSig),
                           params::id::oscSlot (slotIndex, params::id::osc::analogShape),
                           params::id::oscSlot (slotIndex, params::id::osc::pulseWidth),
                           params::id::oscSlot (slotIndex, params::id::osc::fmRatio),
@@ -276,6 +302,7 @@ void WaveDisplay::mouseDoubleClick (const juce::MouseEvent&)
 
 void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
+    waveDisplayPaintCounter.fetch_add (1, std::memory_order_relaxed);
     const auto& t = currentTheme();
     const auto mode = (params::OscMode) (int) value (
         params::id::oscSlot (slot, params::id::osc::mode));
@@ -957,13 +984,15 @@ void FilterDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area
 ChaosDisplay::ChaosDisplay (SPASynthProcessor& p)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::chaos::depth, params::id::chaos::rate,
-                          params::id::chaos::mix, params::id::chaos::enable },
+                          params::id::chaos::mix, params::id::chaos::enable,
+                          params::id::chaos::syncToBpm, params::id::chaos::division },
                         &p.getTelemetry())
 {
 }
 
 void ChaosDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
+    chaosDisplayPaintCounter.fetch_add (1, std::memory_order_relaxed);
     const auto& t = currentTheme();
     const auto enabled = value (params::id::chaos::enable) >= 0.5f;
 

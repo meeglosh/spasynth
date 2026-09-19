@@ -782,4 +782,118 @@ void SPASynthLookAndFeel::drawTabAreaBehindFrontButton (juce::TabbedButtonBar& b
     g.fillRect (juce::Rectangle<int> (0, h - 1, w, 1));
 }
 
+// Adapted from LookAndFeel_V4::drawPopupMenuItem (juce_LookAndFeel_V4.cpp).
+// The only deliberate change is the tick-sizing block, marked below: V4
+// scales the tick to fill nearly the whole icon column (icon column height
+// == maxFontHeight, derived from the row height), which against our
+// labelFont() metrics reads as an oversized checkmark. Everything else --
+// separator, highlight fill, icon drawable path, submenu arrow, shortcut
+// text, enabled/disabled alpha -- is kept identical to V4 so no other menu
+// behaviour changes. getTickShape() itself is untouched (shared with
+// drawTickBox() elsewhere); only the rectangle its path is scaled into here
+// is smaller.
+void SPASynthLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area,
+                                             const bool isSeparator, const bool isActive,
+                                             const bool isHighlighted, const bool isTicked,
+                                             const bool hasSubMenu, const juce::String& text,
+                                             const juce::String& shortcutKeyText,
+                                             const juce::Drawable* icon,
+                                             const juce::Colour* const textColourToUse)
+{
+    if (isSeparator)
+    {
+        auto r = area.reduced (5, 0);
+        r.removeFromTop (juce::roundToInt (((float) r.getHeight() * 0.5f) - 0.5f));
+
+        g.setColour (findColour (juce::PopupMenu::textColourId).withAlpha (0.3f));
+        g.fillRect (r.removeFromTop (1));
+        return;
+    }
+
+    auto textColour = (textColourToUse == nullptr ? findColour (juce::PopupMenu::textColourId)
+                                                   : *textColourToUse);
+
+    auto r = area.reduced (1);
+
+    if (isHighlighted && isActive)
+    {
+        g.setColour (findColour (juce::PopupMenu::highlightedBackgroundColourId));
+        g.fillRect (r);
+
+        g.setColour (findColour (juce::PopupMenu::highlightedTextColourId));
+    }
+    else
+    {
+        g.setColour (textColour.withMultipliedAlpha (isActive ? 1.0f : 0.5f));
+    }
+
+    r.reduce (juce::jmin (5, area.getWidth() / 20), 0);
+
+    auto font = getPopupMenuFont();
+
+    auto maxFontHeight = (float) r.getHeight() / 1.3f;
+
+    if (font.getHeight() > maxFontHeight)
+        font.setHeight (maxFontHeight);
+
+    g.setFont (font);
+
+    auto iconArea = r.removeFromLeft (juce::roundToInt (maxFontHeight)).toFloat();
+
+    if (icon != nullptr)
+    {
+        icon->drawWithin (g, iconArea, juce::RectanglePlacement::centred
+                                          | juce::RectanglePlacement::onlyReduceInSize, 1.0f);
+        r.removeFromLeft (juce::roundToInt (maxFontHeight * 0.5f));
+    }
+    else if (isTicked)
+    {
+        // --- tick-sizing change starts here ---
+        // V4: tick.getTransformToScaleToFit (iconArea.reduced (iconArea.getWidth() / 5, 0), true)
+        // scales the tick to the icon column's FULL height, only trimming
+        // width -- that's the oversized checkmark. Shrink the target rect
+        // further, evenly about its own centre, so the tick reads as a
+        // modest mark beside the label rather than filling the column.
+        // getTransformToScaleToFit(..., true) keeps proportions and centres
+        // within whatever rect it's given, so shrinking-about-centre here
+        // is all that's needed to shrink and re-centre the mark together.
+        constexpr float tickSizeFactor = 0.575f;  // ~55-60% of the V4 drawn size
+        auto tickArea = iconArea.reduced (iconArea.getWidth() / 5, 0.0f);
+        tickArea = tickArea.withSizeKeepingCentre (tickArea.getWidth() * tickSizeFactor,
+                                                    tickArea.getHeight() * tickSizeFactor);
+
+        auto tick = getTickShape (1.0f);
+        g.fillPath (tick, tick.getTransformToScaleToFit (tickArea, true));
+        // --- tick-sizing change ends here ---
+    }
+
+    if (hasSubMenu)
+    {
+        auto arrowH = 0.6f * getPopupMenuFont().getAscent();
+
+        auto x = static_cast<float> (r.removeFromRight ((int) arrowH).getX());
+        auto halfH = static_cast<float> (r.getCentreY());
+
+        juce::Path path;
+        path.startNewSubPath (x, halfH - arrowH * 0.5f);
+        path.lineTo (x + arrowH * 0.6f, halfH);
+        path.lineTo (x, halfH + arrowH * 0.5f);
+
+        g.strokePath (path, juce::PathStrokeType (2.0f));
+    }
+
+    r.removeFromRight (3);
+    g.drawFittedText (text, r, juce::Justification::centredLeft, 1);
+
+    if (shortcutKeyText.isNotEmpty())
+    {
+        auto f2 = font;
+        f2.setHeight (f2.getHeight() * 0.75f);
+        f2.setHorizontalScale (0.95f);
+        g.setFont (f2);
+
+        g.drawText (shortcutKeyText, r, juce::Justification::centredRight, true);
+    }
+}
+
 } // namespace spa::ui

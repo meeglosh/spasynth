@@ -9018,7 +9018,19 @@ namespace
                 last = gen.value (Chaos::amp);
             }
 
-            constexpr float expectedUnsyncedAmp = -0.468499f;
+            // Re-frozen for the matrixSource-unspread fix (bug 2b, see
+            // chaosMatrixSourceUnspreadTest): amp's own math is untouched,
+            // but every walker (including matrixSource) shares ONE
+            // juce::Random, and matrixSource's speedMul/syncSpeedMul are now
+            // pinned to 1.0 instead of drawn from the random spread --
+            // that shifts matrixSource's own phase-wrap timing in this
+            // unsynced path, which shifts how much of the shared RNG stream
+            // it consumes call-by-call, which cascades into amp's value by
+            // iteration 200. Re-verified this is the ONLY thing that moved
+            // (two walkers' whole-number-related-periods check, the grid
+            // alignment checks, and the free-run-fallback check below all
+            // still pass unchanged).
+            constexpr float expectedUnsyncedAmp = 0.203039f;
             expect (std::abs (last - expectedUnsyncedAmp) < 1.0e-4f,
                    "chaosSyncTest: sync OFF reproduces today's free-running output exactly ("
                    + juce::String (last, 6) + " vs " + juce::String (expectedUnsyncedAmp, 6) + ")");
@@ -15518,6 +15530,286 @@ static void settingsAreHermeticTest()
     probeDir.deleteRecursively();
 }
 
+// Forward-declared here rather than added to Displays.h (out of scope for
+// the loopXfade/timeSig/chaos-sync-division subscription fixes below):
+// test-only paint-call counters defined alongside the fix in Displays.cpp.
+// See the comment at their definition for why they're needed at all --
+// paintDisplay() always computes from LIVE parameter values, so a
+// force-painted image (paintEntireComponent/createComponentSnapshot, as
+// every other display test in this file uses) looks correct regardless of
+// whether the automatic dirty-flag + 24Hz-timer repaint
+// (DisplayComponent::timerCallback) actually fires. These counters observe
+// THAT path directly.
+namespace spa::ui
+{
+    int waveDisplayPaintCountForTest();
+    int chaosDisplayPaintCountForTest();
+}
+
+// Bug: WaveDisplay's constructor never subscribed to osc::loopXfade (or,
+// identically, osc::timeSig), so turning the XFADE knob -- or changing the
+// per-slot time signature -- while idle repainted nothing; the visual only
+// "snapped into action" once some OTHER watched parameter (e.g. dragging a
+// loop point) forced a repaint. ChaosDisplay had the same latent gap for
+// chaos::syncToBpm/chaos::division. Fixed by adding the four missing IDs
+// to each DisplayComponent's watched list (Displays.cpp).
+//
+// This proves the fix drives a REAL automatic repaint through the normal
+// dirty-flag + timer path, not merely that paintDisplay() renders the
+// right thing once painted (which it always does -- see the comment
+// above). isLive() (voices sounding) is kept false throughout (no notes
+// are ever played) so the only way a repaint can happen is via the
+// parameter-listener -> dirty flag -> 24Hz timer path this fix touches.
+static void displaySubscriptionRepaintTest()
+{
+    std::cout << "displaySubscriptionRepaintTest\n";
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+
+    const auto pumpFor = [] (int ms)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    };
+
+    const auto file = writeRampSine (2.0, 48000.0);
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    proc.loadSampleFromFile (0, file);
+    expect (waitForSample (proc, 0, 15000),
+            "sample loads for the display-subscription repaint test");
+
+    setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::sample);
+    setParam (proc, id::oscSlot (0, id::osc::loop), 1.0f);
+    setParam (proc, id::oscSlot (0, id::osc::loopStart), 0.2f);
+    setParam (proc, id::oscSlot (0, id::osc::loopEnd), 0.8f);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    editor->addToDesktop (0);
+    editor->setVisible (true);
+    pumpFor (250);   // let the initial show-time paint(s) settle before measuring
+
+    spa::ui::WaveDisplay* wave = nullptr;
+    spa::ui::ChaosDisplay* chaos = nullptr;
+    std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+    {
+        if (wave == nullptr)
+            wave = dynamic_cast<spa::ui::WaveDisplay*> (&c);
+        if (chaos == nullptr)
+            chaos = dynamic_cast<spa::ui::ChaosDisplay*> (&c);
+        for (auto* child : c.getChildren())
+            if (wave == nullptr || chaos == nullptr)
+                find (*child);
+    };
+    find (*editor);
+    expect (wave != nullptr, "WaveDisplay found for the display-subscription repaint test");
+    expect (chaos != nullptr, "ChaosDisplay found for the display-subscription repaint test");
+    if (wave == nullptr || chaos == nullptr)
+    {
+        editor->removeFromDesktop();
+        file.deleteFile();
+        return;
+    }
+
+    expect (proc.getTelemetry().activeVoices.load() == 0,
+            "sanity: idle, no held notes -- isLive() must stay false so a repaint can only "
+            "come from the dirty-flag/subscription path this fix touches, never the "
+            "always-repaint-while-live branch");
+
+    // Each affected ID gets its own settle-then-measure cycle so a failure
+    // on one doesn't mask a pass on another.
+    const auto expectRepaints = [&] (const juce::String& paramID, float newValue,
+                                     int (*counter) (), const juce::String& label)
+    {
+        pumpFor (100);   // let any repaint from the previous sub-case finish
+        const auto before = counter();
+        setParam (proc, paramID, newValue);
+        pumpFor (300);   // several 24Hz-timer ticks' worth
+        const auto after = counter();
+        expect (after > before, label + ": changing " + paramID
+                                     + " while idle triggers an automatic repaint ("
+                                     + juce::String (before) + " -> " + juce::String (after) + ")");
+    };
+
+    expectRepaints (id::oscSlot (0, id::osc::loopXfade), 60.0f,
+                    spa::ui::waveDisplayPaintCountForTest, "WaveDisplay/loopXfade");
+    expectRepaints (id::oscSlot (0, id::osc::loopXfade), 20.0f,   // a second, different value
+                    spa::ui::waveDisplayPaintCountForTest, "WaveDisplay/loopXfade (second change)");
+    expectRepaints (id::oscSlot (0, id::osc::timeSig), 3.0f,
+                    spa::ui::waveDisplayPaintCountForTest, "WaveDisplay/timeSig");
+
+    expectRepaints (id::chaos::syncToBpm, 1.0f,
+                    spa::ui::chaosDisplayPaintCountForTest, "ChaosDisplay/syncToBpm");
+    expectRepaints (id::chaos::division, 2.0f,
+                    spa::ui::chaosDisplayPaintCountForTest, "ChaosDisplay/division");
+
+    editor->removeFromDesktop();
+    file.deleteFile();
+}
+
+// Bug: a chaos source routed through the mod matrix (ChaosGenerator::
+// matrixSource) inherited the same random 0.75x..1.33x (synced: quantised
+// to a power-of-two, 0.125x..8x) rate spread every other walker gets, even
+// though the user names an exact rate/division for it. Re-rolled per voice,
+// this made a routed chaos source run at a random multiple of the chosen
+// rate, re-rolled on every new note, and defeated processSynced's own
+// same-grid-for-every-voice guarantee. Fixed in ChaosGenerator::prepare by
+// forcing matrixSource's speedMul/syncSpeedMul to exactly 1.0, matrixSource
+// only -- every other walker keeps its existing random spread bit-for-bit
+// (that spread is the deliberate internal-polyrhythm feature, see
+// chaosSyncTest).
+static void chaosMatrixSourceUnspreadTest()
+{
+    std::cout << "chaosMatrixSourceUnspreadTest\n";
+    using Chaos = spa::dsp::ChaosGenerator;
+
+    // 1. matrixSource always gets exactly 1.0x, across many seeds, while
+    //    another (internal) walker still varies -- proving the spread was
+    //    removed for matrixSource specifically, not flattened globally.
+    bool otherVaried = false;
+    float firstOtherSyncSpeed = 0.0f;
+    for (int seedIdx = 0; seedIdx < 10; ++seedIdx)
+    {
+        Chaos gen;
+        juce::Random rnd (4001 + seedIdx * 733);
+        gen.prepare (rnd);
+
+        expect (gen.speedMulForTest (Chaos::matrixSource) == 1.0f,
+               "chaosMatrixSourceUnspreadTest: matrixSource speedMul is exactly 1.0 (seed "
+                   + juce::String (seedIdx) + ", got "
+                   + juce::String (gen.speedMulForTest (Chaos::matrixSource), 6) + ")");
+        expect (gen.syncSpeedMulForTest (Chaos::matrixSource) == 1.0f,
+               "chaosMatrixSourceUnspreadTest: matrixSource syncSpeedMul is exactly 1.0 (seed "
+                   + juce::String (seedIdx) + ", got "
+                   + juce::String (gen.syncSpeedMulForTest (Chaos::matrixSource), 6) + ")");
+
+        const auto otherSpeed = gen.syncSpeedMulForTest (Chaos::amp);
+        if (seedIdx == 0)
+            firstOtherSyncSpeed = otherSpeed;
+        else if (std::abs (otherSpeed - firstOtherSyncSpeed) > 1.0e-9f)
+            otherVaried = true;
+    }
+    expect (otherVaried,
+           "chaosMatrixSourceUnspreadTest: another walker (amp) still varies its syncSpeedMul "
+           "across seeds -- the random spread is kept for it, not removed everywhere");
+
+    // 2. Synced renewal cadence: with the SAME division, matrixSource
+    //    walkers seeded from two very different seeds renew on the SAME
+    //    host-beat grid cycle -- exactly the "every voice agrees on the
+    //    renewal instant" guarantee processSynced's own comment describes,
+    //    which a random per-voice syncSpeedMul silently broke.
+    {
+        constexpr float divisionBeats = 1.0f;   // e.g. "1/4"
+        constexpr double bpm = 120.0;
+        constexpr double dt = 64.0 / 48000.0;
+
+        const auto runToCycle = [&] (int seed) -> int64_t
+        {
+            Chaos gen;
+            juce::Random rnd (seed);
+            gen.prepare (rnd);
+
+            double hostBeatsNow = 0.0;
+            for (int i = 0; i < 3000; ++i)
+            {
+                gen.processSynced (divisionBeats, bpm, true, hostBeatsNow, dt, rnd);
+                hostBeatsNow += (bpm / 60.0) * dt;
+            }
+            return gen.syncCycleIndexForTest (Chaos::matrixSource);
+        };
+
+        const auto cycleA = runToCycle (17);
+        const auto cycleB = runToCycle (99999991);
+        expect (cycleA > 0, "sanity: matrixSource actually renewed at least once");
+        expect (cycleA == cycleB,
+               "chaosMatrixSourceUnspreadTest: matrixSource renews on the same beat-grid cycle "
+               "regardless of seed, i.e. runs at exactly the chosen division ("
+                   + juce::String (cycleA) + " vs " + juce::String (cycleB) + ")");
+    }
+}
+
+// Bug: SPASynthLookAndFeel had no drawPopupMenuItem override, so JUCE's
+// stock LookAndFeel_V4 ran -- its tick scales to fill the icon column's
+// FULL height (derived from the row's font metrics), which against this
+// plugin's labelFont() reads as a cartoonishly oversized checkmark on
+// every ticked popup menu (reverb algorithm, EQ band type/slope, MIDI
+// Learn, the osc in-pack sample quick-swap, the settings menu). Fixed by
+// overriding drawPopupMenuItem (adapted line-for-line from the real JUCE
+// source, see the .cpp) and shrinking only the rect the tick is scaled
+// into, evenly about its own centre so it stays vertically centred in the
+// icon column.
+static void popupMenuTickSizeTest()
+{
+    std::cout << "popupMenuTickSizeTest\n";
+
+    spa::ui::SPASynthLookAndFeel lnf;
+
+    // A realistic ticked-menu row -- the same shape as the reverb
+    // algorithm / EQ band type / MIDI Learn / settings menus this affects.
+    const juce::Rectangle<int> area (0, 0, 220, 26);
+
+    // Mirror drawPopupMenuItem's own icon-column geometry (area.reduced(1),
+    // then reduce by jmin(5, w/20), then the left maxFontHeight-wide
+    // column) so the ink scan below is confined to where the tick (or
+    // nothing, for an unticked row) is actually drawn, not the label text.
+    auto r = area.reduced (1);
+    r.reduce (juce::jmin (5, area.getWidth() / 20), 0);
+    const auto maxFontHeight = (float) r.getHeight() / 1.3f;
+    const auto iconArea = r.removeFromLeft (juce::roundToInt (maxFontHeight));
+
+    const auto renderRow = [&] (bool ticked)
+    {
+        juce::Image image (juce::Image::ARGB, area.getWidth(), area.getHeight(), true);
+        juce::Graphics g (image);
+        lnf.drawPopupMenuItem (g, area, false, true, false, ticked, false,
+                               "Plate", "", nullptr, nullptr);
+        return image;
+    };
+
+    // Height of the drawn ink's bounding box within the icon column only.
+    const auto inkHeight = [] (const juce::Image& img, juce::Rectangle<int> col)
+    {
+        int minY = img.getHeight(), maxY = -1;
+        for (int y = col.getY(); y < col.getBottom(); ++y)
+            for (int x = col.getX(); x < col.getRight(); ++x)
+                if (img.getPixelAt (x, y).getAlpha() > 10)
+                {
+                    minY = juce::jmin (minY, y);
+                    maxY = juce::jmax (maxY, y);
+                }
+        return maxY >= minY ? (maxY - minY + 1) : 0;
+    };
+
+    const auto tickedImage = renderRow (true);
+    const auto untickedImage = renderRow (false);
+
+    const auto tickInkHeight = inkHeight (tickedImage, iconArea);
+    const auto untickedInkHeight = inkHeight (untickedImage, iconArea);
+
+    expect (tickInkHeight > 0, "popupMenuTickSizeTest: a ticked row draws something in the icon column");
+
+    const auto fraction = area.getHeight() > 0 ? (float) tickInkHeight / (float) area.getHeight() : 0.0f;
+    std::cout << "  tick ink height " << tickInkHeight << "px of " << area.getHeight()
+               << "px row (" << (fraction * 100.0f) << "% of row height, icon column is "
+               << iconArea.getHeight() << "px tall)\n";
+
+    // V4 (pre-fix) scales the tick to close to the icon column's full
+    // height (maxFontHeight ~= row/1.3, here ~18px of a 26px row, ~70%).
+    // Fixed, it should read as a modest mark -- comfortably under half the
+    // row and clearly smaller than the icon column itself.
+    expect (fraction < 0.45f,
+           "popupMenuTickSizeTest: tick height is a modest fraction of the row ("
+               + juce::String (fraction * 100.0f, 1) + "%), not the V4 full-column size");
+    expect (tickInkHeight < iconArea.getHeight(),
+           "popupMenuTickSizeTest: tick is smaller than its own icon column");
+
+    expect (untickedInkHeight == 0,
+           "popupMenuTickSizeTest: an unticked row draws no ink in the icon column");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -16016,6 +16308,9 @@ int main (int argc, char* argv[])
     RUN (sampleLoopXfadeVisualizationTest);
     RUN (matrixAssignTwoButtonTest);
     RUN (sampleStartMarkerVisibleDuringPlaybackTest);
+    RUN (displaySubscriptionRepaintTest);
+    RUN (chaosMatrixSourceUnspreadTest);
+    RUN (popupMenuTickSizeTest);
 
    #undef RUN
 

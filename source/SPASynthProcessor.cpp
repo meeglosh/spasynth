@@ -685,6 +685,29 @@ void SPASynthProcessor::setLockGroupLocked (int group, bool locked)
 
 void SPASynthProcessor::randomizeAll()
 {
+    {
+        // Stuck-note safety net (tester report, 1.0.21): clicking RANDOMIZE ALL
+        // while a QWERTY key is held left that note sounding forever, because
+        // the click moved keyboard focus and the matching key-UP never reached
+        // the on-screen keyboard. Same hard reset the panic path in
+        // processBlock uses; keyboardState.allNotesOff matters as much as the
+        // synth's, or the strip keeps believing the key is down and can emit a
+        // stray note-off later. fxChain is deliberately NOT reset: unlike a
+        // preset load this replaces no state wholesale, and killing reverb and
+        // delay tails on every roll would be a behaviour change nobody asked
+        // for. Consequence, matching preset load: rolling the dice while
+        // holding a note cuts that note.
+        //
+        // randomizeAll() runs on the message thread, so the voices/arp it
+        // touches here need the callback lock that processBlock holds --
+        // mirroring restoreStateTree()'s reset. The lock is scoped to these
+        // three lines so no parameter listener can ever run underneath it.
+        const juce::ScopedLock sl (getCallbackLock());
+        synth.allNotesOff (0, false);   // channel <= 0 = all voices, no tail-off
+        arp.reset();
+        keyboardState.allNotesOff (0);
+    }
+
     auto& rng = juce::Random::getSystemRandom();
     const auto wildness = getRandomWildness();
     const auto lockedMask = (juce::uint32) (int) apvts.state.getProperty (lockMaskProperty, 0);

@@ -1146,6 +1146,18 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     savePresetButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
     addAndMakeVisible (savePresetButton);
 
+    // Exactly the settings menu's "Reset to Default" item, no more: one call
+    // into PresetManager::resetToDefault(), which goes through
+    // restoreStateTree and so does the hard note/arp/FX reset on the way.
+    // No confirmation prompt, deliberately -- RANDOMIZE ALL sits in this same
+    // bar and destroys the patch on one click without asking, and a prompt
+    // would be in the way of anyone initialising repeatedly while designing.
+    initButton.onClick = [this] { processor.getPresetManager().resetToDefault(); };
+    initButton.setTooltip ("Reset every parameter to the default patch");
+    initButton.setWantsKeyboardFocus (false);                 // see Controls.h's Knob
+    initButton.setMouseClickGrabsKeyboardFocus (false);       // the actual fix -- see Controls.h's Knob
+    addAndMakeVisible (initButton);
+
     randomizeButton.setComponentID ("primary");
     randomizeButton.onClick = [this] { processor.randomizeAll(); };
     randomizeButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
@@ -1340,8 +1352,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
         };
         addAndMakeVisible (button);
 
-        // Macros have no panel to lock; the enum slot stays (persisted lock
-        // masks keep their bit layout) but the button is hidden.
+        // The macros do have a panel now (the MACRO tab beside the LFOs),
+        // but they are still deliberately excluded from RANDOMIZE ALL, so
+        // locking them would lock nothing: the button stays hidden. The
+        // enum slot stays either way (persisted lock masks keep their bit
+        // layout).
         if ((params::LockGroup) g == params::LockGroup::macros)
             button.setVisible (false);
     }
@@ -1384,10 +1399,17 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     for (int i = 0; i < params::numLFOs; ++i)
         lfoTabs.addTab ("LFO " + juce::String (i + 1), tabBg,
                         new LFOPanel (processor, i), true);
+    // The macros share the LFO group's tab strip: they are modulation
+    // sources like the LFOs, and this is the row that holds them.
+    lfoTabs.addTab ("MACRO", tabBg, new MacroPanel (processor.getAPVTS()), true);
     addAndMakeVisible (lfoTabs);
 
     // ASSIGN mode source targets: the LFO 1/2/3 tab buttons. lfo1/2/3 are
     // consecutive in the ModSource enum, so lfo1 + i is source i's value.
+    // Deliberately bounded by numLFOs and NOT widened to cover the MACRO
+    // tab: there is no ModSource value at lfo1 + 3, and one tab button
+    // could not stand in for four separate macro sources anyway. Each macro
+    // KNOB tags its own SLIDER with "modSource" instead (see MacroPanel).
     for (int i = 0; i < params::numLFOs; ++i)
         if (auto* tabButton = lfoTabs.getTabbedButtonBar().getTabButton (i))
             tabButton->getProperties().set ("modSource",
@@ -1695,11 +1717,37 @@ void ContentComponent::changeListenerCallback (juce::ChangeBroadcaster* source)
     // rebuild ASSIGN's target list, never the full refreshAll() -- distinct
     // from the processor/preset-manager broadcasts this same callback also
     // serves.
-    if (assignOverlay != nullptr
-        && (source == &filterTabs.getTabbedButtonBar() || source == &envTabs.getTabbedButtonBar()
-            || source == &lfoTabs.getTabbedButtonBar() || source == &fxTabs.getTabbedButtonBar()))
+    if (source == &filterTabs.getTabbedButtonBar() || source == &envTabs.getTabbedButtonBar()
+        || source == &lfoTabs.getTabbedButtonBar() || source == &fxTabs.getTabbedButtonBar())
     {
-        assignOverlay->refreshTargetsIfActive();
+        if (assignOverlay != nullptr)
+            assignOverlay->refreshTargetsIfActive();
+
+        // QWERTY stopped working after every tab switch until a virtual key was
+        // clicked (tester, on 1.0.21). Traced through JUCE: TabbedButtonBar::
+        // setCurrentTabIndex broadcasts this change message and THEN calls its
+        // owner's currentTabChanged -> TabbedComponent::changeCallback
+        // (juce_TabbedComponent.cpp), which finishes the switch with
+        // panelComponent->toFront (true). Component::toFront's "shouldGrab-
+        // KeyboardFocus" argument calls grabKeyboardFocus() on the freshly
+        // shown panel (juce_Component.cpp), and that arrives at
+        // grabKeyboardFocusInternal with cause == focusChangedDirectly, NOT
+        // focusChangedByMouseClick -- so the whole-tree setMouseClickGrabs-
+        // KeyboardFocus(false) sweep in SPASynthEditor's constructor (which is
+        // the ONLY thing that first early-out checks) does not stop it. The
+        // panel itself doesn't want focus, so the keyboard-focus traverser
+        // parks it on the first focusable thing it can reach instead -- in
+        // practice a control on the newly shown panel (measured: the "CHORUS
+        // ON" toggle), or popupFocusAnchor once the walk reaches us. Either
+        // way it comes off the on-screen keyboard, which then never sees
+        // another QWERTY key until it is clicked.
+        // The broadcast is async (ChangeBroadcaster), so it lands just after
+        // that steal; handing focus straight back here undoes it. All four tab
+        // groups go through the identical path, hence the one hand-back for
+        // every bar. isShowing() guards grabKeyboardFocus()'s own "must be on
+        // screen" assertion for editors that live off the desktop (tests).
+        if (keyboardVisible && keyboard.isShowing())
+            keyboard.grabKeyboardFocus();
         return;
     }
 
@@ -2113,6 +2161,8 @@ void ContentComponent::resized()
 
     auto presetArea = header.reduced (metrics::unit, 12);
     prevPresetButton.setBounds (presetArea.removeFromLeft (26));
+    initButton.setBounds (presetArea.removeFromRight (46));
+    presetArea.removeFromRight (4);   // SAVE and INIT read as one pair
     savePresetButton.setBounds (presetArea.removeFromRight (52));
     presetArea.removeFromRight (8);   // breathing room between > and SAVE
     nextPresetButton.setBounds (presetArea.removeFromRight (26));

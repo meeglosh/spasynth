@@ -16221,6 +16221,1030 @@ static void popupMenuTickSizeTest()
            "popupMenuTickSizeTest: an unticked row draws no ink in the icon column");
 }
 
+// Tester, on 1.0.21: "If you play on your physical computer keyboard (QWERTY)
+// - moving from an effect to the other disables the keyboard, I mean you'll
+// have to touch the virtual keyboard on screen before being able to play a
+// sound with your physical computer keyboard again."
+//
+// The cause was traced through JUCE's own source rather than assumed (the
+// 1.0.8 lesson): juce::TabbedButtonBar::setCurrentTabIndex broadcasts its
+// change message and THEN calls TabbedComponent::changeCallback
+// (juce_TabbedComponent.cpp), which finishes the switch with
+// panelComponent->toFront (true). Component::toFront's grab-focus argument
+// calls grabKeyboardFocus() on the freshly shown panel, arriving at
+// grabKeyboardFocusInternal with cause == focusChangedDirectly -- NOT
+// focusChangedByMouseClick, the only cause the editor's whole-tree
+// setMouseClickGrabsKeyboardFocus(false) sweep can suppress. The keyboard-
+// focus traverser then parks focus on the first focusable thing it reaches
+// -- with this fix reverted, measured as the newly shown panel's "CHORUS ON"
+// toggle -- taking it off the on-screen keyboard.
+// ContentComponent::changeListenerCallback (already listening to all four
+// tab bars for ASSIGN) hands it straight back.
+//
+// Parts (a)/(b) need REAL OS keyboard focus for exactly the reason
+// presetBrowserKeyboardFocusTest documents at length (grabKeyboardFocus only
+// bites when Component::isShowing(), which at the root needs a real peer),
+// so the editor is put on the desktop and the same best-effort skip applies.
+static void tabSwitchKeyboardFocusTest()
+{
+    std::cout << "tabSwitchKeyboardFocusTest\n";
+
+    const auto pumpFor = [] (int ms)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    };
+
+    // Identified by a tab name unique to each group rather than by index,
+    // since fxTabs re-orders itself from the saved chain order.
+    const auto findTabsWithTab = [] (juce::Component& root, const juce::String& tabName)
+    {
+        juce::TabbedComponent* found = nullptr;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            if (found == nullptr)
+                if (auto* tc = dynamic_cast<juce::TabbedComponent*> (&c))
+                    if (tc->getTabNames().contains (tabName))
+                        found = tc;
+            for (auto* child : c.getChildren())
+                walk (*child);
+        };
+        walk (root);
+        return found;
+    };
+
+    const auto findKeyboard = [] (juce::Component& root)
+    {
+        juce::MidiKeyboardComponent* kb = nullptr;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            if (kb == nullptr)
+                kb = dynamic_cast<juce::MidiKeyboardComponent*> (&c);
+            for (auto* child : c.getChildren())
+                walk (*child);
+        };
+        walk (root);
+        return kb;
+    };
+
+    // (a) + (b): keyboard strip visible -- focus must come back after a switch.
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.getAPVTS().state.setProperty ("uiKeyboardVisible", true, nullptr);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth,
+                         spa::ui::metrics::baseHeight + spa::ui::metrics::keyboardStripHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pumpFor (200);   // let the peer settle before asking it to hold focus
+
+        auto* keyboard = findKeyboard (*editor);
+        auto* fxTabs = findTabsWithTab (*editor, "REVERB");
+        auto* filterTabs = findTabsWithTab (*editor, "FILTER 2");
+
+        expect (keyboard != nullptr && fxTabs != nullptr && filterTabs != nullptr,
+                "keyboard + FX tabs + FILTER tabs found in the editor");
+
+        if (keyboard != nullptr && fxTabs != nullptr && filterTabs != nullptr)
+        {
+            keyboard->grabKeyboardFocus();
+            pumpFor (50);
+
+            if (! keyboard->hasKeyboardFocus (false))
+            {
+                std::cout << "  ..   couldn't obtain real OS keyboard focus in this "
+                             "environment -- skipping (a)/(b)\n";
+            }
+            else
+            {
+                // (a) the reported case: the FX tab group.
+                auto& fxBar = fxTabs->getTabbedButtonBar();
+                const int fxTarget = (fxBar.getCurrentTabIndex() + 1) % fxBar.getNumTabs();
+                fxBar.setCurrentTabIndex (fxTarget, true);
+                pumpFor (200);   // the change broadcast is async
+
+                expect (fxBar.getCurrentTabIndex() == fxTarget,
+                        "(a) the FX tab really switched");
+                expect (keyboard->hasKeyboardFocus (false),
+                        "(a) on-screen keyboard still has real focus after an FX tab switch "
+                        "(QWERTY keeps playing)");
+
+                // (b) the other three groups share the identical JUCE path;
+                // FILTER stands in for them.
+                auto& filterBar = filterTabs->getTabbedButtonBar();
+                const int filterTarget = (filterBar.getCurrentTabIndex() + 1) % filterBar.getNumTabs();
+                filterBar.setCurrentTabIndex (filterTarget, true);
+                pumpFor (200);
+
+                expect (filterBar.getCurrentTabIndex() == filterTarget,
+                        "(b) the FILTER tab really switched");
+                expect (keyboard->hasKeyboardFocus (false),
+                        "(b) on-screen keyboard still has real focus after a FILTER tab switch");
+            }
+        }
+
+        editor->removeFromDesktop();
+    }
+
+    // (c) keyboard strip hidden: a tab switch must NOT force focus onto the
+    // hidden strip (the hand-back is gated on keyboardVisible).
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        // uiKeyboardVisible defaults to false -- don't set it.
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pumpFor (200);
+
+        auto* keyboard = findKeyboard (*editor);
+        auto* fxTabs = findTabsWithTab (*editor, "REVERB");
+
+        expect (keyboard != nullptr && fxTabs != nullptr,
+                "keyboard + FX tabs found in the keyboard-hidden editor");
+
+        if (keyboard != nullptr && fxTabs != nullptr)
+        {
+            expect (! keyboard->isVisible(), "(c) the keyboard strip really is hidden");
+
+            auto& fxBar = fxTabs->getTabbedButtonBar();
+            fxBar.setCurrentTabIndex ((fxBar.getCurrentTabIndex() + 1) % fxBar.getNumTabs(), true);
+            pumpFor (200);
+
+            expect (! keyboard->hasKeyboardFocus (false),
+                    "(c) a tab switch does not hand focus to a hidden keyboard strip");
+        }
+
+        editor->removeFromDesktop();
+    }
+}
+
+// Tester, on 1.0.21: holding a QWERTY key and then clicking RANDOMIZE ALL
+// leaves the note sounding forever -- the click moved keyboard focus, so the
+// key-UP never reached the on-screen keyboard and no note-off was ever
+// generated. randomizeAll() now opens with the same hard reset the panic path
+// in processBlock uses, under the callback lock (it runs on the message
+// thread). keyboardState matters as much as the synth here: without clearing
+// it the strip keeps believing the key is down. Asserts on real engine state
+// (voices actually sounding, key actually held), not on call counts.
+static void randomizeAllClearsHeldNotesTest()
+{
+    std::cout << "randomizeAllClearsHeldNotesTest\n";
+    constexpr double sr = 48000.0;
+    constexpr int block = 256;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (sr, block);
+
+    juce::AudioBuffer<float> buf (2, block);
+    const auto render = [&] (int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            juce::MidiBuffer m;
+            proc.processBlock (buf, m);
+        }
+    };
+
+    // Play the note the way the on-screen / QWERTY keyboard does, so both the
+    // synth voice and the strip's own note-held bookkeeping are live -- those
+    // are exactly the two pieces of state a lost key-up strands.
+    proc.getKeyboardState().noteOn (1, 60, 0.8f);
+    render (4);
+
+    expect (proc.getTelemetry().activeVoices.load() > 0,
+            "a voice is sounding before RANDOMIZE ALL");
+    expect (proc.getKeyboardState().isNoteOn (1, 60),
+            "keyboardState still holds the key before RANDOMIZE ALL");
+
+    proc.randomizeAll();
+
+    expect (! proc.getKeyboardState().isNoteOn (1, 60),
+            "RANDOMIZE ALL released the held key in keyboardState");
+
+    render (1);   // telemetry is published per block
+
+    expect (proc.getTelemetry().activeVoices.load() == 0,
+            "RANDOMIZE ALL left no active voices ("
+                + juce::String (proc.getTelemetry().activeVoices.load()) + " still active)");
+}
+
+// ---------------------------------------------------------------------------
+// MACRO panel (a tester on 1.0.21: "what is Macro in the source section of the
+// Mod Matrix, and how to use it?"). The macro parameters were always wired as
+// matrix sources and always host-automatable, but had no control anywhere in
+// the UI, so routing Macro 1 somewhere did nothing a customer could move. The
+// three tests below cover the knobs, the source routing they now make
+// possible, and the tab strip they live in.
+// ---------------------------------------------------------------------------
+
+namespace macroPanelTestHelpers
+{
+    static void pumpFor (int ms)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    }
+
+    static juce::TabbedComponent* findTabsWithTab (juce::Component& root, const juce::String& tabName)
+    {
+        juce::TabbedComponent* found = nullptr;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            if (found == nullptr)
+                if (auto* tc = dynamic_cast<juce::TabbedComponent*> (&c))
+                    if (tc->getTabNames().contains (tabName))
+                        found = tc;
+            for (auto* child : c.getChildren())
+                walk (*child);
+        };
+        walk (root);
+        return found;
+    }
+
+    // Fronts the MACRO page (a TabbedComponent only parents the CURRENT tab's
+    // content, so the knobs are not even in the tree until it is selected)
+    // and returns the four macro sliders, or an array of nulls.
+    static std::array<juce::Slider*, (size_t) spa::params::numMacros>
+        frontMacroTabAndFindSliders (juce::Component& editor)
+    {
+        namespace id = spa::params::id;
+        std::array<juce::Slider*, (size_t) spa::params::numMacros> sliders {};
+
+        if (auto* tabs = findTabsWithTab (editor, "MACRO"))
+        {
+            tabs->setCurrentTabIndex (tabs->getTabNames().indexOf ("MACRO"));
+            pumpFor (100);
+        }
+
+        for (int m = 0; m < spa::params::numMacros; ++m)
+            sliders[(size_t) m] = dynamic_cast<juce::Slider*> (findByParamID (editor, id::macro (m)));
+
+        return sliders;
+    }
+}
+
+static void macroPanelKnobsTest()
+{
+    std::cout << "macroPanelKnobsTest\n";
+
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+    using namespace macroPanelTestHelpers;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    auto* lfoTabs = findTabsWithTab (*editor, "MACRO");
+    expect (lfoTabs != nullptr, "the MACRO tab lives in a real tab group");
+    if (lfoTabs == nullptr)
+        return;
+
+    // --- The tab group itself: four tabs, and the LFO source-tagging loop
+    // was NOT widened to cover the new one (there is no ModSource at
+    // lfo1 + 3, and one button cannot stand in for four macro sources).
+    expect (lfoTabs->getTabNames()
+                == juce::StringArray { "LFO 1", "LFO 2", "LFO 3", "MACRO" },
+            "the LFO group is LFO 1/2/3 + MACRO, in that order");
+
+    auto& bar = lfoTabs->getTabbedButtonBar();
+    bool lfoTagsIntact = true;
+    for (int i = 0; i < params::numLFOs; ++i)
+    {
+        auto* tabButton = bar.getTabButton (i);
+        lfoTagsIntact = lfoTagsIntact && tabButton != nullptr
+                     && tabButton->getProperties().contains ("modSource")
+                     && (int) tabButton->getProperties()["modSource"]
+                            == (int) params::ModSource::lfo1 + i;
+    }
+    expect (lfoTagsIntact, "the LFO 1/2/3 tab buttons still carry modSource lfo1/lfo2/lfo3");
+
+    auto* macroTabButton = bar.getTabButton (params::numLFOs);
+    expect (macroTabButton != nullptr && ! macroTabButton->getProperties().contains ("modSource"),
+            "the MACRO tab button carries no modSource tag (the macros tag their knobs instead)");
+
+    // --- The knobs.
+    const auto sliders = frontMacroTabAndFindSliders (*editor);
+
+    bool allRotary = true;
+    for (auto* s : sliders)
+        allRotary = allRotary && s != nullptr && s->isRotary();
+    expect (allRotary, "four rotary knobs on the MACRO page, one per macros.macroN");
+    if (! allRotary)
+        return;
+
+    // Knob -> parameter.
+    bool knobDrivesParam = true;
+    for (int m = 0; m < params::numMacros; ++m)
+        sliders[(size_t) m]->setValue (0.2 + 0.2 * m, juce::sendNotificationSync);
+    pumpFor (100);
+    for (int m = 0; m < params::numMacros; ++m)
+    {
+        const auto v = proc.getAPVTS().getRawParameterValue (id::macro (m))->load();
+        knobDrivesParam = knobDrivesParam && std::abs (v - (0.2f + 0.2f * (float) m)) < 1.0e-4f;
+    }
+    expect (knobDrivesParam, "moving each macro knob writes its own macros.macroN parameter");
+
+    // Parameter -> knob (host automation / preset recall moves the knob).
+    bool paramDrivesKnob = true;
+    for (int m = 0; m < params::numMacros; ++m)
+        setParam (proc, id::macro (m), 0.9f - 0.1f * (float) m);
+    pumpFor (200);
+    for (int m = 0; m < params::numMacros; ++m)
+        paramDrivesKnob = paramDrivesKnob
+                       && std::abs ((float) sliders[(size_t) m]->getValue() - (0.9f - 0.1f * (float) m)) < 1.0e-4f;
+    expect (paramDrivesKnob, "changing each macros.macroN parameter moves its knob");
+}
+
+// The point of the whole feature: a macro is now something a customer can
+// actually MOVE. Routes Macro 1 to Osc A level at full negative depth, holds
+// a note, then turns the knob on the MACRO page and asserts the sounding
+// note really collapses. Knob -> parameter -> matrix -> audio, end to end.
+static void macroKnobDrivesModulationTest()
+{
+    std::cout << "macroKnobDrivesModulationTest\n";
+
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+    using namespace macroPanelTestHelpers;
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (sampleRate, blockSize);
+    setRouteParams (proc, 0, params::ModSource::macro1,
+                    id::oscSlot (0, id::osc::level), -1.0f);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    const auto sliders = frontMacroTabAndFindSliders (*editor);
+    expect (sliders[0] != nullptr, "the Macro 1 knob is reachable on the MACRO page");
+    if (sliders[0] == nullptr)
+        return;
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    const auto heldPeak = renderBlocks (proc, buffer, midi, 32);
+    expect (heldPeak > 0.05f,
+            "the held note is audible with Macro 1 at 0 (peak " + juce::String (heldPeak) + ")");
+
+    // Turn the knob, exactly as a user would, while the note still sounds.
+    sliders[0]->setValue (1.0, juce::sendNotificationSync);
+    pumpFor (100);
+    expect (std::abs (proc.getAPVTS().getRawParameterValue (id::macro (0))->load() - 1.0f) < 1.0e-4f,
+            "turning the knob wrote macros.macro1");
+
+    juce::MidiBuffer noMoreEvents;
+    renderBlocks (proc, buffer, noMoreEvents, 24);   // let the level smoothing settle
+    const auto moddedPeak = renderBlocks (proc, buffer, noMoreEvents, 32);
+
+    // Control run on the same timeline with the knob left alone, so the drop
+    // above cannot be mistaken for the note's own envelope decaying.
+    float controlPeak = 0.0f;
+    {
+        spa::SPASynthProcessor control;
+        control.prepareToPlay (sampleRate, blockSize);
+        setRouteParams (control, 0, params::ModSource::macro1,
+                        id::oscSlot (0, id::osc::level), -1.0f);
+        juce::AudioBuffer<float> controlBuffer (2, blockSize);
+        juce::MidiBuffer controlMidi;
+        controlMidi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        renderBlocks (control, controlBuffer, controlMidi, 56);
+        controlPeak = renderBlocks (control, controlBuffer, controlMidi, 32);
+    }
+    expect (controlPeak > 0.05f,
+            "the control note is still audible in the same window with Macro 1 left at 0 (peak "
+                + juce::String (controlPeak) + ")");
+    expect (moddedPeak < controlPeak * 0.1f,
+            "turning the Macro 1 KNOB collapses the routed destination (control "
+                + juce::String (controlPeak) + " vs modulated " + juce::String (moddedPeak) + ")");
+}
+
+// ASSIGN mode: each macro knob is its own source target in a SOURCE session,
+// and none of them is a target in a DEST session (macros are not mod
+// destinations -- their registry entry has the destination flag false).
+static void macroAssignSourceTest()
+{
+    std::cout << "macroAssignSourceTest\n";
+
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+    using namespace macroPanelTestHelpers;
+    using AssignKind = spa::ui::MatrixPanel::AssignKind;
+
+    // Independent of any UI: the macros must not be mod destinations at all.
+    bool noMacroIsADestination = true;
+    for (int m = 0; m < params::numMacros; ++m)
+        noMacroIsADestination = noMacroIsADestination && params::modDestIndex (id::macro (m)) < 0;
+    expect (noMacroIsADestination, "no macros.macroN is a mod destination (modDestIndex < 0)");
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    spa::ui::MatrixPanel* matrixPanel = nullptr;
+    spa::ui::AssignOverlay* overlay = nullptr;
+    std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+    {
+        if (matrixPanel == nullptr)
+            matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+        if (overlay == nullptr)
+            overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+        for (auto* child : c.getChildren())
+            findParts (*child);
+    };
+    findParts (*editor);
+    expect (matrixPanel != nullptr && overlay != nullptr, "MatrixPanel + AssignOverlay found");
+    if (matrixPanel == nullptr || overlay == nullptr)
+        return;
+
+    const auto sliders = frontMacroTabAndFindSliders (*editor);
+
+    // The "modSource" tag sits on the macro knob's SLIDER (see MacroPanel's
+    // constructor comment and macroAssignRingHaloTest): AssignOverlay's walk
+    // checks "modSource" before "paramID", so the slider a Knob stamps with
+    // "paramID" for MIDI Learn is still collected as a source. The Knob
+    // wrapper is kept here only to prove it is NOT a target any more.
+    std::array<juce::Component*, (size_t) params::numMacros> knobs {};
+    bool allKnobsFound = true;
+    for (int m = 0; m < params::numMacros; ++m)
+    {
+        knobs[(size_t) m] = sliders[(size_t) m] != nullptr
+                          ? sliders[(size_t) m]->getParentComponent() : nullptr;
+        allKnobsFound = allKnobsFound && knobs[(size_t) m] != nullptr;
+    }
+    expect (allKnobsFound, "each macro slider has its Knob wrapper");
+    if (! allKnobsFound)
+        return;
+
+    // --- SOURCE session: all four glow, and one can be selected.
+    matrixPanel->simulateDoubleClick (AssignKind::source);   // latched
+    pumpFor (100);
+    expect (overlay->isAssignActive() && matrixPanel->getAssignKind() == AssignKind::source,
+            "a latched SOURCE session is running");
+
+    bool allGlow = true;
+    for (auto* sl : sliders)
+        allGlow = allGlow && overlay->isGlowingForTest (sl);
+    expect (allGlow, "all four macro knobs are selectable source targets in a SOURCE session");
+
+    const auto clickAt = [&] (juce::Component& target)
+    {
+        overlay->handleClickAt (overlay->getLocalArea (&target, target.getLocalBounds()).getCentre());
+    };
+    clickAt (*sliders[2]);
+    expect (overlay->isSelected (sliders[2]), "clicking the Macro 3 knob selects it as the source");
+
+    // ...and routing it into a matrix row really writes ModSource::macro3.
+    if (auto* row0Source = findByParamID (*editor, id::routeParam (0, id::route::source)))
+    {
+        clickAt (*row0Source);
+        const auto written = proc.getAPVTS().getRawParameterValue (id::routeParam (0, id::route::source))->load();
+        expect (juce::roundToInt (written) == (int) params::ModSource::macro3,
+                "assigning the Macro 3 knob into row 0 wrote ModSource::macro3 (got "
+                    + juce::String (written) + ")");
+    }
+    else
+    {
+        expect (false, "matrix row 0's SOURCE combo found");
+    }
+
+    matrixPanel->setAssignOn (false);
+    pumpFor (100);
+
+    // --- DEST session: the macros must not offer themselves as destinations.
+    matrixPanel->simulateDoubleClick (AssignKind::dest);
+    pumpFor (100);
+    expect (overlay->isAssignActive() && matrixPanel->getAssignKind() == AssignKind::dest,
+            "a latched DEST session is running");
+
+    bool anyGlowAsDest = false;
+    for (int m = 0; m < params::numMacros; ++m)
+        anyGlowAsDest = anyGlowAsDest
+                     || overlay->isGlowingForTest (knobs[(size_t) m])
+                     || overlay->isGlowingForTest (sliders[(size_t) m]);
+    expect (! anyGlowAsDest, "no macro knob is a target in a DEST session");
+
+    matrixPanel->setAssignOn (false);
+    pumpFor (50);
+}
+
+// ---------------------------------------------------------------------------
+// The macro knobs' ASSIGN-mode halo shape. The "modSource" tag used to sit on
+// the Knob WRAPPER (a plain Component), because AssignOverlay's walk checked
+// "paramID" first and every Knob stamps that on its slider for MIDI Learn --
+// so a tagged slider was silently dropped from every SOURCE session. With the
+// walk checking "modSource" first, the tag lives on the slider, and since
+// AssignOverlay::paint dispatches on "is this target a ROTARY juce::Slider?"
+// the macros now get the same ring halo as every other knob instead of a
+// rectangle round the whole cell. Asserting on the collected target itself
+// (rather than reading pixels) tests exactly the condition paint() branches on.
+// ---------------------------------------------------------------------------
+static void macroAssignRingHaloTest()
+{
+    std::cout << "macroAssignRingHaloTest\n";
+
+    namespace params = spa::params;
+    using namespace macroPanelTestHelpers;
+    using AssignKind = spa::ui::MatrixPanel::AssignKind;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    spa::ui::MatrixPanel* matrixPanel = nullptr;
+    spa::ui::AssignOverlay* overlay = nullptr;
+    std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+    {
+        if (matrixPanel == nullptr)
+            matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+        if (overlay == nullptr)
+            overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+        for (auto* child : c.getChildren())
+            findParts (*child);
+    };
+    findParts (*editor);
+    expect (matrixPanel != nullptr && overlay != nullptr,
+            "MatrixPanel + AssignOverlay found for the halo-shape test");
+    if (matrixPanel == nullptr || overlay == nullptr)
+        return;
+
+    const auto sliders = frontMacroTabAndFindSliders (*editor);
+    bool allSlidersFound = true;
+    for (auto* sl : sliders)
+        allSlidersFound = allSlidersFound && sl != nullptr;
+    expect (allSlidersFound, "all four macro sliders found");
+    if (! allSlidersFound)
+        return;
+
+    // The tag itself: on the slider, not on the Knob wrapper.
+    bool tagOnSlider = true, tagOffWrapper = true;
+    for (int m = 0; m < params::numMacros; ++m)
+    {
+        auto* sl = sliders[(size_t) m];
+        tagOnSlider = tagOnSlider
+                   && sl->getProperties().contains ("modSource")
+                   && (int) sl->getProperties()["modSource"]
+                        == (int) params::ModSource::macro1 + m;
+        auto* wrapper = sl->getParentComponent();
+        tagOffWrapper = tagOffWrapper
+                     && wrapper != nullptr
+                     && ! wrapper->getProperties().contains ("modSource");
+    }
+    expect (tagOnSlider, "each macro slider carries its own modSource macroN tag");
+    expect (tagOffWrapper, "the Knob wrapper no longer carries the modSource tag");
+
+    matrixPanel->simulateDoubleClick (AssignKind::source);   // latched
+    pumpFor (100);
+    expect (overlay->isAssignActive() && matrixPanel->getAssignKind() == AssignKind::source,
+            "a latched SOURCE session is running for the halo-shape test");
+
+    // AssignOverlay::paint takes paintKnobHalo (the ring) only when the
+    // COLLECTED target is a juce::Slider whose isRotary() is true, and
+    // paintRectHalo otherwise. So: the slider must be the collected target,
+    // the wrapper must not be, and the slider must be rotary.
+    bool sliderIsTarget = true, wrapperIsNotTarget = true, allRotary = true;
+    for (auto* sl : sliders)
+    {
+        sliderIsTarget = sliderIsTarget && overlay->isGlowingForTest (sl);
+        wrapperIsNotTarget = wrapperIsNotTarget
+                          && ! overlay->isGlowingForTest (sl->getParentComponent());
+        allRotary = allRotary && sl->isRotary();
+    }
+    expect (sliderIsTarget,
+            "the collected ASSIGN target for each macro is the slider itself (ring-halo path)");
+    expect (wrapperIsNotTarget,
+            "the Knob wrapper is not a target any more (no rectangular cell halo)");
+    expect (allRotary,
+            "each macro slider is rotary, so AssignOverlay::paint calls paintKnobHalo");
+
+    // Selecting still works through the slider, and the selected treatment is
+    // the ring one for the same reason.
+    overlay->handleClickAt (overlay->getLocalArea (sliders[0], sliders[0]->getLocalBounds()).getCentre());
+    expect (overlay->isSelected (sliders[0]),
+            "clicking the Macro 1 knob selects the slider as the source");
+
+    matrixPanel->setAssignOn (false);
+    pumpFor (50);
+}
+
+// ---------------------------------------------------------------------------
+// INIT button (tester request on 1.0.21: "an init button to return all the
+// parameters to the default settings"). The function already existed in the
+// settings menu behind the logo; this is purely about it being findable. The
+// button must call the very same PresetManager::resetToDefault(), and -- like
+// every other action button in this UI -- must never grab keyboard focus away
+// from the on-screen keyboard's QWERTY input (see presetBrowserFocusGrabTest).
+// ---------------------------------------------------------------------------
+static void initButtonTest()
+{
+    std::cout << "initButtonTest\n";
+
+    namespace id = spa::params::id;
+    using namespace macroPanelTestHelpers;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    juce::TextButton* initButton = nullptr;
+    std::function<void (juce::Component&)> findInit = [&] (juce::Component& c)
+    {
+        if (initButton == nullptr)
+            if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                if (b->getButtonText() == "INIT")
+                    initButton = b;
+        for (auto* child : c.getChildren())
+            findInit (*child);
+    };
+    findInit (*editor);
+    expect (initButton != nullptr, "an INIT button exists in the top bar");
+    if (initButton == nullptr)
+        return;
+
+    expect (initButton->isVisible() && initButton->getWidth() > 0 && initButton->getHeight() > 0,
+            "the INIT button is visible and laid out (" + initButton->getBounds().toString() + ")");
+    expect (initButton->getTooltip().isNotEmpty(), "the INIT button has a tooltip");
+
+    // QWERTY rule -- see Controls.h's Knob comment. setWantsKeyboardFocus is
+    // not the switch that matters; setMouseClickGrabsKeyboardFocus is.
+    expect (! initButton->getMouseClickGrabsKeyboardFocus(),
+            "the INIT button does not grab keyboard focus on click");
+    expect (! initButton->getWantsKeyboardFocus(),
+            "the INIT button does not want keyboard focus");
+
+    // Move a spread of parameters off their defaults: global, filter, osc,
+    // envelope, LFO, macro and two different FX sections.
+    auto& apvts = proc.getAPVTS();
+    const juce::StringArray movedIds {
+        id::masterGain, id::glideTime, id::filter1Cutoff, id::filter1Resonance,
+        id::oscSlot (0, id::osc::position), id::envParam (2, "attack"),
+        id::lfoParam (0, id::lfo::rate), id::macro (0),
+        id::fx::delayFeedback, id::fx::reverbMix
+    };
+
+    std::vector<float> defaults01;
+    bool everyParamFound = true, everyParamMoved = true;
+    for (const auto& pid : movedIds)
+    {
+        auto* param = apvts.getParameter (pid);
+        if (param == nullptr)
+        {
+            everyParamFound = false;
+            defaults01.push_back (0.0f);
+            continue;
+        }
+        const auto def01 = param->getDefaultValue();
+        defaults01.push_back (def01);
+        // Push a long way off the default, in whichever direction has room.
+        const auto target01 = def01 > 0.5f ? juce::jmax (0.0f, def01 - 0.4f)
+                                           : juce::jmin (1.0f, def01 + 0.4f);
+        param->setValueNotifyingHost (target01);
+        if (std::abs (param->getValue() - def01) < 0.05f)
+            everyParamMoved = false;
+    }
+    expect (everyParamFound, "every parameter id in the INIT spread exists");
+    expect (everyParamMoved, "every parameter in the INIT spread actually moved off its default");
+
+    initButton->triggerClick();
+    pumpFor (100);
+
+    bool allRestored = true;
+    juce::String stillOff;
+    for (int i = 0; i < movedIds.size(); ++i)
+    {
+        auto* param = apvts.getParameter (movedIds[i]);
+        if (param == nullptr)
+            continue;
+        if (std::abs (param->getValue() - defaults01[(size_t) i]) > 0.001f)
+        {
+            allRestored = false;
+            stillOff += " " + movedIds[i];
+        }
+    }
+    expect (allRestored, "clicking INIT put every parameter back at its default (off:"
+                         + (stillOff.isEmpty() ? juce::String (" none") : stillOff) + ")");
+}
+
+// ---------------------------------------------------------------------------
+// ORGANIC CHAOS: the chunk-boundary step artifact ("analog interference on a
+// sine", reported by a tester).
+//
+// SPASynthVoice::computeChunk produces the voice-wide chaos drives (amp gain,
+// saturation drive, distortion drive) ONCE per 64-sample modulation chunk. If
+// the render loop then holds each one constant for the whole chunk, the
+// applied value is a staircase that jumps at sampleRate/64 -- 750Hz at 48k.
+// The chaos walkers move fast and randomly, so those jumps are large; each is
+// a small click, and at 750Hz they read as low-level broadband grit. A complex
+// patch masks it; a pure sine does not. The render loop therefore RAMPS each
+// drive linearly from the previous chunk's value to the new target, which
+// makes the applied value continuous.
+//
+// METRIC: the second difference d2[n] = y[n+1] - 2y[n] + y[n-1], compared at
+// the two samples straddling every chunk edge (n % 64 == 63 and n % 64 == 0)
+// against every other sample. A piecewise-CONSTANT gain makes y itself jump at
+// the edge, which lands as a large d2 spike exactly there; a piecewise-LINEAR
+// gain leaves y continuous and only its slope changes, which is smaller by
+// roughly the chunk length. Chosen over a spectral test because it localises
+// the artifact precisely where the mechanism predicts it (n % 64) and needs no
+// window/leakage assumptions -- and because the ratio is dimensionless, so it
+// does not depend on how loud the test patch happens to be.
+namespace chaosRampTestHelpers
+{
+    constexpr double chaosSampleRate = 48000.0;
+    constexpr int chaosBlockSize = 512;          // a whole number of chunks
+    constexpr int chaosChunk = 64;               // SPASynthVoice::chunkSize
+
+    struct Render
+    {
+        std::vector<float> samples;
+        bool allFinite = true;
+    };
+
+    // A sustained pure sine straight out of the analog oscillator: one slot,
+    // no filters, no FX, a flat amp envelope. Anything that moves in this
+    // signal is chaos and nothing else.
+    static void configureSineVoice (spa::SPASynthProcessor& proc)
+    {
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) params::OscMode::analog);
+        setParam (proc, id::oscSlot (0, id::osc::analogShape), 4.0f);   // Sine
+        setParam (proc, id::oscSlot (0, id::osc::sub), 0.0f);
+        setParam (proc, id::filter1Enable, 0.0f);
+        setParam (proc, id::filter2Enable, 0.0f);
+
+        // Flat envelope: the only amplitude movement left is chaos amp drift.
+        setParam (proc, id::ampAttack, 0.001f);
+        setParam (proc, id::ampDecay, 0.001f);
+        setParam (proc, id::ampSustain, 1.0f);
+    }
+
+    static void configureChaos (spa::SPASynthProcessor& proc, bool enabled,
+                         bool ampDrift, bool shaperDrift, float rateHz)
+    {
+        namespace id = spa::params::id;
+
+        setParam (proc, id::chaos::enable, enabled ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::depth, 1.0f);
+        setParam (proc, id::chaos::mix, 1.0f);
+        setParam (proc, id::chaos::rate, rateHz);
+
+        // Pitch/phase/position drift feed the per-chunk OSCILLATOR parameter
+        // updates that every modulation source shares; they are a separate
+        // (much larger) job, so they are off here, leaving only the
+        // voice-wide drives this test is about.
+        setParam (proc, id::chaos::pitchOn, 0.0f);
+        setParam (proc, id::chaos::phaseOn, 0.0f);
+        setParam (proc, id::chaos::positionOn, 0.0f);
+
+        setParam (proc, id::chaos::ampOn, ampDrift ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::ampAmount, 1.0f);
+        setParam (proc, id::chaos::satOn, shaperDrift ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::saturation, 1.0f);
+        setParam (proc, id::chaos::distOn, shaperDrift ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::distortion, 1.0f);
+    }
+
+    static void appendBlocks (spa::SPASynthProcessor& proc, juce::MidiBuffer& midi,
+                       int numBlocks, Render& out)
+    {
+        juce::AudioBuffer<float> buffer (2, chaosBlockSize);
+        for (int b = 0; b < numBlocks; ++b)
+        {
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            const auto* p = buffer.getReadPointer (0);
+            for (int i = 0; i < chaosBlockSize; ++i)
+            {
+                if (! std::isfinite (p[i]))
+                    out.allFinite = false;
+                out.samples.push_back (p[i]);
+            }
+        }
+    }
+
+    static Render renderSine (bool chaosEnabled, bool ampDrift, bool shaperDrift,
+                              float rateHz, int numBlocks, int note)
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (chaosSampleRate, chaosBlockSize);
+        configureSineVoice (proc);
+        configureChaos (proc, chaosEnabled, ampDrift, shaperDrift, rateHz);
+
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+
+        Render out;
+        out.samples.reserve ((size_t) (numBlocks * chaosBlockSize));
+        appendBlocks (proc, midi, numBlocks, out);
+        return out;
+    }
+
+    struct StepMetric
+    {
+        double boundaryRms = 0.0;
+        double interiorRms = 0.0;
+        // Excess d2 power at the boundaries over the chunk interior, as a
+        // multiple of the interior. Zero means the boundaries are
+        // indistinguishable from anywhere else in the signal; the raw
+        // boundary/interior ratio is not used because a distorted signal
+        // already carries a lot of interior d2 that dilutes it.
+        double stepIndex = 0.0;
+    };
+
+    static StepMetric measureChunkSteps (const std::vector<float>& y, int firstSample)
+    {
+        double bSum = 0.0, iSum = 0.0;
+        int bCount = 0, iCount = 0;
+
+        for (size_t n = (size_t) juce::jmax (1, firstSample); n + 1 < y.size(); ++n)
+        {
+            const auto d2 = (double) y[n + 1] - 2.0 * (double) y[n] + (double) y[n - 1];
+            const auto phase = (int) (n % (size_t) chaosChunk);
+
+            if (phase == 0 || phase == chaosChunk - 1)
+            {
+                bSum += d2 * d2;
+                ++bCount;
+            }
+            else
+            {
+                iSum += d2 * d2;
+                ++iCount;
+            }
+        }
+
+        StepMetric m;
+        m.boundaryRms = bCount > 0 ? std::sqrt (bSum / bCount) : 0.0;
+        m.interiorRms = iCount > 0 ? std::sqrt (iSum / iCount) : 0.0;
+        const auto excess = juce::jmax (0.0, m.boundaryRms * m.boundaryRms
+                                             - m.interiorRms * m.interiorRms);
+        m.stepIndex = m.interiorRms > 0.0 ? std::sqrt (excess) / m.interiorRms : 0.0;
+        return m;
+    }
+
+    static juce::String describe (const StepMetric& m)
+    {
+        return "step index " + juce::String (m.stepIndex, 4)
+             + " (boundary d2 RMS " + juce::String (m.boundaryRms, 8)
+             + ", interior " + juce::String (m.interiorRms, 8) + ")";
+    }
+
+    // Peak-to-trough of the amplitude envelope: how deep the level actually
+    // moves. The point of the ramp is to remove the steps, NOT to smooth the
+    // chaos away, so this must stay large. The envelope is the peak |y| over
+    // a window of several cycles (not a short-window RMS, which for a sine
+    // this low swings with where in the cycle the window happens to land).
+    static constexpr int envelopeWindow = 256;
+
+    static double envelopeSpread (const std::vector<float>& y, int firstSample)
+    {
+        double lo = 1.0e18, hi = 0.0;
+        for (size_t n = (size_t) firstSample; n + (size_t) envelopeWindow <= y.size();
+             n += (size_t) envelopeWindow)
+        {
+            double peak = 0.0;
+            for (int i = 0; i < envelopeWindow; ++i)
+                peak = juce::jmax (peak, (double) std::abs (y[n + (size_t) i]));
+            lo = juce::jmin (lo, peak);
+            hi = juce::jmax (hi, peak);
+        }
+        return lo > 0.0 ? hi / lo : 0.0;
+    }
+}
+
+static void chaosChunkStepRampTest()
+{
+    std::cout << "chaosChunkStepRampTest\n";
+    using namespace chaosRampTestHelpers;
+    namespace id = spa::params::id;
+
+    constexpr int numBlocks = 200;                      // ~2.1 s at 48k/512
+    constexpr int settle = 16 * chaosBlockSize;         // past attack + onset
+    constexpr float fastRate = 25.0f;                   // chaos rate maximum
+    constexpr int sineNote = 60;                        // C4, a clean low sine
+    // Saturation and distortion fill the spectrum with harmonics, which raise
+    // the chunk-interior d2 that the step index is measured against; an
+    // octave lower keeps the harmonic floor low enough for the step to be
+    // clearly separated from it.
+    constexpr int shaperNote = 48;
+
+    // --- 1. Control: chaos running but nothing applied ----------------------
+    // Establishes what the metric reads when there is genuinely no step, so
+    // the amp-drift number below has something to be compared against.
+    const auto flat = renderSine (true, false, false, fastRate, numBlocks, sineNote);
+    const auto flatSteps = measureChunkSteps (flat.samples, settle);
+    const auto flatSpread = envelopeSpread (flat.samples, settle);
+
+    expect (flat.allFinite && flat.samples.size() == (size_t) (numBlocks * chaosBlockSize),
+            "chaos chunk step: control render is finite");
+    expect (flatSteps.interiorRms > 0.0 && flatSteps.stepIndex < 0.05,
+            "chaos chunk step: with no drive applied, chunk boundaries look like chunk "
+            "interiors (" + describe (flatSteps) + ")");
+    expect (flatSpread < 1.01,
+            "chaos chunk step: control render's level is flat (envelope spread "
+            + juce::String (flatSpread, 4) + ")");
+
+    // --- 2. Chaos inactive must be bit-identical ---------------------------
+    // Same patch with chaos switched off entirely: the drive path has to
+    // collapse to exactly gain 1.0 / drive 0.0 with no ramping of any kind.
+    const auto off = renderSine (false, false, false, fastRate, numBlocks, sineNote);
+    double maxOffDiff = 0.0;
+    for (size_t n = 0; n < off.samples.size(); ++n)
+        maxOffDiff = juce::jmax (maxOffDiff,
+                                 (double) std::abs (off.samples[n] - flat.samples[n]));
+    expect (maxOffDiff == 0.0,
+            "chaos chunk step: chaos inactive is bit-identical to chaos active with no "
+            "drives (max diff " + juce::String (maxOffDiff, 12) + ")");
+
+    // --- 3. Amp drift: the case the tester heard ---------------------------
+    const auto drift = renderSine (true, true, false, fastRate, numBlocks, sineNote);
+    const auto driftSteps = measureChunkSteps (drift.samples, settle);
+    const auto driftSpread = envelopeSpread (drift.samples, settle);
+
+    expect (drift.allFinite, "chaos chunk step: amp-drift render is finite everywhere");
+    expect (driftSteps.stepIndex < 1.0,
+            "chaos chunk step: amp drift does not step at chunk boundaries ("
+            + describe (driftSteps) + ")");
+    expect (driftSpread > 1.8,
+            "chaos chunk step: amp drift still moves the level deeply (envelope spread "
+            + juce::String (driftSpread, 3) + " vs control "
+            + juce::String (flatSpread, 4) + ")");
+
+    // --- 4. Saturation + distortion drives ---------------------------------
+    // Computed the same way, applied the same way, so the same class of
+    // artifact -- ramped for the same reason.
+    const auto shaper = renderSine (true, false, true, fastRate, numBlocks, shaperNote);
+    const auto shaperSteps = measureChunkSteps (shaper.samples, settle);
+
+    expect (shaper.allFinite, "chaos chunk step: shaper-drift render is finite everywhere");
+    expect (shaperSteps.stepIndex < 1.0,
+            "chaos chunk step: saturation/distortion drive does not step at chunk "
+            "boundaries (" + describe (shaperSteps) + ")");
+
+    // --- 5. Voice reuse: no ramp state may survive into the next note ------
+    // A voice that has just run with chaos cranked is reused for a note with
+    // chaos switched off. If the previous note's drive values or ramp
+    // increments leaked, this second note would drift or step instead of
+    // sitting at a dead-flat unity gain.
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (chaosSampleRate, chaosBlockSize);
+        configureSineVoice (proc);
+        configureChaos (proc, true, true, true, fastRate);
+
+        Render scratch;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, sineNote, (juce::uint8) 100), 0);
+        appendBlocks (proc, midi, 60, scratch);
+        midi.addEvent (juce::MidiMessage::noteOff (1, sineNote), 0);
+        appendBlocks (proc, midi, 60, scratch);
+
+        setParam (proc, id::chaos::enable, 0.0f);
+
+        Render second;
+        midi.addEvent (juce::MidiMessage::noteOn (1, sineNote, (juce::uint8) 100), 0);
+        appendBlocks (proc, midi, 60, second);
+
+        const auto reuseSteps = measureChunkSteps (second.samples, settle);
+        const auto reuseSpread = envelopeSpread (second.samples, settle);
+
+        expect (second.allFinite, "chaos chunk step: reused-voice render is finite");
+        expect (reuseSpread < 1.01,
+                "chaos chunk step: a voice reused with chaos off carries no stale drive "
+                "(envelope spread " + juce::String (reuseSpread, 4) + ")");
+        expect (reuseSteps.interiorRms > 0.0 && reuseSteps.stepIndex < 0.05,
+                "chaos chunk step: a voice reused with chaos off carries no stale ramp "
+                "increment (" + describe (reuseSteps) + ")");
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -16466,6 +17490,68 @@ int main (int argc, char* argv[])
     //   reflects both new knobs, not just an idealised square).
     // - Chaos: SYNC on with the longest division name selected ("1/16T"),
     //   so the combo's full text is visible, not clipped under the arrow.
+    // Visual review for the MACRO page: the MACRO tab fronted, the four
+    // knobs at staggered values. Writes the whole editor plus a 3x crop of
+    // the page itself, so the "MACRO 1".."MACRO 4" labels can actually be
+    // read at their real cell width (same pattern as --snapshot-xfade).
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-macro")
+    {
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using namespace macroPanelTestHelpers;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        for (int m = 0; m < params::numMacros; ++m)
+            setParam (proc, id::macro (m), 0.15f + 0.25f * (float) m);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+        pumpFor (100);
+
+        juce::Component* page = nullptr;
+        if (auto* tabs = findTabsWithTab (*editor, "MACRO"))
+        {
+            tabs->setCurrentTabIndex (tabs->getTabNames().indexOf ("MACRO"));
+            pumpFor (150);
+            page = tabs->getCurrentContentComponent();
+        }
+
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        juce::PNGImageFormat png;
+        {
+            const auto outFile = outDir.getChildFile ("spasynth-macro.png");
+            outFile.deleteFile();
+            juce::FileOutputStream stream (outFile);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        }
+
+        if (page != nullptr)
+        {
+            const auto topLeft = editor->getLocalPoint (page, juce::Point<int> (0, 0));
+            const auto bounds = juce::Rectangle<int> (topLeft.x, topLeft.y, page->getWidth(), page->getHeight())
+                                     .expanded (6)
+                                     .getIntersection (editor->getLocalBounds());
+            auto crop = image.getClippedImage (bounds);
+            juce::Image upscaled (juce::Image::ARGB, crop.getWidth() * 3, crop.getHeight() * 3, true);
+            juce::Graphics g (upscaled);
+            g.drawImage (crop, upscaled.getBounds().toFloat());
+
+            const auto outFile = outDir.getChildFile ("spasynth-macro-crop.png");
+            outFile.deleteFile();
+            juce::FileOutputStream stream (outFile);
+            if (stream.openedOk())
+                png.writeImageToStream (upscaled, stream);
+            std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        }
+        return 0;
+    }
+
     if (argc >= 3 && juce::String (argv[1]) == "--snapshot-lfo")
     {
         namespace params = spa::params;
@@ -16768,6 +17854,14 @@ int main (int argc, char* argv[])
     RUN (lfoJitterTest);
     RUN (lfoBoundsTest);
     RUN (comboTextFitsCellTest);
+    RUN (tabSwitchKeyboardFocusTest);
+    RUN (randomizeAllClearsHeldNotesTest);
+    RUN (macroPanelKnobsTest);
+    RUN (macroKnobDrivesModulationTest);
+    RUN (macroAssignSourceTest);
+    RUN (macroAssignRingHaloTest);
+    RUN (initButtonTest);
+    RUN (chaosChunkStepRampTest);
 
    #undef RUN
 

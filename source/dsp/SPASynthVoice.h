@@ -460,7 +460,29 @@ private:
     // previous chunk (chaos feeds the matrix that modulates them — one-chunk
     // latency breaks the cycle), plus the current shaper drives.
     float chaosDepth = 0.0f, chaosRate = 2.0f, chaosMix = 1.0f;
+
+    // The three voice-wide chaos drives, as the render loop APPLIES them: a
+    // per-sample linear ramp from the previous chunk's value to this chunk's
+    // target, advanced by one add per sample in renderNextBlock.
+    //
+    // They used to be held constant for the whole 64-sample chunk, which made
+    // each one a staircase stepping at sampleRate/chunkSize — 750Hz at 48k.
+    // Slow modulation (an LFO) barely moves in one chunk so its steps are
+    // inaudible, but the chaos walkers move fast and randomly, so theirs are
+    // large: a small click every chunk, reading as low-level broadband grit.
+    // Masked on a dense patch, plainly audible on a pure sine, which is
+    // exactly how it was reported. Piecewise-linear removes the
+    // discontinuity; it does NOT change how the values are computed, only how
+    // they are applied across the chunk.
     float satDrive = 0.0f, distDrive = 0.0f, chaosAmpGain = 1.0f;
+    float satDriveInc = 0.0f, distDriveInc = 0.0f, chaosAmpGainInc = 0.0f;
+    float satDriveTarget = 0.0f, distDriveTarget = 0.0f, chaosAmpGainTarget = 1.0f;
+
+    // False until computeChunk has run once for this note: the first chunk
+    // seeds the ramp directly at its own target (no ramp) instead of sliding
+    // in from a previous note's value. Reset in startNote(), so a reused or
+    // stolen voice re-seeds too.
+    bool chaosRampPrimed = false;
     float filterMixValue = 1.0f;    // per-chunk dry/wet, filter 1
     float filter2MixValue = 1.0f;   // per-chunk dry/wet, filter 2
 

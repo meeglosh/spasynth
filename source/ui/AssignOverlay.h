@@ -483,8 +483,24 @@ private:
             const bool wantSource = sessionKind == MatrixPanel::AssignKind::source;
             const bool wantDest = sessionKind == MatrixPanel::AssignKind::dest;
 
-            const auto paramID = c.getProperties()["paramID"].toString();
-            if (paramID.isNotEmpty())
+            // "modSource" is checked BEFORE "paramID" so that a component
+            // carrying BOTH reads as a source. The macro knobs are the only
+            // such component: every Knob stamps "paramID" on its slider for
+            // MIDI Learn, and a macro slider also carries the source tag, so
+            // checking paramID first silently dropped it from every SOURCE
+            // session (it matches none of the paramID sub-cases below). The
+            // wantSource guard keeps a DEST session's behaviour identical to
+            // before -- nothing here changes for the tag's other users (the
+            // LFO/ENV tab buttons and the Organic Chaos panel), none of which
+            // carry a paramID at all.
+            if (wantSource && c.getProperties().contains ("modSource"))
+            {
+                Target t; t.kind = Target::source; t.comp = &c;
+                t.modSourceValue = (int) c.getProperties()["modSource"];
+                targets.push_back (t);
+            }
+            else if (const auto paramID = c.getProperties()["paramID"].toString();
+                     paramID.isNotEmpty())
             {
                 const int menuRow = sourceMenuIds.indexOf (paramID);
                 const int destRow = destMenuIds.indexOf (paramID);
@@ -503,12 +519,6 @@ private:
                     Target t; t.kind = Target::destination; t.comp = &c; t.paramID = paramID;
                     targets.push_back (t);
                 }
-            }
-            else if (wantSource && c.getProperties().contains ("modSource"))
-            {
-                Target t; t.kind = Target::source; t.comp = &c;
-                t.modSourceValue = (int) c.getProperties()["modSource"];
-                targets.push_back (t);
             }
             else if (wantSource && c.getProperties().contains ("oscSlot"))
             {

@@ -179,6 +179,30 @@ private:
     DependentEnable rateEnable, divisionEnable;
 };
 
+// The four macros: one knob each, and nothing else. Lives as the fourth tab
+// beside LFO 1/2/3 (see SPASynthEditor's lfoTabs). The macro parameters have
+// existed and been wired as mod-matrix sources since the matrix landed, but
+// had no control anywhere in the UI, so a customer could route Macro 1 to a
+// destination and then find nothing that moved it short of host automation
+// (a tester asked exactly that on 1.0.21). This panel is that control.
+//
+// Each knob is ALSO an ASSIGN-mode source target -- unlike the LFO/ENV tab
+// buttons, one tab cannot stand in for four separate sources, so the tag
+// goes on the individual knobs. See the constructor for which component
+// carries the "modSource" property and why.
+class MacroPanel : public juce::Component
+{
+public:
+    explicit MacroPanel (juce::AudioProcessorValueTreeState&);
+    void resized() override;
+
+private:
+    // Plain-language reminder of what a macro is; the knobs carry the same
+    // wording as a tooltip.
+    juce::Label caption;
+    std::array<std::unique_ptr<Knob>, (size_t) params::numMacros> knobs;
+};
+
 // Organic Chaos: walker scope + master knobs + per-target drift strip.
 class ChaosPanel : public juce::Component,
                    private juce::AudioProcessorValueTreeState::Listener,

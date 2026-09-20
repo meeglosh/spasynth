@@ -804,6 +804,68 @@ void LFOPanel::resized()
     division.setBounds (divisionHalf.withSizeKeepingCentre (comboW, 22));
 }
 
+// ============================== MacroPanel =================================
+
+namespace
+{
+    // One sentence, used both as the panel caption and as every macro
+    // knob's tooltip, so the two can never drift apart.
+    const char* const macroExplanation =
+        "A macro is a hands-on control. Route it to anything in the mod matrix, "
+        "then move it yourself: from this knob, from your host's automation, or "
+        "from a MIDI controller.";
+}
+
+MacroPanel::MacroPanel (juce::AudioProcessorValueTreeState& apvts)
+{
+    caption.setText (macroExplanation, juce::dontSendNotification);
+    caption.setFont (metrics::smallFont());
+    caption.setJustificationType (juce::Justification::topLeft);
+    caption.setColour (juce::Label::textColourId, currentTheme().textSecondary);
+    caption.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (caption);
+
+    for (int m = 0; m < params::numMacros; ++m)
+    {
+        auto knob = std::make_unique<Knob> (apvts, id::macro (m),
+                                            "MACRO " + juce::String (m + 1), true);
+        knob->slider.setTooltip (macroExplanation);
+
+        // ASSIGN-mode source target. The property goes on the SLIDER, not on
+        // the Knob wrapper, so the component the overlay collects is a rotary
+        // juce::Slider and its paint() takes the ring-halo path every other
+        // knob in the UI gets (a wrapper is a plain Component, so it would
+        // fall through to the rectangular halo around the whole knob cell).
+        // This relies on AssignOverlay::rebuildTargets checking "modSource"
+        // BEFORE "paramID" -- every Knob stamps "paramID" on its slider for
+        // MIDI Learn, and the macros are the only control carrying both.
+        knob->slider.getProperties().set ("modSource", (int) params::ModSource::macro1 + m);
+
+        addAndMakeVisible (*knob);
+        knobs[(size_t) m] = std::move (knob);
+    }
+}
+
+void MacroPanel::resized()
+{
+    auto area = getLocalBounds().reduced (4, 2);
+
+    // Caption first, knobs in what's left -- same "labels reserve their
+    // height before the rest of the panel is laid out" order the FX panels
+    // use (see fxPanelLabelClippingTest), so a narrow window clips nothing.
+    caption.setBounds (area.removeFromTop (juce::jmin (34, area.getHeight() / 3)));
+
+    // The four knobs get an even quarter each. The band's height is capped
+    // so the rings stay the size of every other knob in the UI instead of
+    // bloating to fill this page, which has far fewer controls on it than
+    // its LFO neighbours.
+    auto row = area.withSizeKeepingCentre (area.getWidth(), juce::jmin (area.getHeight(), 78));
+    const auto cellW = row.getWidth() / params::numMacros;
+    for (int m = 0; m < params::numMacros; ++m)
+        knobs[(size_t) m]->setBounds (m == params::numMacros - 1 ? row
+                                                                 : row.removeFromLeft (cellW));
+}
+
 // ============================== ChaosPanel =================================
 
 ChaosPanel::ChaosPanel (SPASynthProcessor& p)

@@ -244,6 +244,10 @@ private:
     // Header.
     juce::TextButton prevPresetButton { "<" }, nextPresetButton { ">" };
     juce::TextButton presetNameButton, savePresetButton { "SAVE" };
+    // Patch-level sibling of SAVE: the same "Reset to Default" the settings
+    // menu has always offered, put somewhere people can actually find it
+    // (a tester asked for an init button; nobody thinks to click the logo).
+    juce::TextButton initButton { "INIT" };
     juce::TextButton randomizeButton { "RANDOMIZE ALL" };
     juce::Slider wildnessSlider;
     juce::Label wildnessLabel;

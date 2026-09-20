@@ -230,6 +230,7 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
         lfos[(size_t) i].noteOn (shared.lfo[(size_t) i]);
 
     chaosGen.prepare (random);
+    chaosRampPrimed = false;   // first chunk seeds the drive ramps, see computeChunk
     chaosDepth = baseValue (lookup.chaosDepth);
     chaosRate = baseValue (lookup.chaosRate);
     chaosMix = baseValue (lookup.chaosMix);
@@ -398,18 +399,54 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     chaosRate = denorm (eff, lookup.chaosRate);
     chaosMix = denorm (eff, lookup.chaosMix);
 
-    // Voice-wide chaos drives applied in the render loop.
-    chaosAmpGain = chaosActive && ch.ampOn
-                 ? 1.0f + chaosGen.value (ChaosGenerator::amp) * ch.ampAmount * 0.5f * chaosScale
-                 : 1.0f;
-    satDrive = chaosActive && ch.satOn
-             ? ch.saturation * chaosScale
-               * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::saturation))
-             : 0.0f;
-    distDrive = chaosActive && ch.distOn
-              ? ch.distortion * chaosScale
-                * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::distortion))
-              : 0.0f;
+    // Voice-wide chaos drives. These are TARGETS: the render loop ramps to
+    // them across the chunk rather than switching to them at the chunk edge,
+    // because the chaos walkers move far enough in one chunk that a step is
+    // an audible click (see the ramp members' comment in the header).
+    const auto ampTarget = chaosActive && ch.ampOn
+                         ? 1.0f + chaosGen.value (ChaosGenerator::amp) * ch.ampAmount
+                                  * 0.5f * chaosScale
+                         : 1.0f;
+    const auto satTarget = chaosActive && ch.satOn
+                         ? ch.saturation * chaosScale
+                           * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::saturation))
+                         : 0.0f;
+    const auto distTarget = chaosActive && ch.distOn
+                          ? ch.distortion * chaosScale
+                            * (0.6f + 0.4f * chaosGen.value (ChaosGenerator::distortion))
+                          : 0.0f;
+
+    if (! chaosActive || ! chaosRampPrimed)
+    {
+        // Chaos inactive: hold the neutral values exactly (gain 1.0, no
+        // drive), bit-identical to a build with no ramping at all, rather
+        // than relying on a ramp to converge on them. Also the first chunk
+        // of a note: seed at the target so the note does not open sliding in
+        // from wherever the previous note left this voice.
+        chaosAmpGain = chaosAmpGainTarget = ampTarget;
+        satDrive = satDriveTarget = satTarget;
+        distDrive = distDriveTarget = distTarget;
+        chaosAmpGainInc = satDriveInc = distDriveInc = 0.0f;
+        chaosRampPrimed = true;
+    }
+    else
+    {
+        // Resume exactly where the previous chunk's ramp ended (rather than
+        // from the accumulated value) so rounding cannot drift, then ramp to
+        // the new target over exactly this chunk's length.
+        const auto inv = 1.0f / (float) chunkLen;
+        chaosAmpGain = chaosAmpGainTarget;
+        satDrive = satDriveTarget;
+        distDrive = distDriveTarget;
+
+        chaosAmpGainInc = (ampTarget - chaosAmpGain) * inv;
+        satDriveInc = (satTarget - satDrive) * inv;
+        distDriveInc = (distTarget - distDrive) * inv;
+
+        chaosAmpGainTarget = ampTarget;
+        satDriveTarget = satTarget;
+        distDriveTarget = distTarget;
+    }
 
     // --- Configure DSP from effective values --------------------------------
     for (int s = 0; s < params::numOscSlots; ++s)
@@ -907,6 +944,13 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
             left[n] += outL * gain * unisonPanL;
             if (right != nullptr)
                 right[n] += outR * gain * unisonPanR;
+
+            // Advance the chaos drive ramps: one add each, no branches. The
+            // increments are zero whenever chaos is inactive, so this costs
+            // three adds and changes nothing in that case.
+            chaosAmpGain += chaosAmpGainInc;
+            satDrive     += satDriveInc;
+            distDrive    += distDriveInc;
 
             // A paraphonic voice frees itself only once the shared gate has
             // released and its level has reached zero; otherwise the voice's own

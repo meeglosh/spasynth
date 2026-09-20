@@ -1,5 +1,37 @@
 # SPASynth changelog
 
+## 1.0.22
+
+- Playing from the computer keyboard stopped as soon as you switched
+  between effects, and you had to click the on-screen keyboard to get it
+  back. Switching any tab group did it, not just the effects: bringing the
+  newly shown tab to the front quietly took keyboard focus away. Focus now goes straight back, so
+  QWERTY playing keeps working.
+- RANDOMIZE ALL now stops any sounding notes first. Holding a key and
+  hitting RANDOMIZE ALL could leave a note stuck on with no way to clear
+  it. Randomizing now releases everything first, the same way loading a
+  preset does. This came from feedback.
+- Added a MACRO tab, beside LFO 1 to 3. The four macro controls have always
+  existed as mod matrix sources, but there was no way to move them from
+  inside the plugin, so routing one did nothing unless your DAW automated
+  it. They now have knobs: route a macro in the matrix, then turn its knob,
+  automate it from the host, or assign a MIDI controller to it. They are
+  also selectable as sources in ASSIGN mode.
+- Added an INIT button to the top bar, next to SAVE. It returns every
+  parameter to the default patch. This was already available under the logo
+  menu as Reset to Default, which almost nobody found; that menu item is
+  still there. Note that it takes effect immediately with no confirmation,
+  the same as RANDOMIZE ALL.
+- Organic Chaos added a faint layer of grit, most audible on a clean tone.
+  Its internal drives were updating in steps rather than moving smoothly,
+  and each step was a tiny click. They now move smoothly between updates,
+  which removes that noise without changing how deep or how fast chaos
+  moves. This reduces the problem rather than eliminating it: we have
+  identified a second, related source that affects wavetable oscillators
+  specifically, and we will address that next.
+
+
+
 ## 1.0.21
 
 - Added a SMOOTH knob to each LFO. Stepped shapes like Square and Sample and

@@ -571,6 +571,8 @@ private:
             std::atomic<float>* chorusRate = nullptr;
             std::atomic<float>* chorusDepth = nullptr;
             std::atomic<float>* chorusFeedback = nullptr;
+            std::atomic<float>* chorusWidth = nullptr;
+            std::atomic<float>* chorusMode = nullptr;
             std::atomic<float>* chorusMix = nullptr;
             std::atomic<float>* delayEnable = nullptr;
             std::atomic<float>* delaySync = nullptr;

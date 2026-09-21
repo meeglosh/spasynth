@@ -350,6 +350,8 @@ namespace id
         inline constexpr const char* chorusRate     = "fxChorus.rate";
         inline constexpr const char* chorusDepth    = "fxChorus.depth";
         inline constexpr const char* chorusFeedback = "fxChorus.feedback";
+        inline constexpr const char* chorusWidth    = "fxChorus.width";
+        inline constexpr const char* chorusMode     = "fxChorus.mode";   // Vintage/Modern
         inline constexpr const char* chorusMix      = "fxChorus.mix";
 
         inline constexpr const char* delayEnable   = "fxDelay.enable";

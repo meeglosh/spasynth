@@ -667,6 +667,22 @@ static std::vector<ParamDef> buildCoreDefs()
     p.push_back ({ fx::chorusFeedback, "Chorus FB", Section::fxChorus,
                    ParamKind::floatParam, { -0.9f, 0.9f }, 0.0f, "",
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.6f } });
+    // WIDTH is the phase offset between the left and right chorus LFOs (see
+    // StereoChorus.h). Stored as a percentage because that is how it reads on
+    // the knob; the DSP wants 0..1 and the divide happens in exactly one
+    // place, SPASynthProcessor::updateFXParams. Default 50 rather than 0: at
+    // 0 both channels sweep together, which is precisely the mono, phaser-ish
+    // sound this control exists to fix, so shipping at 0 would reintroduce it.
+    p.push_back ({ fx::chorusWidth, "Chorus Width", Section::fxChorus,
+                   ParamKind::floatParam, { 0.0f, 100.0f }, 50.0f, "%",
+                   false, { .enabled = true, .biasCentre = 0.6f, .biasStrength = 0.3f } });
+    // Append-only (serialized): Vintage = index 0, Modern = index 1. Modern
+    // is the default because it is the closest match to the clean digital
+    // character of the juce::dsp::Chorus this engine replaced, so presets
+    // saved before the change shift as little as possible.
+    p.push_back ({ fx::chorusMode, "Chorus Mode", Section::fxChorus,
+                   ParamKind::choiceParam, {}, 1.0f /* Modern */, "",
+                   false, { .enabled = true }, { "Vintage", "Modern" } });
     p.push_back ({ fx::chorusMix, "Chorus Mix", Section::fxChorus,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.5f, "",
                    false, { .enabled = true, .biasCentre = 0.5f, .biasStrength = 0.3f } , {}, true});

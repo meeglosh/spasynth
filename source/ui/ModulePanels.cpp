@@ -1105,6 +1105,28 @@ FXPanel::FXPanel (juce::AudioProcessorValueTreeState& apvts, FXDisplay::Kind kin
             controls.findControlComponents (id::fx::delayDivision));
     }
 
+    // House-voice tooltips for the two controls the stereo chorus engine
+    // added (1.0.22): the registry-built grid gives them knobs and a combo
+    // but no explanation, and WIDTH in particular needs one -- it is the
+    // control that stops the chorus imaging as mono.
+    if (section == params::Section::fxChorus)
+    {
+        auto tip = [this] (const juce::String& paramID, const juce::String& text)
+        {
+            for (auto* c : controls.findControlComponents (paramID))
+                if (auto* t = dynamic_cast<juce::SettableTooltipClient*> (c))
+                    t->setTooltip (text);
+        };
+        tip (id::fx::chorusWidth,
+             "Spreads the left and right sides apart. At zero both sides move "
+             "together and the chorus sits in the middle; turn it up and the "
+             "sides sweep against each other for a wide stereo image.");
+        tip (id::fx::chorusMode,
+             "Vintage is the warm, slightly dark bucket-brigade sound of a "
+             "classic 80s polysynth. Modern is clean and digital, with a "
+             "longer, deeper sweep.");
+    }
+
     if (! enableParamIds.isEmpty())
         powerTracker = std::make_unique<TabEngagementTracker> (apvts,
             std::vector<std::pair<juce::String, std::vector<juce::String>>> {

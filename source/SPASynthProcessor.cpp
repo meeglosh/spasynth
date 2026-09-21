@@ -157,6 +157,8 @@ SPASynthProcessor::SPASynthProcessor()
         rf.chorusRate     = apvts.getRawParameterValue (fx::chorusRate);
         rf.chorusDepth    = apvts.getRawParameterValue (fx::chorusDepth);
         rf.chorusFeedback = apvts.getRawParameterValue (fx::chorusFeedback);
+        rf.chorusWidth    = apvts.getRawParameterValue (fx::chorusWidth);
+        rf.chorusMode     = apvts.getRawParameterValue (fx::chorusMode);
         rf.chorusMix      = apvts.getRawParameterValue (fx::chorusMix);
         rf.delayEnable    = apvts.getRawParameterValue (fx::delayEnable);
         rf.delaySync      = apvts.getRawParameterValue (fx::delaySync);
@@ -1413,6 +1415,11 @@ void SPASynthProcessor::updateFXParams()
     p.chorusRate     = rf.chorusRate->load();
     p.chorusDepth    = rf.chorusDepth->load();
     p.chorusFeedback = rf.chorusFeedback->load();
+    // The only percent -> 0..1 conversion for chorus width: the registry
+    // carries it as 0..100 % (that is how the knob reads), the DSP wants
+    // 0..1. Same shape as the loop-crossfade/LFO smooth+jitter conversions.
+    p.chorusWidth    = rf.chorusWidth->load() * 0.01f;
+    p.chorusMode     = (int) rf.chorusMode->load();
     p.chorusMix      = rf.chorusMix->load();
     p.delayEnable    = rf.delayEnable->load() >= 0.5f;
     p.delaySync      = rf.delaySync->load() >= 0.5f;

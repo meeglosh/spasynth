@@ -8,6 +8,7 @@
 #include "TremVib.h"
 #include "Limiter.h"
 #include "PlateReverb.h"
+#include "StereoChorus.h"
 #include "ParametricEQ.h"
 #include "../params/ParameterRegistry.h"
 
@@ -67,9 +68,11 @@ public:
         float distMix = 1.0f;
 
         bool chorusEnable = false;
+        int chorusMode = 1;         // 0 Vintage (Juno-ish) 1 Modern (clean)
         float chorusRate = 0.8f;
         float chorusDepth = 0.3f;
         float chorusFeedback = 0.0f;
+        float chorusWidth = 0.5f;   // 0..1 L/R LFO phase offset (see StereoChorus)
         float chorusMix = 0.5f;
 
         bool delayEnable = false;
@@ -268,7 +271,10 @@ private:
     std::array<float, 2> crushHold {};
     std::array<float, 2> crushPhase {};
 
-    juce::dsp::Chorus<float> chorus;
+    // Own engine rather than juce::dsp::Chorus: JUCE drives both channels
+    // from one LFO, so it images mono and there is no way to bolt a width
+    // control onto it from the outside. See StereoChorus.h.
+    StereoChorus chorusEffect;
 
     // Delay: fixed max 4 s ring buffer per channel.
     juce::AudioBuffer<float> delayBuffer;

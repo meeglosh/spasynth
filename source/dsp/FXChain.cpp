@@ -15,7 +15,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
         f.setType (juce::dsp::FirstOrderTPTFilterType::lowpass);
     }
 
-    chorus.prepare (spec);
+    chorusEffect.prepare (sampleRate, maxBlockSize);
     modEffect.prepare (sampleRate, maxBlockSize);
     tremVibEffect.prepare (sampleRate, maxBlockSize);
     limiterEffect.prepare (sampleRate, maxBlockSize);
@@ -45,7 +45,7 @@ void FXChain::reset()
         f.reset();
     crushHold.fill (0.0f);
     crushPhase.fill (0.0f);
-    chorus.reset();
+    chorusEffect.reset();
     modEffect.reset();
     tremVibEffect.reset();
     limiterEffect.reset();
@@ -90,7 +90,11 @@ void FXChain::process (juce::AudioBuffer<float>& buffer, const Params& params)
         switch (module)
         {
             case Module::distortion: if (params.distEnable)   processDistortion (buffer, params); break;
-            case Module::chorus:     if (params.chorusEnable) processChorus (buffer, params); break;
+            // Always invoked, for the same reason as Module::mod below:
+            // StereoChorus tracks its own enable edge so it can clear a hot
+            // delay line + feedback state on re-enable rather than ringing
+            // it back out. The disabled path is a cheap early-out.
+            case Module::chorus:     processChorus (buffer, params); break;
             case Module::delay:      if (params.delayEnable)  processDelay (buffer, params); break;
             case Module::reverb:     if (params.reverbEnable) processReverb (buffer, params); break;
             case Module::eq:         if (params.eqEnable)     processEQ (buffer, params); break;
@@ -173,14 +177,15 @@ void FXChain::processDistortion (juce::AudioBuffer<float>& buffer, const Params&
 
 void FXChain::processChorus (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    chorus.setRate (p.chorusRate);
-    chorus.setDepth (p.chorusDepth);
-    chorus.setCentreDelay (7.0f);
-    chorus.setFeedback (p.chorusFeedback);
-    chorus.setMix (p.chorusMix);
-
-    juce::dsp::AudioBlock<float> block (buffer);
-    chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
+    StereoChorus::Params cp;
+    cp.enable = p.chorusEnable;   // StereoChorus early-outs and tracks the edge
+    cp.mode = p.chorusMode == 0 ? StereoChorus::Mode::vintage : StereoChorus::Mode::modern;
+    cp.rateHz = p.chorusRate;
+    cp.depth = p.chorusDepth;
+    cp.feedback = p.chorusFeedback;
+    cp.width = p.chorusWidth;
+    cp.mix = p.chorusMix;
+    chorusEffect.process (buffer, cp);
 }
 
 void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)

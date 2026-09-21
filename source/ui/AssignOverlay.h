@@ -474,6 +474,36 @@ private:
 
         std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
         {
+            // An INVISIBLE component must never be an assign target, and its
+            // whole subtree is skipped with it (the recursion is at the end
+            // of this lambda, so returning here does both).
+            //
+            // The mechanism this guards against, found by a tester: OscStrip
+            // (ModulePanels.cpp) builds the knob set for EVERY engine up
+            // front with addChildComponent (added, NOT visible) and its
+            // resized() only lays out the knobs of the currently selected
+            // mode. A hidden knob therefore keeps whatever bounds it last
+            // had. Switch an oscillator from Pluck to FM and the hidden
+            // "Pluck Damp" knob is still sitting exactly on the grid cell
+            // the visible "FM Ratio" knob now occupies -- and since FM Ratio
+            // is not a mod destination at all while Pluck Damp is, clicking
+            // the visible knob collected and assigned the hidden one. The
+            // same shadowing is possible anywhere in the tree, so the rule
+            // is general rather than osc-specific.
+            //
+            // isVisible(), NOT isShowing(): isShowing() additionally requires
+            // every parent to be visible AND the component to sit on a
+            // visible desktop window. Tests build editors off-desktop, so
+            // isShowing() would collect nothing and silently gut the whole
+            // ASSIGN suite. Parent visibility is already handled -- we never
+            // recurse into an invisible subtree.
+            //
+            // The root itself is exempt: it is the walk's entry point (the
+            // ContentComponent passed to setAssignMode) and its own
+            // visibility is not a statement about the controls inside it.
+            if (&c != rootComponent && ! c.isVisible())
+                return;
+
             if (! isScrolledIntoView (c))
                 return;
 

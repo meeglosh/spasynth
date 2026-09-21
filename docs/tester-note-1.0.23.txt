@@ -1,0 +1,20 @@
+SPASynth 1.0.23 - what's new since 1.0.22
+
+This round is fixes from the 1.0.22 feedback, including the reverb question.
+
+- Reverb. The old mix bug did not come back: nothing about the reverb or its mix control has changed since 1.0.15. What we did find, and have fixed, is that four of the five modes (Plate, Chamber, Room and Spring) were louder than Hall, by up to about double, so switching away from Hall at the same MIX made the reverb jump. Those four are now trimmed to match Hall; Hall itself, the default, is unchanged, and factory presets using the other four have had their reverb amount adjusted to keep their balance. The reverb's low cut and high cut also drifted low at 96 kHz or with oversampling on; they now track the session rate.
+- Chorus is now genuinely stereo, with a WIDTH control and a Vintage / Modern mode. The old chorus moved both channels together, so it imaged as mono and could read as a phaser. WIDTH sets how far apart the two channels move, from together at 0 to fully opposed at 100; Vintage is modelled on the bucket-brigade chorus of an early-80s analogue polysynth, darker and swirlier, and Modern is clean and full-bandwidth. Defaults are Modern and WIDTH 50, so existing presets pick up the width. That change to existing presets is intended.
+- ASSIGN could pick a hidden control. In DEST mode, clicking a knob could assign a parameter hidden underneath it, left over from a previous oscillator engine, so choosing FM Ratio could write Pluck Damp. Hidden controls are no longer assignable.
+- An oscillator could go silent at BLEND 0 with an even unison count, because there was no centre voice to fall back on. The innermost pair now stands in for the centre, so BLEND at 0 still sounds.
+- Not in this build: the delay ping-pong WIDTH request. It is still on the list.
+
+Worth trying specifically
+- Reverb: pick a patch and compare Hall against Plate, Chamber, Room and Spring at the same MIX setting; confirm they now sit at a similar level. Then tell us whether the mix on Hall itself, which is unchanged, still feels too sensitive. If it does, that is a taste decision about the default level rather than a fault, and we would like your view on it.
+- Chorus on a pad, in both Vintage and Modern, with WIDTH swept from 0 to 100. Listen for it going from mono to wide, and for Vintage being darker and swirlier than Modern.
+- ASSIGN: put an oscillator in Pluck, switch it to FM, then DEST-assign INDEX and confirm the matrix shows FM Index, not a Pluck parameter. Note that RATIO is not a modulation target, so clicking it in DEST mode now selects nothing; before this fix it silently picked the hidden Pluck Damp underneath it.
+- Set an even unison count (2, 4, 6 or 8), turn BLEND fully down, and confirm the oscillator still makes sound.
+
+Install notes
+- macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.
+- Factory presets refresh themselves on the first scan after installing, to pick up the reverb level adjustment.

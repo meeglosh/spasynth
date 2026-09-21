@@ -1,5 +1,42 @@
 # SPASynth changelog
 
+## 1.0.23
+
+- Reverb: the five modes now sit at a consistent level, and the tone
+  filters no longer drift with sample rate. The reverb engine and its mix
+  control have not changed since 1.0.15; what we found instead was that
+  four of the five modes (Plate, Chamber, Room and Spring) were running
+  hotter than Hall, by up to about double, against the level they were
+  meant to share. They are now trimmed to match Hall exactly, and Hall
+  itself, the default, is unchanged. Factory presets using those four
+  modes have had their reverb amount adjusted so every preset keeps the
+  balance it had, and factory presets will refresh themselves on the next
+  scan. Separately, the reverb's low cut and high cut were tuned for 48 kHz
+  only, so at 96 kHz or with oversampling on they landed an octave or more
+  low; they now track the session rate.
+- Chorus: now genuinely stereo, with a WIDTH control and a Vintage /
+  Modern mode. The old chorus moved both channels together, so it imaged
+  as mono and could read as a phaser; WIDTH sets how far apart the two
+  channels move, from together at 0 to fully opposed at 100. Vintage is
+  modeled on the classic bucket-brigade chorus of an early-80s analog
+  polysynth: short delay, gentle high-frequency rolloff, and the two sides
+  in opposite phase for that wide swirl, while Modern is clean and
+  full-bandwidth. Defaults are Modern and WIDTH 50, so existing presets
+  pick up the stereo width; this changes how their chorus sounds, and that
+  is intended. This came from feedback.
+- ASSIGN could pick a hidden control. In DEST mode, clicking a knob could
+  assign a different parameter that was hidden underneath it, one left
+  over from a previous oscillator engine, so for example choosing FM Ratio
+  could write Pluck Damp. Hidden controls are no longer assignable. This
+  came from feedback.
+- An oscillator could go silent at BLEND 0 with an even unison count. With
+  an even number of unison voices there is no center voice, so turning
+  BLEND fully down muted everything. The innermost pair now stands in for
+  the center, so BLEND at 0 still sounds. This is also reachable by
+  modulation, which is how we found it.
+
+
+
 ## 1.0.22
 
 - Playing from the computer keyboard stopped as soon as you switched

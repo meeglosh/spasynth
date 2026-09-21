@@ -4,6 +4,7 @@
 #include "../params/ParameterRegistry.h"
 
 #include <array>
+#include <cmath>
 
 namespace spa::dsp
 {
@@ -71,6 +72,22 @@ public:
 
         float gainNorm = 0.0f;
 
+        // BLEND is the level of the DETUNED voices relative to the centre, so
+        // something must always hold the centre at unity or BLEND=0 is silence.
+        // The spread below only lands exactly on 0 for an ODD count; an even
+        // count has no middle voice, so the innermost symmetric PAIR stands in
+        // for it. Selecting those by index rather than by comparing a float
+        // spread against zero is exact (no epsilon to tune) and, for odd
+        // counts, picks precisely the same single u == spread-0 voice as
+        // before -- odd-count behaviour is bit-for-bit unchanged.
+        const auto centreLo = (count - 1) / 2;   // == centreHi when count is odd
+        const auto centreHi = count / 2;         // == centreLo == 0 when count is 1
+
+        // Defensive only: the modulated value arrives already clamped to the
+        // parameter's 0..1 range, so this is a no-op on real input. It exists
+        // so a non-finite or out-of-range BLEND can never poison gainNorm.
+        const auto blend = std::isfinite (p.blend) ? juce::jlimit (0.0f, 1.0f, p.blend) : 0.0f;
+
         for (int u = 0; u < count; ++u)
         {
             // Symmetric spread in [-1, 1]; single voice sits at 0.
@@ -79,8 +96,8 @@ public:
                             * std::exp2 (p.detuneCents * spread * 0.5f / 1200.0f);
             increments[(size_t) u] = (double) freq / sampleRate;
 
-            const auto isCentre = spread == 0.0f || count == 1;
-            const auto gain = isCentre ? 1.0f : p.blend;
+            const auto isCentre = u == centreLo || u == centreHi;
+            const auto gain = isCentre ? 1.0f : blend;
             gainNorm += gain * gain;
 
             // Equal-power pan: unison spread combined with slot pan.
@@ -90,7 +107,10 @@ public:
             gainR[(size_t) u] = gain * std::sin (angle);
         }
 
-        // Keep perceived level constant as voices stack.
+        // Keep perceived level constant as voices stack. gainNorm is now
+        // structurally >= 1: centreLo is always a valid index and that voice's
+        // gain is the literal 1.0f, never BLEND, so the gains can never all be
+        // zero however BLEND's range changes. The guard stays anyway.
         const auto norm = gainNorm > 0.0f ? 1.0f / std::sqrt (gainNorm) : 1.0f;
         for (int u = 0; u < count; ++u)
         {

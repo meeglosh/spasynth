@@ -10,6 +10,123 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-21): v1.0.23 (main `b6425d6`) built + staged; reverb normalised + retuned, stereo chorus, ASSIGN hidden-control fix, even-unison silence fix
+
+**1.0.22 (`24fa573`, 2026-09-20) WAS SENT to the testers** and never got its
+own section; the recap: tab-switch QWERTY fix (JUCE
+`TabbedComponent::changeCallback` -> `toFront(true)` -> `grabKeyboardFocus()`
+with `focusChangedDirectly`, which the `dontFocusOnMouseClickFlag` guard
+cannot stop; focus is handed back from the tab-bar change listener);
+RANDOMIZE ALL note-off under the callback lock; MACRO tab beside LFO 1/2/3
+(the knobs are their own ASSIGN sources; `AssignOverlay` tests `modSource`
+before `paramID`); INIT button reusing the logo menu's `resetToDefault()`;
+chaos voice-wide drives (amp/sat/dist) ramped across the 64-sample chunk
+(was a 750Hz staircase). **Known remaining from that round, unfixed:**
+`chaosPhase` steps into `WavetableOscillator::phaseOffset` (step index 50.55
+at default, wavetable only); Paul was asked which oscillator type his "sine
+wav" was.
+
+**1.0.23 = five separate commits so each is revertable alone**: `7a5c32a`
+assign, `0f02be8` unison, `d6b6d09` chorus, `52f94ed` reverb + the whole
+shared test file, `b6425d6` chore. Phil's 1.0.22 report had four items;
+three are in, one is not.
+
+1. **Reverb -- the important one.** Phil: "the reverb mix bug we had in the
+   past has returned"; Mike demanded a root cause ("why did you touch reverb
+   at all"). Verdict: **NOT a regression.** `PlateReverb.h` is byte-identical
+   from 1.0.15 (signed off by Mike, Paul, Phil) through 1.0.22; FXChain's
+   only edits since are Convolve start-position; registry, processor
+   publish, presets, limiter, oversampling default and the JUCE submodule
+   are all unchanged. What happened: the 1.0.6 fix Phil remembers was on the
+   **FDN reverb under an equal-power mix law** (`dry = cos theta, wet = sin
+   theta`); **1.0.15 replaced both** with the plate engine and a **linear**
+   law, deliberately and changelogged ("instead of the more sensitive curve
+   REVERB used before"). That approved configuration is what he hears. The
+   genuine defect, found by measurement: `PlateReverb`'s comment says every
+   mode was scaled to the 1.0.6 target (wet peak ~1.5-1.8 on the canonical
+   0.5 burst), but on that burst Hall was ON target (1.557) while Plate was
+   2.47, Chamber 2.47, Room 1.89, Spring 3.32, and the only guard was
+   `peak < 4.0`. Fix: `modeLevelTrim` (Plate 0.6297, Chamber 0.6307, Room
+   0.8226, Spring 0.4696) on the wet tap only; mode spread 2.13x -> 1.00x;
+   RT60 and spectral centroid per mode identical to every printed digit;
+   **Hall unchanged** (Mike's explicit decision: "Hall as the default is
+   fine"). Also `onePoleCoef` hardcoded 48000 while FXChain runs at the
+   engine rate, so the low/high cuts landed an octave low at 96k and under
+   oversampling -- now a member using `sampleRate`; 48k output bit-identical
+   (FNV `caa94beeea734644`). Factory recipe `reverbMix` for the four trimmed
+   modes scaled by `mix' = mix / (mix + t(1-mix))` so every preset keeps its
+   balance within 0.03 dB; `factoryRecipeVersion` 7 -> 8 (`PresetManager.h:116`)
+   so installs regenerate. Pinned by `reverbNormalisationTest` + a re-pinned
+   `reverbMixTaperTest` + a per-mode band check replacing `peak < 4.0`.
+   **Measurement lesson:** the suite has TWO 0.5-amplitude bursts.
+   `reverbMixTest`'s (independent L/R noise) is the 1.0.6 reference method;
+   `reverbMixTaperTest`'s (identical noise on L and R) feeds the mono tank
+   sum 3 dB hotter. An earlier "Hall is ~3 dB hot" reading came from the
+   wrong one. Always state which burst a reverb level number came from.
+   **Open product question, not a bug:** Phil's complaint is about the
+   default mode, and Hall is at the approved level under the approved law.
+   Making it less touchy means going below the 1.0.6 reference or revisiting
+   the linear law (a considered 1.0.15 decision). The tester note asks Phil
+   for a mode-consistency A/B and his view on Hall.
+2. **Chorus replaced** (`source/dsp/StereoChorus.h`, header-only).
+   `juce::dsp::Chorus` drove both channels from one LFO (mono, phaser-like,
+   no per-channel phase to widen). New: two modulated delay lines with LFOs
+   offset by **WIDTH** (0 in phase, 100 fully opposed); **Vintage** = ~5ms
+   centre, triangle LFO, 7kHz one-pole on the wet, bounded saturation, wet
+   inverted on the right (Juno 106 signature); **Modern** = sine LFO, 12ms
+   centre + 8ms second tap, full bandwidth. New params `fx::chorusWidth`
+   (0-100%, default 50) and `fx::chorusMode` (choices {Vintage, Modern},
+   default Modern, **APPEND-ONLY**). Defaults chosen so existing presets
+   shift least while not shipping the mono sound. Measured L/R correlation
+   1.0000 at width 0 -> 0.0113 at max; Vintage 43% less HF than Modern.
+   Feedback clamped +/-0.85. Existing presets' chorus sounds different
+   (wider); intended. The Vintage/Modern tuning numbers are taste and unheard.
+3. **ASSIGN picked hidden controls.** `AssignOverlay::rebuildTargets` had no
+   visibility check; `OscStrip` keeps every engine's knob set alive with
+   stale bounds, so hidden Pluck Damp sat under the visible FM Ratio.
+   Early-return for non-root invisible components, `isVisible()` not
+   `isShowing()` (off-desktop test editors). Reproduced: the reverted fix
+   selects `oscC.pluckDamp`. Side effect: controls on non-fronted tabs are
+   no longer targets, which is correct.
+4. **Even unison count + BLEND 0 = silent oscillator.** `isCentre = (spread
+   == 0)` was only ever true for odd counts. Now index-based
+   `centreLo/centreHi` = the innermost pair for even, the identical single
+   voice for odd (bit-identical). Centre gain is the literal 1.0f so
+   `gainNorm >= 1` for any BLEND. At count 2 BLEND now has no effect (both
+   voices are the pair) -- a judgement about intent, worth an audition.
+   Found by `randomizeNeverSilentTest` seed 92 after the new randomizable
+   params reshuffled the RNG -- the same mechanism that exposed the arp
+   test in 1.0.20. **Rule: adding any randomizable param reshuffles seeds
+   and can surface latent bugs; that is the guard working, not noise.**
+
+**NOT in 1.0.23:** delay ping-pong WIDTH (Phil's item 1) -- never started;
+the tester note says so.
+
+Suite **1904 -> 1977 assertions ALL PASS**, Debug + Release + **ASan x3**
+(1976 under ASan); every fix verified to FAIL with itself reverted.
+**macOS 1.0.23 pkg** signed + notarized + stapled, `spctl` accepted,
+universal, minos 11.0,
+macOS md5 `f3de568635723570d2cb4724ab179d61`
+Windows md5 `6fffe0e373d8acbe76ca44a0de2e5499` (`ci-windows-b6425d6`, CI run `35663687985`)
+Both byte-identical across `dist/installers/` and
+`dist/shopify/SPASynth-{Standard,Pro}-1.0.23/`. Repo is PUBLIC. Paste-ready
+tester note: `docs/tester-note-1.0.23.txt`.
+
+**Pending: Mike installs the 1.0.23 pkg (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.23-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic;
+factory presets regenerate on first scan), runs the gauntlet, and sends
+both installers + the note to Paul and Phil. Bump to 1.0.24 for anything
+after that.**
+
+**Agent-management notes**: the reverb agent hit a scope wall (the version
+constant lives in `PresetManager.h`, not the .cpp) and correctly stopped
+instead of editing outside its file list -- the brief was amended for that
+one line. The docs agent wrote a tester instruction to "DEST-assign Ratio",
+which cannot succeed because Ratio is not a mod destination; caught in
+review and pointed at Index. Lesson: tester-note instructions must be
+checked against what is actually assignable.
+
 ## Current state (2026-09-19): v1.0.21 (main `177a626`) built + staged; LFO SMOOTH and JITTER, chaos division menu fix
 
 **1.0.20 WAS SENT to the testers**, so 1.0.21 is a genuine bump. A tester

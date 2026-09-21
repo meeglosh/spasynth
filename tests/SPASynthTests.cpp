@@ -11,6 +11,7 @@
 #include "dsp/SamplePlayer.h"
 #include "dsp/WavetableFactory.h"
 #include "dsp/WavetableLoader.h"
+#include "dsp/WavetableOscillator.h"
 #include "library/Library.h"
 #include "library/PresetManager.h"
 #include "params/ParameterRegistry.h"
@@ -3661,13 +3662,14 @@ namespace
         expect (dry1 < 0.1f,
                 "reverb mix 1 removes the dry, full wet (" + juce::String (dry1) + ")");
 
-        // Regression guard for the FDN wet-gain fix: at registry-default reverb
-        // settings (size 0.5, decay 2.0, damping 0.5, mode Hall -- FX::Params'
-        // defaults already mirror ParameterRegistry) and mix=1 (raw wet path
-        // only), a short 0.5-amplitude noise burst must not blow the wet path
-        // up past roughly the input scale. Fixed code measures ~1.8 here (old
-        // unnormalized injection/tap measured ~6x); bound gives ~2x headroom
-        // while staying well under the old hot behaviour.
+        // The approved wet level: at registry-default reverb settings (size
+        // 0.5, decay 2.0, damping 0.5, mode Hall -- FX::Params' defaults
+        // mirror ParameterRegistry) and mix=1 (raw wet path only), a short
+        // 0.5-amplitude noise burst peaks in the 1.5-1.8 band the 1.0.6
+        // FDN normalisation established and the testers signed off. The
+        // Dattorro plate engine measures 1.557 here. The old `< 4.0` guard
+        // was loose enough to wave through the pre-normalisation plate
+        // levels (2.4-3.3 on the other modes); this is the real band check.
         {
             FX fx;
             fx.prepare (sr, n);
@@ -3700,9 +3702,58 @@ namespace
                     for (int s = 0; s < n; ++s)
                         peak = juce::jmax (peak, std::abs (buf.getSample (ch, s)));
             }
-            expect (peak < 4.0f,
-                    "default-settings full-wet burst stays near input scale (peak "
+            expect (peak >= 1.45f && peak <= 1.85f,
+                    "default-settings full-wet burst peak is in the approved 1.5-1.8 band +/-0.05 (peak "
                     + juce::String (peak) + ")");
+        }
+
+        // The same burst for EVERY mode: each must sit in the approved band
+        // (a return to the pre-normalisation 2.4-3.3 fails outright) and
+        // the modes must stay level with each other (max/min < 1.12; they
+        // were spread 2.13:1 before PlateReverb::modeLevelTrim).
+        {
+            float minPeak = 1.0e9f, maxPeak = 0.0f;
+            for (int mode = 0; mode < 5; ++mode)
+            {
+                FX fx;
+                fx.prepare (sr, n);
+                FX::Params mp;
+                mp.reverbEnable = true;
+                mp.reverbMode = mode;
+                mp.reverbMix = 1.0f;
+
+                uint32_t rng = 99999u;
+                auto noise = [&rng]
+                {
+                    rng = rng * 1664525u + 1013904223u;
+                    return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+                };
+
+                float peak = 0.0f;
+                const int blocks = (int) (1.0 * sr / n);
+                const int exciteBlocks = (int) (0.2 * sr / n);
+                juce::AudioBuffer<float> buf (2, n);
+                for (int b = 0; b < blocks; ++b)
+                {
+                    buf.clear();
+                    if (b < exciteBlocks)
+                        for (int s = 0; s < n; ++s)
+                        {
+                            buf.setSample (0, s, noise() * 0.5f);
+                            buf.setSample (1, s, noise() * 0.5f);
+                        }
+                    fx.process (buf, mp);
+                    peak = juce::jmax (peak, buf.getMagnitude (0, n), buf.getMagnitude (1, n));
+                }
+                minPeak = juce::jmin (minPeak, peak);
+                maxPeak = juce::jmax (maxPeak, peak);
+                expect (peak >= 1.45f && peak <= 1.85f,
+                        "reverb mode " + juce::String (mode) + " full-wet burst peak is in the approved 1.5-1.8 band (peak "
+                        + juce::String (peak) + ")");
+            }
+            expect (maxPeak / minPeak < 1.12f,
+                    "reverb modes stay level with each other (max/min burst peak "
+                    + juce::String (maxPeak / minPeak) + ")");
         }
     }
 
@@ -4070,6 +4121,244 @@ namespace
                 expect (lastPeak < 1.0e-12f,
                         "reverb tail settles below audibility by 30s (last block peak "
                         + juce::String (lastPeak, 15) + ")");
+            }
+        }
+    }
+
+    // Pins the reverb MIX taper -- the wet/dry balance ALONG the knob, not
+    // just at its endpoints (reverbMixTest already covers "0 is unity dry,
+    // 1 has no dry"). Nothing else asserts anything about the middle of
+    // the range, which is exactly where a change to the mix law or to the
+    // wet path's structural gain would show up.
+    //
+    // THESE CONSTANTS PIN THE APPROVED LEVEL. The wet path is normalised to
+    // the 1.0.6 target (every mode's 0.5-amplitude burst peaks at ~1.56 on
+    // reverbMixTest's burst; PlateReverb::modeLevelTrim brought Plate,
+    // Chamber, Room and Spring down to Hall's level, Hall itself was
+    // already on target and is unchanged). On THIS test's burst -- which
+    // feeds the SAME noise to L and R, so the mono sum into the tank is
+    // 3 dB hotter than reverbMixTest's independent-channel burst -- that
+    // reads as wet/dry of +8.9 dB (Hall) / +6.6 dB (Plate) at MIX 100 %
+    // for the whole event, +13.6 / +12.0 dB for a sustained tone at steady
+    // state, and parity at MIX ~0.26 (Hall burst) / ~0.32 (Plate burst).
+    // A deliberate re-balance must re-measure and update these as part of
+    // the same change, together with the factory recipe's reverbMix
+    // compensation (factoryRecipeVersion) -- see reverbNormalisationTest.
+    //
+    // Method: PlateReverb applies mix as the very last step
+    // (out = dry*(1-mix) + wet*mix) and the tank is fed from the input
+    // regardless of mix, so the wet signal is identical at every mix
+    // setting. Rendering the same input once at mix=0 (bit-exact dry) and
+    // once at mix=1 (pure wet) therefore recovers the two paths separately,
+    // and the output at any mix is exactly (1-mix)*dry + mix*wet. The first
+    // assertion verifies that identity numerically rather than assuming it.
+    //
+    // Tolerances: the measured quantities moved by less than 0.01 dB across
+    // block sizes 64..1024 and less than 0.05 dB across 44.1/48/96 kHz, so
+    // +/-0.5 dB is more than ten times any observed numerical drift while
+    // still catching anything real: swapping the linear law for the old
+    // equal-power crossfade moves the mid-knob ratios by 2-6 dB, and any
+    // re-normalisation of the wet path moves every point by its own size
+    // (the 4 dB Plate trim, for one, is eight tolerances wide).
+    static void reverbMixTaperTest()
+    {
+        std::cout << "reverbMixTaperTest\n";
+        using FX = spa::dsp::FXChain;
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr double totalSec = 3.0;
+        const int totalSamples = (int) (totalSec * sr);
+
+        // burst: 0.2s of 0.5-amplitude white noise then silence, measured
+        // over the whole 3s so the dry event and the tail it excites are
+        // both inside one window (an energy balance for a transient).
+        // tone: a continuous 0.5-amplitude 220Hz sine, measured over the
+        // final second only, so the tank is at steady state (a balance for
+        // sustained material). Same amplitude for both, so the dry
+        // references are directly comparable.
+        enum class Signal { burst, tone };
+
+        // Renders the reverb alone at all-default reverb settings (FX::Params
+        // mirrors the registry: Hall, size 0.5, decay 2s, damp 0.5, mod 0.2,
+        // width 1, pre-delay 20ms, low cut 20Hz, high cut 12kHz) and returns
+        // L then R concatenated, from `fromSample` to the end.
+        auto render = [&] (int mode, float mix, Signal sig, int fromSample)
+        {
+            FX fx;
+            fx.prepare (sr, block);
+            FX::Params p;
+            p.reverbEnable = true;
+            p.reverbMode = mode;
+            p.reverbMix = mix;
+
+            uint32_t rng = 7777u;
+            auto noise = [&rng]
+            {
+                rng = rng * 1664525u + 1013904223u;
+                return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+            };
+
+            const int exciteSamples = (int) (0.2 * sr);
+            std::vector<float> outL, outR;
+            outL.reserve ((size_t) juce::jmax (1, totalSamples - fromSample));
+            outR.reserve (outL.capacity());
+
+            juce::AudioBuffer<float> buf (2, block);
+            for (int done = 0; done < totalSamples; done += block)
+            {
+                buf.clear();
+                for (int s = 0; s < block; ++s)
+                {
+                    const int idx = done + s;
+                    const float x = sig == Signal::burst
+                                      ? (idx < exciteSamples ? noise() * 0.5f : 0.0f)
+                                      : 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi
+                                                                 * 220.0 * (double) idx / sr);
+                    buf.setSample (0, s, x);
+                    buf.setSample (1, s, x);
+                }
+                fx.process (buf, p);
+                for (int s = 0; s < block; ++s)
+                {
+                    const int idx = done + s;
+                    if (idx < fromSample || idx >= totalSamples) continue;
+                    outL.push_back (buf.getSample (0, s));
+                    outR.push_back (buf.getSample (1, s));
+                }
+            }
+            outL.insert (outL.end(), outR.begin(), outR.end());
+            return outL;
+        };
+
+        auto rmsOf = [] (const std::vector<float>& v)
+        {
+            double sum = 0.0;
+            for (float x : v) sum += (double) x * (double) x;
+            return std::sqrt (sum / (double) juce::jmax ((size_t) 1, v.size()));
+        };
+        auto peakOf = [] (const std::vector<float>& v)
+        {
+            double pk = 0.0;
+            for (float x : v) pk = juce::jmax (pk, (double) std::abs (x));
+            return pk;
+        };
+        auto ratioDb = [] (double a, double b)
+        {
+            return 20.0 * std::log10 (juce::jmax (1.0e-12, a) / juce::jmax (1.0e-12, b));
+        };
+        auto nearDb = [] (double measured, double expected, double tolDb)
+        {
+            return std::abs (measured - expected) <= tolDb;
+        };
+
+        constexpr int hall = 0, plate = 1;
+        const int toneFrom = (int) (2.0 * sr);
+
+        // 1) The decomposition identity the rest of the test relies on.
+        {
+            const auto d0 = render (hall, 0.0f, Signal::burst, 0);
+            const auto w1 = render (hall, 1.0f, Signal::burst, 0);
+            double worst = 0.0;
+            for (float mix : { 0.3f, 0.5f, 0.8f })
+            {
+                const auto actual = render (hall, mix, Signal::burst, 0);
+                double e = 0.0;
+                for (size_t i = 0; i < actual.size(); ++i)
+                    e = juce::jmax (e, std::abs ((double) actual[i]
+                                                 - ((1.0 - mix) * d0[i] + mix * w1[i])));
+                worst = juce::jmax (worst, e);
+            }
+            expect (worst < 1.0e-5,
+                    "reverb output is exactly (1-mix)*dry + mix*wet (worst deviation "
+                    + juce::String (worst, 9) + ")");
+        }
+
+        // 2) Raw wet-vs-dry level (the wet at MIX 1.0 against the dry at MIX
+        // 0.0) and the MIX at which the two reach parity, for the default
+        // mode and one other. The parity point follows from the ratio
+        // because the law is linear: mix* = 1 / (1 + wet/dry).
+        struct Pin { int mode; Signal sig; const char* name; double expectDb; };
+        const Pin pins[] = {
+            { hall,  Signal::burst, "hall/burst",  8.939 },
+            { hall,  Signal::tone,  "hall/tone",  13.564 },
+            { plate, Signal::burst, "plate/burst",  6.617 },
+            { plate, Signal::tone,  "plate/tone",  11.964 },
+        };
+
+        for (const auto& pin : pins)
+        {
+            const int from = pin.sig == Signal::burst ? 0 : toneFrom;
+            const auto dry = render (pin.mode, 0.0f, pin.sig, from);
+            const auto wet = render (pin.mode, 1.0f, pin.sig, from);
+            const double d = rmsOf (dry), w = rmsOf (wet);
+            const double wOverD = ratioDb (w, d);
+            const double cross = 1.0 / (1.0 + w / juce::jmax (1.0e-12, d));
+
+            std::cout << "    " << pin.name << ": dry RMS " << juce::String (d, 6)
+                      << ", wet RMS " << juce::String (w, 6)
+                      << ", wet/dry " << juce::String (wOverD, 3)
+                      << " dB, wet peak " << juce::String (peakOf (wet), 4)
+                      << ", parity at mix " << juce::String (cross, 4) << "\n";
+
+            expect (nearDb (wOverD, pin.expectDb, 0.5),
+                    juce::String (pin.name) + " wet(mix 1.0) vs dry(mix 0.0) is "
+                    + juce::String (pin.expectDb, 2) + " dB (measured "
+                    + juce::String (wOverD, 3) + ")");
+        }
+
+        // The parity points, pinned on their own so a regression names them.
+        {
+            const double burstCross = [&]
+            {
+                const double d = rmsOf (render (hall, 0.0f, Signal::burst, 0));
+                const double w = rmsOf (render (hall, 1.0f, Signal::burst, 0));
+                return 1.0 / (1.0 + w / d);
+            }();
+            const double toneCross = [&]
+            {
+                const double d = rmsOf (render (hall, 0.0f, Signal::tone, toneFrom));
+                const double w = rmsOf (render (hall, 1.0f, Signal::tone, toneFrom));
+                return 1.0 / (1.0 + w / d);
+            }();
+            expect (std::abs (burstCross - 0.2633) <= 0.02,
+                    "hall burst: wet equals dry at mix 0.263 (measured "
+                    + juce::String (burstCross, 4) + ")");
+            expect (std::abs (toneCross - 0.1734) <= 0.02,
+                    "hall sustained tone: wet equals dry at mix 0.173 (measured "
+                    + juce::String (toneCross, 4) + ")");
+        }
+
+        // 3) The taper itself, measured independently of the decomposition:
+        // the TOTAL rendered output at each knob position against the dry-
+        // only reference. These are real renders at each mix, so they pin
+        // the combined effect of the dry law, the wet law and the wet
+        // path's gain, not arithmetic derived from the endpoints. Noise
+        // burst only -- a sustained tone partially cancels against its own
+        // wet image at low mix, which is a phase-sensitive quantity and a
+        // poorer tripwire.
+        struct TaperPoint { float mix; double expectDb; };
+        const TaperPoint hallTaper[] = {
+            { 0.1f, -0.514 }, { 0.2f, -0.208 }, { 0.3f, 0.773 }, { 0.5f, 3.440 }, { 0.8f, 7.035 }
+        };
+        const TaperPoint plateTaper[] = { { 0.3f, -0.443 }, { 0.5f, 1.453 }, { 0.8f, 4.738 } };
+
+        for (int which = 0; which < 2; ++which)
+        {
+            const int mode = which == 0 ? hall : plate;
+            const char* name = which == 0 ? "hall" : "plate";
+            const double dryRms = rmsOf (render (mode, 0.0f, Signal::burst, 0));
+
+            const TaperPoint* points = which == 0 ? hallTaper : plateTaper;
+            const int count = which == 0 ? (int) (sizeof (hallTaper) / sizeof (TaperPoint))
+                                         : (int) (sizeof (plateTaper) / sizeof (TaperPoint));
+            for (int i = 0; i < count; ++i)
+            {
+                const auto out = render (mode, points[i].mix, Signal::burst, 0);
+                const double gainDb = ratioDb (rmsOf (out), dryRms);
+                expect (nearDb (gainDb, points[i].expectDb, 0.5),
+                        juce::String (name) + " burst at mix " + juce::String (points[i].mix, 2)
+                        + ": total output is " + juce::String (points[i].expectDb, 2)
+                        + " dB vs dry-only (measured " + juce::String (gainDb, 3) + ")");
             }
         }
     }
@@ -7112,8 +7401,8 @@ namespace
         const auto written = pm.generateFactoryPresets (packs, libRoot);
         expect (written == 36, "3 presets x 12 packs written (" + juce::String (written) + ")");
 
-        expect (lib::PresetManager::factoryRecipeVersion == 7,
-                "factoryRecipeVersion stamps at v7 ("
+        expect (lib::PresetManager::factoryRecipeVersion == 8,
+                "factoryRecipeVersion stamps at v8 ("
                     + juce::String (lib::PresetManager::factoryRecipeVersion) + ")");
 
         // Reads one PARAM's value out of a captured state ValueTree.
@@ -17245,6 +17534,1257 @@ static void chaosChunkStepRampTest()
     }
 }
 
+// ---------------------------------------------------------------------------
+// ASSIGN must never target an INVISIBLE control (tester on 1.0.22: "DEST
+// button makes the wrong assignment when selecting parameters on Oscillators.
+// Ex. In FM waveform, I highlight Ratio, then when I assign it to its
+// destination, it shows Osc C Pluck Damp.").
+//
+// OscStrip builds the knob set for every engine up front with
+// addChildComponent (added, NOT visible) and its resized() only lays out the
+// knobs of the CURRENT mode, so a hidden knob keeps whatever bounds it last
+// had. Go to Pluck, then to FM, and the hidden PLUCK DAMP knob still sits on
+// the grid cell that the visible FM RATIO knob now occupies. FM Ratio is not
+// a mod destination at all (registry: modDest false) while Pluck Damp is, so
+// AssignOverlay's tree walk collected the hidden knob, hit-tested it, and
+// assigned it.
+//
+// This test reproduces exactly that sequence rather than just asserting the
+// guard exists: with the visibility skip removed from rebuildTargets' walk it
+// fails, naming the hidden knob that got selected.
+// ---------------------------------------------------------------------------
+static void assignHiddenControlTest()
+{
+    std::cout << "assignHiddenControlTest\n";
+
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+    using namespace macroPanelTestHelpers;   // pumpFor
+    using AssignKind = spa::ui::MatrixPanel::AssignKind;
+
+    // The tester's exact slot (OSC C) -- nothing about the bug is slot-specific.
+    constexpr int slot = 2;
+    const auto modeId      = id::oscSlot (slot, id::osc::mode);
+    const auto pluckDampId = id::oscSlot (slot, id::osc::pluckDamp);
+    const auto fmRatioId   = id::oscSlot (slot, id::osc::fmRatio);
+    const auto fmIndexId   = id::oscSlot (slot, id::osc::fmIndex);
+
+    // The registry asymmetry that makes the bug visible to a user at all: the
+    // knob they click is not a destination, the one hiding under it is.
+    expect (params::modDestIndex (fmRatioId) < 0
+                && params::modDestIndex (pluckDampId) >= 0
+                && params::modDestIndex (fmIndexId) >= 0,
+            "registry: FM Ratio is not a mod destination, Pluck Damp and FM Index are");
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    pumpFor (100);
+
+    spa::ui::MatrixPanel* matrixPanel = nullptr;
+    spa::ui::AssignOverlay* overlay = nullptr;
+    std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+    {
+        if (matrixPanel == nullptr)
+            matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+        if (overlay == nullptr)
+            overlay = dynamic_cast<spa::ui::AssignOverlay*> (&c);
+        for (auto* child : c.getChildren())
+            findParts (*child);
+    };
+    findParts (*editor);
+    expect (matrixPanel != nullptr && overlay != nullptr, "MatrixPanel + AssignOverlay found");
+    if (matrixPanel == nullptr || overlay == nullptr)
+        return;
+
+    // --- 1. Pluck mode, so PLUCK DAMP gets real laid-out bounds ------------
+    setParam (proc, modeId, (float) (int) params::OscMode::pluck);
+    pumpFor (100);
+
+    auto* dampSlider = findByParamID (*editor, pluckDampId);
+    expect (dampSlider != nullptr, "OSC C PLUCK DAMP knob found in the editor tree");
+    if (dampSlider == nullptr)
+        return;
+    // The "paramID" tag lives on the slider (Controls.h Knob, for MIDI Learn);
+    // the thing OscStrip shows/hides is the Knob WRAPPER around it.
+    auto* dampKnob = dampSlider->getParentComponent();
+    expect (dampKnob != nullptr && dampKnob->isVisible(),
+            "in Pluck mode the PLUCK DAMP knob is visible");
+    if (dampKnob == nullptr)
+        return;
+
+    const auto dampAreaInPluck = overlay->getLocalArea (dampSlider, dampSlider->getLocalBounds());
+    expect (! dampAreaInPluck.isEmpty(), "PLUCK DAMP has real bounds while Pluck mode is selected ("
+                                          + dampAreaInPluck.toString() + ")");
+
+    // --- 2. Switch to FM: DAMP hides but keeps those bounds ----------------
+    setParam (proc, modeId, (float) (int) params::OscMode::fm);
+    pumpFor (100);
+
+    auto* ratioSlider = findByParamID (*editor, fmRatioId);
+    auto* indexSlider = findByParamID (*editor, fmIndexId);
+    expect (ratioSlider != nullptr && indexSlider != nullptr,
+            "OSC C FM RATIO + FM INDEX knobs found in the editor tree");
+    if (ratioSlider == nullptr || indexSlider == nullptr)
+        return;
+
+    expect (! dampKnob->isVisible(), "after switching to FM the PLUCK DAMP knob is hidden");
+    expect (ratioSlider->getParentComponent() != nullptr
+                && ratioSlider->getParentComponent()->isVisible(),
+            "after switching to FM the FM RATIO knob is visible");
+
+    const auto dampAreaInFm = overlay->getLocalArea (dampSlider, dampSlider->getLocalBounds());
+    const auto ratioArea = overlay->getLocalArea (ratioSlider, ratioSlider->getLocalBounds());
+    expect (dampAreaInFm == dampAreaInPluck,
+            "the hidden PLUCK DAMP knob kept its stale Pluck-mode bounds ("
+                + dampAreaInFm.toString() + ")");
+    // The precondition for the bug: they occupy the same cell, so a click
+    // meant for RATIO lands inside DAMP too.
+    expect (dampAreaInFm.contains (ratioArea.getCentre()),
+            "the hidden PLUCK DAMP knob sits under the visible FM RATIO knob (damp "
+                + dampAreaInFm.toString() + ", ratio " + ratioArea.toString() + ")");
+
+    // --- 3. A DEST session must not even collect the hidden knob -----------
+    matrixPanel->simulateDoubleClick (AssignKind::dest);   // latched
+    pumpFor (100);
+    expect (overlay->isAssignActive() && matrixPanel->getAssignKind() == AssignKind::dest,
+            "a latched DEST session is running");
+
+    // Nothing is selected yet, so in a DEST session every collected
+    // destination target glows -- not glowing means not collected.
+    expect (! overlay->isGlowingForTest (dampSlider),
+            "the hidden PLUCK DAMP knob is not collected as an assign target");
+    expect (overlay->isGlowingForTest (indexSlider),
+            "the visible FM INDEX knob in the same strip IS collected as an assign target");
+
+    // --- 4. The reported click: on FM RATIO, must not select PLUCK DAMP ----
+    overlay->handleClickAt (ratioArea.getCentre());
+
+    // Name whatever did get selected, so a regression reads legibly.
+    juce::String selectedDescription = "nothing";
+    std::function<void (juce::Component&)> describeSelection = [&] (juce::Component& c)
+    {
+        if (selectedDescription == "nothing" && overlay->isSelected (&c))
+        {
+            const auto pid = c.getProperties()["paramID"].toString();
+            selectedDescription = pid.isNotEmpty() ? pid : juce::String (typeid (c).name());
+        }
+        for (auto* child : c.getChildren())
+            describeSelection (*child);
+    };
+    describeSelection (*editor);
+
+    expect (! overlay->isSelected (dampSlider),
+            "clicking the visible FM RATIO knob did NOT select the hidden PLUCK DAMP knob "
+            "(selected: " + selectedDescription + ")");
+
+    // --- 5. The positive case still works ----------------------------------
+    // FM INDEX is a genuinely visible destination in the same strip: it is
+    // still selectable and still writes ITS OWN destination into a row.
+    const auto indexArea = overlay->getLocalArea (indexSlider, indexSlider->getLocalBounds());
+    overlay->handleClickAt (indexArea.getCentre());
+    expect (overlay->isSelected (indexSlider), "the visible FM INDEX knob is selectable");
+
+    auto* row0Dest = findByParamID (*editor, id::routeParam (0, id::route::dest));
+    expect (row0Dest != nullptr, "matrix row 0's DEST combo found");
+    if (row0Dest != nullptr)
+    {
+        overlay->handleClickAt (overlay->getLocalArea (row0Dest, row0Dest->getLocalBounds()).getCentre());
+        const auto written = juce::roundToInt (
+            proc.getAPVTS().getRawParameterValue (id::routeParam (0, id::route::dest))->load());
+        const auto expected = params::modDestIndex (fmIndexId) + 1;   // index 0 is "None"
+        expect (written == expected,
+                "assigning FM INDEX into row 0 wrote its own destination (expected "
+                    + juce::String (expected) + ", got " + juce::String (written) + ")");
+    }
+
+    matrixPanel->setAssignOn (false);
+    pumpFor (50);
+}
+
+// ---------------------------------------------------------------------------
+// Stereo chorus (1.0.22). Tester: "Effect Chorus: It's in mono right now. A
+// width parameter could be nice here too. Also adding this width will make it
+// sounds less like a phaser like it does right now."
+//
+// juce::dsp::Chorus drives both channels from ONE LFO, so both sides sweep
+// identically: the effect images dead centre and reads as a phaser, and JUCE
+// exposes no per-channel LFO phase to fix it from outside. spa::dsp::
+// StereoChorus replaces it with one modulated delay line per channel and a
+// WIDTH control that sets the L/R LFO phase offset, plus a Vintage (Juno-ish
+// BBD) / Modern (clean digital) mode selector.
+//
+// These tests MEASURE the two claims the change is being made on -- that it is
+// genuinely stereo, and that Vintage is darker than Modern -- rather than just
+// running the code. Nobody has listened to it; brightness and channel
+// correlation are what is verified here, not whether Vintage sounds like a
+// Juno.
+namespace chorusTestHelpers
+{
+    struct Rendered
+    {
+        std::vector<float> left, right;
+        float peak = 0.0f;
+        bool finite = true;
+    };
+
+    // Deterministic noise, identical in both channels: any difference between
+    // the rendered channels can then only have come from the chorus.
+    inline void fillNoise (juce::AudioBuffer<float>& buf, juce::Random& rng, float amp)
+    {
+        for (int s = 0; s < buf.getNumSamples(); ++s)
+        {
+            const auto v = amp * (rng.nextFloat() * 2.0f - 1.0f);
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                buf.setSample (ch, s, v);
+        }
+    }
+
+    inline spa::dsp::FXChain::Params baseParams()
+    {
+        spa::dsp::FXChain::Params p;
+        p.chorusEnable = true;
+        p.chorusMode = 1;          // Modern
+        p.chorusRate = 1.5f;
+        p.chorusDepth = 0.8f;
+        p.chorusFeedback = 0.0f;
+        p.chorusWidth = 1.0f;
+        p.chorusMix = 1.0f;
+        return p;
+    }
+
+    // Runs `totalSamples` of identical-in-both-channels noise through a fresh
+    // FXChain in blocks, discarding `warmupSamples` while the delay line
+    // fills, and returns both channels plus aggregate peak/finiteness. No
+    // assertions in here -- callers aggregate and assert once per property.
+    inline Rendered render (const spa::dsp::FXChain::Params& p, double sr,
+                            int totalSamples, int warmupSamples, float amp = 0.4f,
+                            int seed = 20220922)
+    {
+        constexpr int blockSize = 256;
+        spa::dsp::FXChain fx;
+        fx.prepare (sr, blockSize);
+
+        juce::Random rng (seed);
+        juce::AudioBuffer<float> buf (2, blockSize);
+        Rendered out;
+        out.left.reserve ((size_t) totalSamples);
+        out.right.reserve ((size_t) totalSamples);
+
+        int done = 0;
+        while (done < warmupSamples + totalSamples)
+        {
+            fillNoise (buf, rng, amp);
+            fx.process (buf, p);
+
+            for (int s = 0; s < blockSize; ++s)
+            {
+                const auto l = buf.getSample (0, s);
+                const auto r = buf.getSample (1, s);
+                if (! std::isfinite (l) || ! std::isfinite (r))
+                    out.finite = false;
+                out.peak = juce::jmax (out.peak, std::abs (l), std::abs (r));
+
+                if (done + s >= warmupSamples && (int) out.left.size() < totalSamples)
+                {
+                    out.left.push_back (l);
+                    out.right.push_back (r);
+                }
+            }
+            done += blockSize;
+        }
+        return out;
+    }
+
+    // Normalised cross-correlation of the two channels: 1 = identical (what a
+    // mono-imaging chorus gives you), 0 = unrelated.
+    inline double channelCorrelation (const Rendered& r)
+    {
+        double num = 0.0, dl = 0.0, dr = 0.0;
+        for (size_t i = 0; i < r.left.size(); ++i)
+        {
+            num += (double) r.left[i] * (double) r.right[i];
+            dl  += (double) r.left[i] * (double) r.left[i];
+            dr  += (double) r.right[i] * (double) r.right[i];
+        }
+        const auto den = std::sqrt (dl * dr);
+        return den > 1.0e-12 ? num / den : 0.0;
+    }
+
+    // RMS of the sample-by-sample difference between two renders, relative to
+    // the first one's own RMS. 0 means the two renders are identical.
+    inline double relativeDifference (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        const auto n = juce::jmin (a.size(), b.size());
+        double diff = 0.0, ref = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const auto d = (double) a[i] - (double) b[i];
+            diff += d * d;
+            ref += (double) a[i] * (double) a[i];
+        }
+        return ref > 1.0e-12 ? std::sqrt (diff / ref) : 0.0;
+    }
+
+    // Level-independent brightness proxy: first-difference energy over total
+    // energy. A first difference is a high-pass, so a signal with its top end
+    // rolled off scores lower whatever its overall level.
+    inline double hfRatio (const std::vector<float>& x)
+    {
+        double diff = 0.0, total = 0.0;
+        for (size_t i = 1; i < x.size(); ++i)
+        {
+            const auto d = (double) x[i] - (double) x[i - 1];
+            diff += d * d;
+            total += (double) x[i] * (double) x[i];
+        }
+        return total > 1.0e-12 ? diff / total : 0.0;
+    }
+}
+
+// Registry lock for the two parameters the stereo chorus added. The mode
+// choice order is serialized in presets and sessions, so it is append-only
+// from here on.
+static void chorusWidthModeParamsTest()
+{
+    std::cout << "chorusWidthModeParamsTest\n";
+    namespace params = spa::params;
+    namespace fx = spa::params::id::fx;
+
+    const params::ParamDef* width = nullptr;
+    const params::ParamDef* mode = nullptr;
+    for (const auto& def : params::all())
+    {
+        if (def.id == fx::chorusWidth) width = &def;
+        if (def.id == fx::chorusMode)  mode = &def;
+    }
+
+    expect (width != nullptr, "fxChorus.width is in the registry");
+    if (width != nullptr)
+    {
+        expect (std::abs (width->defaultValue - 50.0f) < 0.001f,
+                "chorus width defaults to 50 % (0 % would be the mono sound this fixes; got "
+                + juce::String (width->defaultValue) + ")");
+        expect (std::abs (width->range.start) < 0.001f && std::abs (width->range.end - 100.0f) < 0.001f,
+                "chorus width range is 0..100");
+        expect (width->unit == "%", "chorus width is a percentage");
+        expect (! width->modDestination, "chorus width is not a mod destination");
+        expect (width->random.enabled, "chorus width is randomizable");
+    }
+
+    expect (mode != nullptr, "fxChorus.mode is in the registry");
+    if (mode != nullptr)
+    {
+        expect (mode->choices.size() == 2, "chorus mode has exactly 2 choices (got "
+                + juce::String (mode->choices.size()) + ")");
+        expect (mode->choices[0] == "Vintage", "chorus mode index 0 is Vintage (append-only)");
+        expect (mode->choices[1] == "Modern", "chorus mode index 1 is Modern (append-only)");
+        expect (std::abs (mode->defaultValue - 1.0f) < 0.001f,
+                "chorus mode defaults to Modern, closest to the engine it replaced");
+        expect (! mode->modDestination, "chorus mode is not a mod destination");
+        expect (mode->random.enabled, "chorus mode is randomizable");
+    }
+}
+
+// THE point of the change: with WIDTH up, the two channels genuinely differ.
+// Identical noise goes into both channels, so the only thing that can
+// decorrelate them is the per-channel LFO phase offset.
+static void chorusStereoWidthTest()
+{
+    std::cout << "chorusStereoWidthTest\n";
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+
+    auto p = baseParams();
+    p.chorusWidth = 0.0f;
+    const auto narrow = render (p, sr, 48000, 4096);
+    const auto corrNarrow = channelCorrelation (narrow);
+
+    p.chorusWidth = 0.5f;
+    const auto mid = render (p, sr, 48000, 4096);
+    const auto corrMid = channelCorrelation (mid);
+
+    p.chorusWidth = 1.0f;
+    const auto wide = render (p, sr, 48000, 4096);
+    const auto corrWide = channelCorrelation (wide);
+
+    expect (narrow.finite && wide.finite && mid.finite, "chorus width renders stay finite");
+
+    expect (corrNarrow > 0.99,
+            "chorus at width 0 is effectively mono (L/R correlation "
+            + juce::String (corrNarrow, 4) + ")");
+    expect (corrWide < 0.8,
+            "chorus at max width is genuinely stereo (L/R correlation "
+            + juce::String (corrWide, 4) + ", well below 1)");
+    expect (corrNarrow - corrWide > 0.2,
+            "width 0 is far more correlated than max width (" + juce::String (corrNarrow, 4)
+            + " vs " + juce::String (corrWide, 4) + ")");
+    // Channel correlation saturates: for broadband material, a delay
+    // difference of more than a fraction of a sample already decorrelates the
+    // two channels almost completely, so correlation cannot tell half width
+    // from full width (measured: both land near zero). WIDTH being a
+    // continuous control rather than a switch is therefore checked on the
+    // rendered audio itself -- the right channel must differ from BOTH
+    // extremes -- while the left channel, which carries no phase offset at
+    // all, must be untouched by width.
+    const auto midVsNarrow = relativeDifference (mid.right, narrow.right);
+    const auto midVsWide = relativeDifference (mid.right, wide.right);
+    const auto leftDrift = relativeDifference (mid.left, wide.left);
+
+    expect (midVsNarrow > 0.2 && midVsWide > 0.2,
+            "half width renders differently from both extremes (vs width 0: "
+            + juce::String (midVsNarrow, 3) + ", vs max width: " + juce::String (midVsWide, 3)
+            + "); correlation at half width was " + juce::String (corrMid, 4));
+    expect (leftDrift < 1.0e-6,
+            "width offsets only the right LFO -- the left channel is identical at every width "
+            "(relative difference " + juce::String (leftDrift) + ")");
+}
+
+// Vintage's bucket-brigade voicing rolls the wet path off around 7 kHz;
+// Modern runs full bandwidth. Same input, same everything else.
+static void chorusVintageDarkerTest()
+{
+    std::cout << "chorusVintageDarkerTest\n";
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+
+    auto p = baseParams();
+    p.chorusDepth = 0.3f;
+    p.chorusRate = 0.8f;
+    p.chorusWidth = 0.5f;
+
+    p.chorusMode = 1;   // Modern
+    const auto modern = render (p, sr, 48000, 4096, 0.3f);
+    p.chorusMode = 0;   // Vintage
+    const auto vintage = render (p, sr, 48000, 4096, 0.3f);
+
+    expect (modern.finite && vintage.finite, "both chorus modes stay finite");
+
+    const auto hfModern = hfRatio (modern.left);
+    const auto hfVintage = hfRatio (vintage.left);
+
+    expect (hfVintage < hfModern * 0.8,
+            "Vintage is measurably darker than Modern (HF ratio " + juce::String (hfVintage, 4)
+            + " vs " + juce::String (hfModern, 4) + ")");
+}
+
+// MIX is a plain dry/wet crossfade: 0 must be bit-for-bit the input, 1 must be
+// the delayed signal only (which is silent until the delay line first reads
+// back, something the dry signal could never be).
+static void chorusMixTest()
+{
+    std::cout << "chorusMixTest\n";
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+    constexpr int n = 1024;
+
+    // (a) mix = 0 leaves the input untouched.
+    {
+        spa::dsp::FXChain fx;
+        fx.prepare (sr, n);
+        auto p = baseParams();
+        p.chorusMix = 0.0f;
+
+        juce::Random rng (99);
+        juce::AudioBuffer<float> buf (2, n);
+        fillNoise (buf, rng, 0.7f);
+        juce::AudioBuffer<float> dry (buf);
+
+        fx.process (buf, p);
+
+        float maxDiff = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int s = 0; s < n; ++s)
+                maxDiff = juce::jmax (maxDiff, std::abs (buf.getSample (ch, s) - dry.getSample (ch, s)));
+
+        expect (maxDiff == 0.0f, "chorus mix=0 leaves the input untouched (max diff "
+                + juce::String (maxDiff) + ")");
+    }
+
+    // (b) mix = 1 is fully wet. With depth 0 the Modern taps sit at a fixed
+    // 12 ms and 8 ms, so the first 8 ms of output must be silent -- no dry
+    // signal is leaking through.
+    {
+        spa::dsp::FXChain fx;
+        fx.prepare (sr, n);
+        auto p = baseParams();
+        p.chorusMix = 1.0f;
+        p.chorusDepth = 0.0f;
+        p.chorusFeedback = 0.0f;
+
+        juce::Random rng (101);
+        juce::AudioBuffer<float> buf (2, n);
+        fillNoise (buf, rng, 0.7f);
+        const auto inputRms = buf.getRMSLevel (0, 0, n);
+
+        fx.process (buf, p);
+
+        const int shortestTapSamples = (int) (0.008 * sr);   // 8 ms
+        float preTapPeak = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int s = 0; s < shortestTapSamples - 8; ++s)
+                preTapPeak = juce::jmax (preTapPeak, std::abs (buf.getSample (ch, s)));
+
+        const auto tailRms = buf.getRMSLevel (0, shortestTapSamples + 64,
+                                              n - shortestTapSamples - 64);
+
+        expect (inputRms > 0.1f, "chorus mix=1 test input is substantial (RMS "
+                + juce::String (inputRms, 4) + ")");
+        expect (preTapPeak < 1.0e-6f,
+                "chorus mix=1 is fully wet: nothing before the shortest delay tap (peak "
+                + juce::String (preTapPeak) + ")");
+        expect (tailRms > 0.05f, "chorus mix=1 does produce wet signal after the tap (RMS "
+                + juce::String (tailRms, 4) + ")");
+    }
+}
+
+// Feedback recirculates, so it is the one path here that could run away. At
+// the knob's maximum, over a long render, both modes must stay finite and
+// bounded.
+static void chorusFeedbackStabilityTest()
+{
+    std::cout << "chorusFeedbackStabilityTest\n";
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+
+    for (int mode = 0; mode < 2; ++mode)
+    {
+        auto p = baseParams();
+        p.chorusMode = mode;
+        p.chorusFeedback = 0.9f;    // registry maximum
+        p.chorusDepth = 1.0f;
+        p.chorusWidth = 1.0f;
+        p.chorusMix = 1.0f;
+
+        // 10 seconds -- long enough for a comb at near-unity feedback to have
+        // built to whatever it is going to build to.
+        const auto r = render (p, sr, (int) sr * 10, 0, 0.5f);
+
+        const juce::String label = mode == 0 ? "Vintage" : "Modern";
+        expect (r.finite, "chorus " + label + " at max feedback stays finite over 10 s");
+        expect (r.peak < 4.0f, "chorus " + label + " at max feedback stays bounded (peak "
+                + juce::String (r.peak, 3) + ")");
+        expect (r.peak > 0.1f, "chorus " + label + " at max feedback is still producing signal (peak "
+                + juce::String (r.peak, 3) + ")");
+    }
+}
+
+// Every corner of the parameter space, both modes: finite and sanely bounded.
+// Aggregated, so this is one assertion per property rather than one per
+// sample.
+static void chorusParameterExtremesTest()
+{
+    std::cout << "chorusParameterExtremesTest\n";
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+
+    bool allFinite = true;
+    float worstPeak = 0.0f;
+    int combos = 0;
+
+    for (int mode : { 0, 1 })
+      for (float width : { 0.0f, 1.0f })
+        for (float depth : { 0.0f, 1.0f })
+          for (float feedback : { -0.9f, 0.0f, 0.9f })
+            for (float rate : { 0.05f, 5.0f })
+              for (float mix : { 0.0f, 1.0f })
+              {
+                  auto p = baseParams();
+                  p.chorusMode = mode;
+                  p.chorusWidth = width;
+                  p.chorusDepth = depth;
+                  p.chorusFeedback = feedback;
+                  p.chorusRate = rate;
+                  p.chorusMix = mix;
+
+                  const auto r = render (p, sr, 2048, 0, 0.9f);
+                  allFinite = allFinite && r.finite;
+                  worstPeak = juce::jmax (worstPeak, r.peak);
+                  ++combos;
+              }
+
+    expect (combos == 96, "chorus extremes covered 96 parameter corners (got "
+            + juce::String (combos) + ")");
+    expect (allFinite, "chorus output is finite at every parameter extreme, both modes");
+    expect (worstPeak < 4.0f, "chorus output stays bounded at every extreme (worst peak "
+            + juce::String (worstPeak, 3) + ")");
+}
+
+// End-to-end plumbing: the WIDTH parameter is 0..100 % in the registry and
+// 0..1 in the DSP, and that divide happens in exactly one place
+// (SPASynthProcessor::updateFXParams). If it were dropped, 50 % would clamp to
+// full width and read identically to 100 %; this drives the real APVTS
+// parameter through the real processor and pins that it does not.
+static void chorusWidthPercentPlumbingTest()
+{
+    std::cout << "chorusWidthPercentPlumbingTest\n";
+    namespace id = spa::params::id;
+    using namespace chorusTestHelpers;
+
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 256;
+
+    auto renderAtWidthPercent = [&] (float percent)
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sr, blockSize);
+
+        setParam (proc, id::fx::chorusEnable, 1.0f);
+        setParam (proc, id::fx::chorusMix, 1.0f);
+        setParam (proc, id::fx::chorusDepth, 0.9f);
+        setParam (proc, id::fx::chorusRate, 2.0f);
+        setParam (proc, id::fx::chorusFeedback, 0.0f);
+        setParam (proc, id::fx::chorusMode, 1.0f);      // Modern
+        setParam (proc, id::fx::chorusWidth, percent);
+
+        juce::AudioBuffer<float> buf (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 110), 0);
+
+        Rendered r;
+        const int blocks = (int) (sr / blockSize);   // ~1 s
+        for (int b = 0; b < blocks; ++b)
+        {
+            proc.processBlock (buf, midi);
+            midi.clear();
+            if (b < 16)                                // let the delay line fill
+                continue;
+            for (int s = 0; s < blockSize; ++s)
+            {
+                r.left.push_back (buf.getSample (0, s));
+                r.right.push_back (buf.getSample (1, s));
+            }
+        }
+        return r;
+    };
+
+    const auto at0 = renderAtWidthPercent (0.0f);
+    const auto at50 = renderAtWidthPercent (50.0f);
+    const auto at100 = renderAtWidthPercent (100.0f);
+
+    const auto corr0 = channelCorrelation (at0);
+    const auto corr100 = channelCorrelation (at100);
+
+    expect (corr0 > 0.99, "chorus width 0 % reaches the DSP as mono (correlation "
+            + juce::String (corr0, 4) + ")");
+    expect (corr100 < corr0 - 0.2, "chorus width 100 % reaches the DSP as wide (correlation "
+            + juce::String (corr100, 4) + ")");
+
+    // The actual plumbing assertion: 50 % must NOT render the same as 100 %.
+    // Drop the percent-to-0..1 divide and 50 would arrive at the DSP as 50,
+    // clamp to full width, and these two renders would be bit-identical.
+    const auto fiftyVsHundred = relativeDifference (at50.right, at100.right);
+    const auto fiftyVsZero = relativeDifference (at50.right, at0.right);
+
+    expect (fiftyVsHundred > 0.2,
+            "chorus width 50 % is a HALF offset, not a clamped full one -- the percent to "
+            "0..1 conversion is in place (relative difference from 100 %: "
+            + juce::String (fiftyVsHundred, 3) + ")");
+    expect (fiftyVsZero > 0.2,
+            "chorus width 50 % also differs from 0 % end to end (relative difference "
+            + juce::String (fiftyVsZero, 3) + ")");
+}
+
+
+// UnisonOscillator BLEND: the detuned-voice level relative to the centre.
+// The spread is symmetric in [-1, 1], so it lands exactly on 0 only for an
+// ODD unison count; an EVEN count has no middle voice, so before the fix
+// every voice took BLEND and BLEND=0 zeroed the lot -- digital silence from
+// a reachable knob position (found by randomizeNeverSilentTest seed 92,
+// which modulated oscA.unisonBlend to its 0 clamp at unisonCount=2).
+// The rule now: the voice or voices with the SMALLEST absolute spread are
+// the centre and stay at unity. Odd counts are unaffected by that wording.
+static void unisonBlendCentreTest()
+{
+    std::cout << "unisonBlendCentreTest\n";
+
+    constexpr double sampleRate = 48000.0;
+    constexpr float baseHz = 220.0f;
+    const auto table = spa::dsp::Wavetable::createBasicShapes();
+
+    // The documented rule, derived here from the spread geometry alone --
+    // deliberately NOT from the implementation's index arithmetic, so this
+    // is an independent statement of intent rather than a restatement.
+    auto expectedGains = [] (int count, float blend)
+    {
+        std::vector<float> spreads;
+        for (int u = 0; u < count; ++u)
+            spreads.push_back (count > 1 ? -1.0f + 2.0f * (float) u / (float) (count - 1) : 0.0f);
+
+        auto minAbs = std::abs (spreads[0]);
+        for (auto s : spreads)
+            minAbs = juce::jmin (minAbs, std::abs (s));
+
+        std::vector<float> gains;
+        for (auto s : spreads)
+            gains.push_back (std::abs (s) <= minAbs + 1.0e-5f ? 1.0f : blend);
+        return gains;
+    };
+
+    // All voices at the same frequency and phase (detune 0), centred (pan and
+    // width 0), so the rendered peak is exactly the table peak times the SUM
+    // of the normalised gains. Dividing by the count=1/blend=1 render cancels
+    // the table peak and the equal-power pan factor, leaving a pure ratio the
+    // test can predict: sum(gain) / sqrt(sum(gain^2)).
+    auto renderPeak = [&] (int count, float blend)
+    {
+        spa::dsp::UnisonOscillator osc;
+        osc.prepare (sampleRate);
+        osc.noteOn (spa::params::PhaseMode::reset, 0.0f, nullptr);
+
+        spa::dsp::UnisonOscillator::BlockParams bp;
+        bp.table = &table;
+        bp.baseFrequencyHz = baseHz;
+        bp.position = 0.0f;          // frame 0 of the basic-shapes table = sine
+        bp.unisonCount = count;
+        bp.detuneCents = 0.0f;
+        bp.blend = blend;
+        bp.width = 0.0f;
+        bp.pan = 0.0f;
+        bp.phaseOffset = 0.0f;
+        osc.updateBlock (bp);
+
+        float peak = 0.0f;
+        const auto numSamples = (int) (sampleRate / (double) baseHz * 4.0);  // 4 cycles
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto s = osc.getNextSample();
+            peak = juce::jmax (peak, std::abs (s.left), std::abs (s.right));
+        }
+        return peak;
+    };
+
+    auto expectedRatio = [&] (int count, float blend)
+    {
+        const auto gains = expectedGains (count, blend);
+        float sum = 0.0f, sumSq = 0.0f;
+        for (auto g : gains) { sum += g; sumSq += g * g; }
+        return sum / std::sqrt (sumSq);
+    };
+
+    const auto reference = renderPeak (1, 1.0f);
+    expect (reference > 0.1f, "reference render (1 voice, BLEND 1) is audible, peak "
+            + juce::String (reference, 4));
+
+    // --- Odd counts are unchanged --------------------------------------------
+    // Index-level equivalence with the pre-fix selector: for every odd count,
+    // the voices the new rule calls "centre" are exactly the voices the old
+    // `spread == 0.0f || count == 1` test called centre. Nothing else in
+    // updateBlock changed, so odd-count gains are bit-for-bit as before.
+    for (int count : { 1, 3, 5, 7 })
+    {
+        bool identical = true;
+        for (int u = 0; u < count; ++u)
+        {
+            const auto spread = count > 1 ? -1.0f + 2.0f * (float) u / (float) (count - 1) : 0.0f;
+            const bool legacyCentre = (spread == 0.0f || count == 1);
+            const bool ruleCentre   = expectedGains (count, 0.0f)[(size_t) u] == 1.0f;
+            identical = identical && (legacyCentre == ruleCentre);
+        }
+        expect (identical, "odd unison count " + juce::String (count)
+                + ": centre voice selection matches the pre-fix spread==0 rule exactly");
+    }
+
+    // --- The reported bug: even count, BLEND at exactly 0 ---------------------
+    for (int count : { 2, 4, 6, 8 })
+    {
+        const auto peak = renderPeak (count, 0.0f);
+        expect (peak > 0.1f * reference,
+                "even unison count " + juce::String (count)
+                + " with BLEND 0 still speaks (peak " + juce::String (peak, 4)
+                + " vs reference " + juce::String (reference, 4) + ")");
+    }
+
+    for (int count : { 1, 3, 5, 7 })
+    {
+        const auto peak = renderPeak (count, 0.0f);
+        expect (peak > 0.1f * reference,
+                "odd unison count " + juce::String (count)
+                + " with BLEND 0 still speaks (peak " + juce::String (peak, 4) + ")");
+    }
+
+    for (int count = 1; count <= spa::dsp::UnisonOscillator::maxUnison; ++count)
+    {
+        const auto peak = renderPeak (count, 1.0f);
+        expect (peak > 0.1f * reference,
+                "unison count " + juce::String (count)
+                + " with BLEND 1 speaks (peak " + juce::String (peak, 4) + ")");
+    }
+
+    // --- Rendered gains match the independently derived rule ------------------
+    for (int count = 1; count <= spa::dsp::UnisonOscillator::maxUnison; ++count)
+    {
+        float worstError = 0.0f;
+        float worstBlend = 0.0f;
+        for (float blend : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            const auto measured = renderPeak (count, blend) / reference;
+            const auto error = std::abs (measured - expectedRatio (count, blend));
+            if (error > worstError) { worstError = error; worstBlend = blend; }
+        }
+        expect (worstError < 2.0e-3f,
+                "unison count " + juce::String (count)
+                + " gains follow the smallest-absolute-spread rule across the BLEND sweep"
+                  " (worst error " + juce::String (worstError, 6)
+                + " at BLEND " + juce::String (worstBlend, 2) + ")");
+    }
+
+    // --- No discontinuity at the bottom of the BLEND knob ---------------------
+    // With k centre voices at unity and m others at b the normalised level is
+    // (k + m*b) / sqrt(k + m*b^2), which is monotone non-decreasing on [0, 1].
+    // Before the fix an even count collapsed to zero at b == 0, a cliff.
+    for (int count : { 2, 4, 6, 8 })
+    {
+        constexpr int steps = 20;
+        std::vector<float> levels;
+        for (int i = 0; i <= steps; ++i)
+            levels.push_back (renderPeak (count, (float) i / (float) steps) / reference);
+
+        float worstDrop = 0.0f;
+        float worstJump = 0.0f;
+        for (size_t i = 1; i < levels.size(); ++i)
+        {
+            worstDrop = juce::jmax (worstDrop, levels[i - 1] - levels[i]);
+            worstJump = juce::jmax (worstJump, std::abs (levels[i] - levels[i - 1]) / levels[i - 1]);
+        }
+
+        // worstJump is the load-bearing half: before the fix levels[0] was 0
+        // and levels[1] was the full stacked level, an infinite relative jump.
+        // 0.25 leaves headroom over the largest legitimate step (count 8 moves
+        // ~14.6 % across the first 1/20th of the knob) without letting a cliff
+        // through.
+        expect (worstDrop < 1.0e-3f && worstJump < 0.25f,
+                "even unison count " + juce::String (count)
+                + " sweeps BLEND 0 to 1 with no level cliff (worst drop "
+                + juce::String (worstDrop, 5) + ", worst step "
+                + juce::String (worstJump * 100.0f, 2) + " %)");
+    }
+}
+
+
+// Reverb wet-path normalisation, pinned to the APPROVED level.
+//
+// History: the 1.0.6 FDN fix normalised the wet path so a 0.5-amplitude
+// noise burst at registry-default settings produced wet peaks of ~1.5-1.8
+// (see reverbMixTest); factory presets were retuned against that level and
+// the product owner and both testers signed it off. When the Dattorro plate
+// engine replaced the FDN in 1.0.15, PlateReverb.h documented the SAME
+// target but its injectScale / baseTapScale missed it: measured wet peaks
+// on that burst were 2.38 Hall, 3.52 Plate, 3.36 Chamber, 2.36 Room and
+// 4.40 Spring -- every mode over the target and the modes spread almost
+// 2:1 -- so wet reached parity with dry at MIX ~0.26 instead of near 0.5
+// (the tester's "MIX over-reacts"). This test pins the corrected level:
+//
+//   1) every mode's burst wet peak sits in the 1.5-1.8 band (+/-0.05
+//      tolerance), tight enough that a return to 2.4 fails;
+//   2) the modes sit within 12 % of each other (max/min peak ratio);
+//   3) character is untouched by the level change: RT60 and the wet
+//      burst's spectral centroid per mode are pinned to the values measured
+//      BEFORE the normalisation (a pure output gain cannot move either);
+//   4) the tone stage (low cut / high cut) uses the prepared sample rate
+//      instead of a hardcoded 48 kHz: the attenuation each cut applies at
+//      its own corner frequency is the same at 48 k and 96 k (before the
+//      fix the 96 k corners landed an octave low: ~4 dB off for the high
+//      cut, ~2 dB for the low cut on this probe), and the 48 k render is
+//      pinned so the fix itself changed nothing at 48 k;
+//   5) the factory recipe's reverbMix values were scaled up to compensate
+//      (recipe v8), so a representative factory preset's wet-to-dry RMS
+//      ratio is what it was BEFORE the normalisation. A future wet-level
+//      change that forgets the retune fails here.
+static void reverbNormalisationTest()
+{
+    std::cout << "reverbNormalisationTest\n";
+    using FX = spa::dsp::FXChain;
+    namespace lib = spa::library;
+    namespace id = spa::params::id;
+
+    auto ratioDb = [] (double a, double b)
+    {
+        return 20.0 * std::log10 (juce::jmax (1.0e-12, a) / juce::jmax (1.0e-12, b));
+    };
+    auto rmsOf = [] (const std::vector<float>& v)
+    {
+        double sum = 0.0;
+        for (float x : v) sum += (double) x * (double) x;
+        return std::sqrt (sum / (double) juce::jmax ((size_t) 1, v.size()));
+    };
+    auto peakOf = [] (const std::vector<float>& v)
+    {
+        double pk = 0.0;
+        for (float x : v) pk = juce::jmax (pk, (double) std::abs (x));
+        return pk;
+    };
+
+    // 1s render, 0.2s of 0.5-amplitude noise -- the exact reverbMixTest
+    // burst (block 512, seed 99999) so the numbers are comparable with the
+    // 1.0.6 record. Returns the wet (mix 1) output, L then R.
+    auto burstWet = [] (int mode, double sr)
+    {
+        constexpr int n = 512;
+        FX fx;
+        fx.prepare (sr, n);
+        FX::Params p;
+        p.reverbEnable = true;
+        p.reverbMode = mode;
+        p.reverbMix = 1.0f;
+        uint32_t rng = 99999u;
+        auto noise = [&rng]
+        {
+            rng = rng * 1664525u + 1013904223u;
+            return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+        };
+        const int blocks = (int) (1.0 * sr / n);
+        const int exciteBlocks = (int) (0.2 * sr / n);
+        std::vector<float> outL, outR;
+        juce::AudioBuffer<float> buf (2, n);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            if (b < exciteBlocks)
+                for (int s = 0; s < n; ++s)
+                {
+                    buf.setSample (0, s, noise() * 0.5f);
+                    buf.setSample (1, s, noise() * 0.5f);
+                }
+            fx.process (buf, p);
+            for (int s = 0; s < n; ++s) { outL.push_back (buf.getSample (0, s)); outR.push_back (buf.getSample (1, s)); }
+        }
+        outL.insert (outL.end(), outR.begin(), outR.end());
+        return outL;
+    };
+
+    // reverbMixTaperTest's 3s burst (block 256, seed 7777) at an arbitrary
+    // reverb parameter set and mix; L then R. Used for the wet/dry energy
+    // decomposition (mix 0 = exact dry, mix 1 = exact wet).
+    auto taperRender = [] (FX::Params p, float mix, double sr)
+    {
+        constexpr int block = 256;
+        const int totalSamples = (int) (3.0 * sr);
+        FX fx;
+        fx.prepare (sr, block);
+        p.reverbEnable = true;
+        p.reverbMix = mix;
+        uint32_t rng = 7777u;
+        auto noise = [&rng]
+        {
+            rng = rng * 1664525u + 1013904223u;
+            return ((float) (rng >> 9) / (float) (1u << 23)) * 2.0f - 1.0f;
+        };
+        const int exciteSamples = (int) (0.2 * sr);
+        std::vector<float> outL, outR;
+        juce::AudioBuffer<float> buf (2, block);
+        for (int done = 0; done < totalSamples; done += block)
+        {
+            for (int s = 0; s < block; ++s)
+            {
+                const float x = (done + s) < exciteSamples ? noise() * 0.5f : 0.0f;
+                buf.setSample (0, s, x); buf.setSample (1, s, x);
+            }
+            fx.process (buf, p);
+            for (int s = 0; s < block; ++s) { outL.push_back (buf.getSample (0, s)); outR.push_back (buf.getSample (1, s)); }
+        }
+        outL.insert (outL.end(), outR.begin(), outR.end());
+        return outL;
+    };
+
+    // Character probes (mode, decay 2s, size 0.5, damp 0.5, mod 0.6 -- the
+    // plateReverbCharacterTest impulse), mono mix of the wet IR.
+    auto impulseIR = [] (int mode, double sr)
+    {
+        constexpr int n = 256;
+        FX fx;
+        fx.prepare (sr, n);
+        FX::Params p;
+        p.reverbEnable = true; p.reverbMode = mode; p.reverbMix = 1.0f;
+        p.reverbDecay = 2.0f; p.reverbSize = 0.5f; p.reverbDamping = 0.5f; p.reverbModDepth = 0.6f;
+        const int blocks = (int) (6.0 * sr / n);
+        std::vector<float> mono;
+        juce::AudioBuffer<float> buf (2, n);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            if (b == 0) { buf.setSample (0, 0, 1.0f); buf.setSample (1, 0, 1.0f); }
+            fx.process (buf, p);
+            for (int s = 0; s < n; ++s) mono.push_back (0.5f * (buf.getSample (0, s) + buf.getSample (1, s)));
+        }
+        return mono;
+    };
+    auto rt60Of = [&] (const std::vector<float>& v, double sr)
+    {
+        constexpr int block = 256;
+        std::vector<double> envDb;
+        double peakDb = -300.0; size_t peakIdx = 0;
+        for (size_t i = 0; i + block <= v.size(); i += block)
+        {
+            double sum = 0.0;
+            for (size_t k = i; k < i + block; ++k) sum += (double) v[k] * v[k];
+            const double db = 20.0 * std::log10 (juce::jmax (1.0e-9, std::sqrt (sum / block)));
+            envDb.push_back (db);
+            if (db > peakDb) { peakDb = db; peakIdx = envDb.size() - 1; }
+        }
+        for (size_t i = 2; i + 2 < envDb.size(); ++i)
+            envDb[i] = (envDb[i - 2] + envDb[i - 1] + envDb[i] + envDb[i + 1] + envDb[i + 2]) / 5.0;
+        for (size_t i = peakIdx; i < envDb.size(); ++i)
+            if (envDb[i] < peakDb - 60.0) return (double) ((i - peakIdx) * block) / sr;
+        return (double) (v.size() - peakIdx * block) / sr;
+    };
+    // Power-weighted spectral centroid (Hz) of the first 2^15 samples from
+    // `from` -- a gain-invariant shape measure.
+    auto centroidOf = [] (const std::vector<float>& v, size_t from, double sr)
+    {
+        constexpr int order = 15;
+        constexpr int N = 1 << order;
+        juce::dsp::FFT fft (order);
+        std::vector<float> data ((size_t) 2 * N, 0.0f);
+        for (int i = 0; i < N && from + (size_t) i < v.size(); ++i)
+            data[(size_t) i] = v[from + (size_t) i];
+        fft.performFrequencyOnlyForwardTransform (data.data());
+        double num = 0.0, den = 0.0;
+        for (int k = 1; k < N / 2; ++k)
+        {
+            const double pw = (double) data[(size_t) k] * data[(size_t) k];
+            num += pw * (double) k * sr / N; den += pw;
+        }
+        return den > 0.0 ? num / den : 0.0;
+    };
+
+    constexpr double sr48 = 48000.0;
+    const char* modeNames[5] = { "hall", "plate", "chamber", "room", "spring" };
+
+    // 1) + 2) Burst wet peak per mode: the 1.0.6 band, and mode consistency.
+    {
+        double minPk = 1.0e9, maxPk = 0.0;
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            const auto wet = burstWet (mode, sr48);
+            const double pk = peakOf (wet);
+            minPk = juce::jmin (minPk, pk); maxPk = juce::jmax (maxPk, pk);
+            FX::Params p; p.reverbMode = mode;
+            const auto d = taperRender (p, 0.0f, sr48);
+            const auto w = taperRender (p, 1.0f, sr48);
+            const double dr = rmsOf (d), wr = rmsOf (w);
+            const double parity = 1.0 / (1.0 + wr / juce::jmax (1.0e-12, dr));
+            std::cout << "    " << modeNames[mode] << ": burst wet peak " << juce::String (pk, 4)
+                      << ", wet/dry at MIX 1 " << juce::String (ratioDb (wr, dr), 3)
+                      << " dB, parity at mix " << juce::String (parity, 4)
+                      << ", wet RMS " << juce::String (wr, 6) << "\n";
+            expect (pk >= 1.45 && pk <= 1.85,
+                    juce::String (modeNames[mode]) + " burst wet peak is in the approved 1.5-1.8 band +/-0.05 ("
+                    + juce::String (pk, 4) + ")");
+        }
+        expect (maxPk / minPk < 1.12,
+                "modes sit within 12 % of each other (max/min wet peak "
+                + juce::String (maxPk / minPk, 4) + ")");
+    }
+
+    // 3) Character unchanged: RT60 + spectral centroid per mode, pinned to
+    // the pre-normalisation measurement (2026-09-21, same probes).
+    {
+        struct Pin { double rt60, centroid; };
+        const Pin pins[5] = {
+            { 2.4373, 5047.07 },   // hall
+            { 2.1280, 6661.34 },   // plate
+            { 1.7547, 5510.29 },   // chamber
+            { 1.0773, 4284.00 },   // room
+            { 1.1307, 7306.57 },   // spring
+        };
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            const auto ir = impulseIR (mode, sr48);
+            const double rt = rt60Of (ir, sr48);
+            const double cen = centroidOf (ir, (size_t) (0.05 * sr48), sr48);
+            const auto wet = burstWet (mode, sr48);
+            const double cenBurst = centroidOf (wet, (size_t) (0.2 * sr48), sr48);
+            std::cout << "    " << modeNames[mode] << ": RT60 " << juce::String (rt, 4)
+                      << " s, IR centroid " << juce::String (cen, 2)
+                      << " Hz, burst-tail centroid " << juce::String (cenBurst, 2) << " Hz\n";
+            expect (std::abs (rt - pins[mode].rt60) <= 0.02 * pins[mode].rt60 + 0.006,
+                    juce::String (modeNames[mode]) + " RT60 unchanged by the level correction (expected "
+                    + juce::String (pins[mode].rt60, 4) + " s, measured " + juce::String (rt, 4) + ")");
+            expect (std::abs (cen - pins[mode].centroid) <= 0.01 * pins[mode].centroid,
+                    juce::String (modeNames[mode]) + " IR spectral centroid unchanged (expected "
+                    + juce::String (pins[mode].centroid, 1) + " Hz, measured " + juce::String (cen, 1) + ")");
+        }
+    }
+
+    // 4) Tone-stage corners follow the prepared sample rate. A sustained
+    // tone at the cut's own corner frequency, steady-state wet RMS with the
+    // cut engaged vs parked, at 48 k and at 96 k; the tank's own rate
+    // dependence cancels in the ratio.
+    {
+        auto toneWetRms = [] (double sr, double toneHz, float lowCut, float highCut)
+        {
+            constexpr int block = 256;
+            FX fx;
+            fx.prepare (sr, block);
+            FX::Params p;
+            p.reverbEnable = true; p.reverbMix = 1.0f;
+            p.reverbLowCut = lowCut; p.reverbHighCut = highCut;
+            const int total = (int) (3.0 * sr), from = (int) (2.0 * sr);
+            std::vector<float> out;
+            juce::AudioBuffer<float> buf (2, block);
+            for (int done = 0; done < total; done += block)
+            {
+                for (int s = 0; s < block; ++s)
+                {
+                    const float x = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * toneHz * (double) (done + s) / sr);
+                    buf.setSample (0, s, x); buf.setSample (1, s, x);
+                }
+                fx.process (buf, p);
+                for (int s = 0; s < block; ++s)
+                    if (done + s >= from) out.push_back (buf.getSample (0, s));
+            }
+            double sum = 0.0;
+            for (float v : out) sum += (double) v * v;
+            return std::sqrt (sum / (double) juce::jmax ((size_t) 1, out.size()));
+        };
+
+        const double hc48 = ratioDb (toneWetRms (48000.0, 2000.0, 20.0f, 2000.0f), toneWetRms (48000.0, 2000.0, 20.0f, 20000.0f));
+        const double hc96 = ratioDb (toneWetRms (96000.0, 2000.0, 20.0f, 2000.0f), toneWetRms (96000.0, 2000.0, 20.0f, 20000.0f));
+        const double lc48 = ratioDb (toneWetRms (48000.0, 500.0, 500.0f, 20000.0f), toneWetRms (48000.0, 500.0, 20.0f, 20000.0f));
+        const double lc96 = ratioDb (toneWetRms (96000.0, 500.0, 500.0f, 20000.0f), toneWetRms (96000.0, 500.0, 20.0f, 20000.0f));
+        std::cout << "    high cut @2kHz on a 2kHz tone: 48k " << juce::String (hc48, 3) << " dB, 96k "
+                  << juce::String (hc96, 3) << " dB; low cut @500Hz on a 500Hz tone: 48k "
+                  << juce::String (lc48, 3) << " dB, 96k " << juce::String (lc96, 3) << " dB\n";
+        expect (std::abs (hc48 - hc96) < 1.0,
+                "high-cut corner lands at the same frequency at 48k and 96k (48k "
+                + juce::String (hc48, 3) + " dB, 96k " + juce::String (hc96, 3) + " dB)");
+        expect (std::abs (lc48 - lc96) < 1.0,
+                "low-cut corner lands at the same frequency at 48k and 96k (48k "
+                + juce::String (lc48, 3) + " dB, 96k " + juce::String (lc96, 3) + " dB)");
+
+        // 48 k pin: the coefficient fix changed nothing at the rate the old
+        // constant hardcoded (bit-identity verified when the fix landed;
+        // this pins the same render's RMS to 5 significant digits).
+        const auto hall48 = burstWet (0, 48000.0);
+        const double wet48 = rmsOf (hall48);
+        {
+            uint64_t h = 1469598103934665603ull;
+            for (float v : hall48)
+            {
+                uint32_t bits; std::memcpy (&bits, &v, sizeof (bits));
+                h = (h ^ bits) * 1099511628211ull;
+            }
+            std::cout << "    48k hall burst wet render: RMS " << juce::String (wet48, 9)
+                      << ", peak " << juce::String (peakOf (hall48), 9)
+                      << ", FNV " << juce::String::toHexString ((juce::int64) h) << "\n";
+        }
+        expect (std::abs (wet48 - 0.243756493) <= 1.0e-5 * 0.243756493,
+                "48k hall burst wet RMS unchanged by the sample-rate fix (expected 0.243756493, measured "
+                + juce::String (wet48, 7) + ")");
+    }
+
+    // 5) Factory-preset balance survives the normalisation: generate real
+    // factory presets into a temp root (hermetic -- never the real Presets
+    // folder) from a fake 3-pack library, take pack 00's three presets, and
+    // check each one's wet-to-dry RMS ratio (mix * wetRms / ((1-mix) *
+    // dryRms), the burst decomposition at the preset's own reverb settings)
+    // against the ratio measured on the pre-normalisation engine with the
+    // pre-retune recipe.
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        juce::StringArray packNames;
+        for (int i = 0; i < 6; ++i)
+            packNames.add ("Balance Pack " + juce::String (i).paddedLeft ('0', 2));
+        const auto libRoot = makeFakeLibraryFromNames (packNames);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-reverb-balance-test", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                               [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); },
+                               presetsRoot);
+        const auto packs = lib::scanLibrary (libRoot);
+        const int written = pm.generateFactoryPresets (packs, libRoot);
+        expect (written == 18, "3 presets x 6 packs written for the balance probe (" + juce::String (written) + ")");
+
+        const auto paramValueOf = [] (const juce::ValueTree& state, const juce::String& pid) -> float
+        {
+            for (auto child : state)
+                if (child.hasType ("PARAM") && child.getProperty ("id").toString() == pid)
+                    return (float) (double) child.getProperty ("value");
+            return -999.0f;
+        };
+
+        // Six packs = every Keys/Texture/Pulse recipe variant exactly once
+        // (round-robin by sorted pack index, see PresetManager.h). Every
+        // variant that enables reverb is pinned; the rest are asserted OFF
+        // so a recipe change that adds reverb somewhere is noticed here.
+        struct Pin { int pack; const char* archetype; bool reverbOn; double balanceDb; };
+        // balanceDb = the wet/dry RMS ratio at the preset's mix, measured
+        // on the PRE-normalisation engine with the PRE-retune (v7) recipe.
+        const Pin pins[] = {
+            { 0, "Keys",    true,  -19.630 },   // Room,    v7 mix 0.15 -> 0.177
+            { 1, "Keys",    true,   -7.791 },   // Chamber, v7 mix 0.13 -> 0.192
+            { 2, "Keys",    false,   0.0   },
+            { 3, "Keys",    false,   0.0   },
+            { 4, "Keys",    true,   -3.439 },   // Hall,    mix 0.18 unchanged
+            { 5, "Keys",    true,   -7.961 },   // Chamber, v7 mix 0.12 -> 0.178
+            { 0, "Texture", true,  -12.600 },   // Room,    v7 mix 0.18 -> 0.211
+            { 1, "Texture", false,   0.0   },   // (writes Hall settings but never reverbEnable)
+            { 2, "Texture", false,   0.0   },
+            { 3, "Texture", true,    3.566 },   // Plate,   v7 mix 0.30 -> 0.405
+            { 4, "Texture", false,   0.0   },
+            { 5, "Texture", true,  -12.600 },   // Room (variant 2 again, 5 Texture variants)
+            { 0, "Pulse",   false,   0.0   },
+            { 1, "Pulse",   true,   -7.883 },   // Spring,  v7 mix 0.15 -> 0.273
+            { 2, "Pulse",   true,   -4.561 },   // Plate,   v7 mix 0.15 -> 0.219
+            { 3, "Pulse",   true,  -32.728 },   // Room,    v7 mix 0.12 -> 0.142
+            { 4, "Pulse",   true,    2.424 },   // Hall,    mix 0.28 unchanged
+            { 5, "Pulse",   false,   0.0   },
+        };
+        for (const auto& pin : pins)
+        {
+            const auto& packName = packNames[pin.pack];
+            const auto file = presetsRoot.getChildFile ("Factory").getChildFile (packName)
+                                  .getChildFile (juce::File::createLegalFileName (packName + " " + pin.archetype)
+                                                 + lib::PresetManager::presetExtension);
+            const auto xml = juce::XmlDocument::parse (file);
+            expect (xml != nullptr, packName + " " + pin.archetype + " factory preset parses");
+            if (xml == nullptr) continue;
+            const auto state = juce::ValueTree::fromXml (*xml->getFirstChildElement());
+            const bool enabled = paramValueOf (state, id::fx::reverbEnable) > 0.5f;
+            expect (enabled == pin.reverbOn,
+                    packName + " " + pin.archetype + " factory preset reverb is "
+                    + (pin.reverbOn ? "on" : "off") + " as the recipe table says");
+            if (! enabled || ! pin.reverbOn) continue;
+
+            FX::Params p;
+            p.reverbMode = (int) paramValueOf (state, id::fx::reverbMode);
+            p.reverbPreDelay = paramValueOf (state, id::fx::reverbPreDelay);
+            p.reverbSize = paramValueOf (state, id::fx::reverbSize);
+            p.reverbDecay = paramValueOf (state, id::fx::reverbDecay);
+            p.reverbDamping = paramValueOf (state, id::fx::reverbDamping);
+            p.reverbModDepth = paramValueOf (state, id::fx::reverbModDepth);
+            p.reverbLowCut = paramValueOf (state, id::fx::reverbLowCut);
+            p.reverbHighCut = paramValueOf (state, id::fx::reverbHighCut);
+            p.reverbWidth = paramValueOf (state, id::fx::reverbWidth);
+            const float mix = paramValueOf (state, id::fx::reverbMix);
+            const double d = rmsOf (taperRender (p, 0.0f, sr48));
+            const double w = rmsOf (taperRender (p, 1.0f, sr48));
+            const double balanceDb = ratioDb ((double) mix * w, (double) (1.0f - mix) * d);
+            std::cout << "    " << packName << " " << pin.archetype << ": mode " << p.reverbMode
+                      << ", mix " << juce::String (mix, 4) << ", wet/dry at MIX 1 "
+                      << juce::String (ratioDb (w, d), 3) << " dB, balance at preset mix "
+                      << juce::String (balanceDb, 3) << " dB\n";
+            expect (std::abs (balanceDb - pin.balanceDb) <= 0.3,
+                    packName + " " + pin.archetype + " wet/dry balance is unchanged by the "
+                    "normalise+retune (expected " + juce::String (pin.balanceDb, 2)
+                    + " dB, measured " + juce::String (balanceDb, 3) + " dB)");
+        }
+
+        libRoot.deleteRecursively();
+        presetsRoot.deleteRecursively();
+    }
+}
+
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -17549,6 +19089,45 @@ int main (int argc, char* argv[])
                 png.writeImageToStream (upscaled, stream);
             std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
         }
+        return 0;
+    }
+
+    // Temporary visual-review render for the stereo chorus (WIDTH knob +
+    // MODE selector). Remove after review, same as --snapshot-assign's
+    // pattern.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-chorus")
+    {
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::fx::chorusEnable, 1.0f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        std::function<void (juce::Component&)> frontChorus = [&] (juce::Component& c)
+        {
+            if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
+                if (tabs->getTabNames().contains ("CHORUS"))
+                    tabs->setCurrentTabIndex (tabs->getTabNames().indexOf ("CHORUS"));
+            for (auto* child : c.getChildren())
+                frontChorus (*child);
+        };
+        frontChorus (*editor);
+        editor->resized();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+        const auto outFile = outDir.getChildFile ("spasynth-chorus.png");
+        outFile.deleteFile();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream stream (outFile);
+        if (stream.openedOk())
+            png.writeImageToStream (image, stream);
+        std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
         return 0;
     }
 
@@ -17862,6 +19441,17 @@ int main (int argc, char* argv[])
     RUN (macroAssignRingHaloTest);
     RUN (initButtonTest);
     RUN (chaosChunkStepRampTest);
+    RUN (assignHiddenControlTest);
+    RUN (reverbMixTaperTest);
+    RUN (chorusWidthModeParamsTest);
+    RUN (chorusStereoWidthTest);
+    RUN (chorusVintageDarkerTest);
+    RUN (chorusMixTest);
+    RUN (chorusFeedbackStabilityTest);
+    RUN (chorusParameterExtremesTest);
+    RUN (chorusWidthPercentPlumbingTest);
+    RUN (unisonBlendCentreTest);
+    RUN (reverbNormalisationTest);
 
    #undef RUN
 

@@ -339,6 +339,14 @@ juce::ValueTree PresetManager::makeTemplateState() const
 // size/decay/damping, mix kept in the 12-20%/~30%-wash linear-law range).
 // The FM layers (variants 1 and 4) stay FM -- the FM oscillator engine has
 // no Table param to select, so there is nothing to change there.
+//
+// v8 (factoryRecipeVersion 8): the reverb wet path was normalised to the
+// approved 1.0.6 level (PlateReverb::modeLevelTrim -- Plate/Chamber/Room/
+// Spring came down to Hall's level; Hall unchanged), and every reverbMix
+// below was scaled UP to compensate so each preset's wet-to-dry balance is
+// exactly what it was before: mix' = mix / (mix + trim * (1 - mix)), with
+// trim = 0.6297 Plate, 0.6307 Chamber, 0.8226 Room, 0.4696 Spring, 1.0 Hall
+// (reverbNormalisationTest pins the resulting balances). Presets regenerate.
 //   0  sample (middle WAV, kt) + wavetable        | fast attack, short    | SFX A amp -> osc B LEVEL                 | tremolo (rhythmic gate) + delay
 //      layer (osc B, -8dB, Supersaw table)          release                | (sample dynamics gate the synth)         | + reverb (Plate, light)
 //   1  sample (middle WAV, kt), fast decay,        | fast decay, low       | env2 -> filter1 cutoff (percussive open);| crush distortion (low drive)
@@ -390,7 +398,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::fx::reverbSize, 0.4f);
             writeParam (state, id::fx::reverbDecay, 1.0f);
             writeParam (state, id::fx::reverbDamping, 0.5f);
-            writeParam (state, id::fx::reverbMix, 0.15f);
+            writeParam (state, id::fx::reverbMix, 0.177f);
             break;
 
         case 1:   // sample + detuned wavetable layer underneath
@@ -407,7 +415,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::fx::reverbSize, 0.4f);
             writeParam (state, id::fx::reverbDecay, 1.2f);
             writeParam (state, id::fx::reverbDamping, 0.55f);
-            writeParam (state, id::fx::reverbMix, 0.13f);
+            writeParam (state, id::fx::reverbMix, 0.192f);
             break;
 
         case 2:   // sample (kept audible in OSC A per the common preamble
@@ -463,7 +471,7 @@ juce::ValueTree PresetManager::buildKeysState (const juce::File& smallest, const
             writeParam (state, id::fx::reverbSize, 0.5f);
             writeParam (state, id::fx::reverbDecay, 1.5f);
             writeParam (state, id::fx::reverbDamping, 0.5f);
-            writeParam (state, id::fx::reverbMix, 0.12f);
+            writeParam (state, id::fx::reverbMix, 0.178f);
             break;
     }
 
@@ -525,7 +533,7 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::fx::reverbSize, 0.6f);
             writeParam (state, id::fx::reverbDecay, 2.0f);
             writeParam (state, id::fx::reverbDamping, 0.4f);
-            writeParam (state, id::fx::reverbMix, 0.3f);
+            writeParam (state, id::fx::reverbMix, 0.405f);
             writeParam (state, id::fx::chorusEnable, 1.0f);
             break;
 
@@ -564,7 +572,7 @@ juce::ValueTree PresetManager::buildTextureState (const juce::File& smallest, co
             writeParam (state, id::fx::reverbSize, 0.4f);
             writeParam (state, id::fx::reverbDecay, 1.2f);
             writeParam (state, id::fx::reverbDamping, 0.5f);
-            writeParam (state, id::fx::reverbMix, 0.18f);
+            writeParam (state, id::fx::reverbMix, 0.211f);
             break;
 
         case 3:   // granular through a swept band-pass + fold distortion
@@ -658,7 +666,7 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::reverbSize, 0.4f);
             writeParam (state, id::fx::reverbDecay, 1.2f);
             writeParam (state, id::fx::reverbDamping, 0.5f);
-            writeParam (state, id::fx::reverbMix, 0.15f);
+            writeParam (state, id::fx::reverbMix, 0.219f);
             break;
 
         case 1:   // Percussive Pitch Play: sample, fast decay (nonzero sustain
@@ -701,7 +709,7 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::reverbSize, 0.25f);
             writeParam (state, id::fx::reverbDecay, 0.6f);
             writeParam (state, id::fx::reverbDamping, 0.6f);
-            writeParam (state, id::fx::reverbMix, 0.12f);
+            writeParam (state, id::fx::reverbMix, 0.142f);
             break;
 
         case 2:   // Drone Bed: granular (largest WAV, NOT keytracked -- the
@@ -858,7 +866,7 @@ juce::ValueTree PresetManager::buildPulseState (const juce::File& smallest, cons
             writeParam (state, id::fx::reverbSize, 0.35f);
             writeParam (state, id::fx::reverbDecay, 1.0f);
             writeParam (state, id::fx::reverbDamping, 0.4f);
-            writeParam (state, id::fx::reverbMix, 0.15f);
+            writeParam (state, id::fx::reverbMix, 0.273f);
             break;
     }
 

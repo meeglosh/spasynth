@@ -190,10 +190,22 @@ public:
         // tap's level stays roughly RT60-independent, matching how a real
         // room's early reflections don't get louder just because the room
         // also happens to be more reverberant/absorptive.
+        //
+        // Per-mode level trim (modeLevelTrim): the mode voicings (size,
+        // diffusion, damping, decay multipliers) change how much of the
+        // injected energy reaches the taps, so a single baseTapScale that
+        // hits the target for Hall overshoots it for the others (measured
+        // 2026-09-21 on the reverbMixTest burst, before the trim: Hall 1.56,
+        // Room 1.89, Plate 2.47, Chamber 2.47, Spring 3.32 -- Hall on
+        // target, the rest up to 2.1x over it). The trim is a pure gain on
+        // the wet tap, applied here so every mode lands at Hall's level;
+        // it cannot move decay, damping, diffusion or modulation (all of
+        // which happen before this multiply). reverbNormalisationTest pins
+        // the per-mode level, the mode spread and the unchanged character.
         constexpr float injectScale = 0.62f;
         const float avgDecayGain = 0.5f * (geom[0].decayGain + geom[1].decayGain);
         constexpr float baseTapScale = 8.5f;
-        const float outTapScale = baseTapScale / juce::jmax (0.12f, avgDecayGain);
+        const float outTapScale = baseTapScale * modeLevelTrim (mode) / juce::jmax (0.12f, avgDecayGain);
 
         for (int s = 0; s < n; ++s)
         {
@@ -393,12 +405,32 @@ private:
         return y;
     }
 
-    static float onePoleCoef (float hz)
+    // One-pole transparency coefficient for a corner at `hz` AT THE PREPARED
+    // SAMPLE RATE. This used to divide by a hardcoded 48000, so at 96 kHz
+    // (or under oversampling, where FXChain runs at the engine rate) the
+    // low-cut and high-cut corners landed an octave low. At exactly 48 kHz
+    // the result is bit-identical to the old constant.
+    float onePoleCoef (float hz) const
     {
         return juce::jlimit (0.0001f, 0.999f,
-                             1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / 48000.0f));
+                             1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / (float) sampleRate));
     }
 
+    // Wet-tap gain per mode = Hall's measured burst peak / this mode's
+    // (1.5574 / {2.4732, 2.4694, 1.8932, 3.3166}); Hall is the reference
+    // and stays at unity. See the outTapScale comment in process().
+    static float modeLevelTrim (Mode m)
+    {
+        switch (m)
+        {
+            case Mode::hall:    return 1.0f;
+            case Mode::plate:   return 0.6297f;
+            case Mode::chamber: return 0.6307f;
+            case Mode::room:    return 0.8226f;
+            case Mode::spring:  return 0.4696f;
+        }
+        return 1.0f;
+    }
     static float modeSizeMul (Mode m)
     {
         switch (m)

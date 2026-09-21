@@ -113,7 +113,7 @@ public:
     // character, with size/decay/damping tuned per mode, and mix kept in
     // the linear-law range (12-20% light, up to ~30% for the drone/wash
     // variants).
-    static constexpr int factoryRecipeVersion = 7;
+    static constexpr int factoryRecipeVersion = 8;
 
     static constexpr int numKeysVariants = 6;
     static constexpr int numTextureVariants = 5;

@@ -10,6 +10,107 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-22): v1.0.24 (main `0936a0a`) built + staged; delete user presets, chaos cue gated per mode, per-kind browse folder, and a TEST bug that looked like a reverb explosion
+
+**The expensive one, record it in full -- it cost most of a day and nearly
+produced a wrong decision.** The reverb assertion tightened in 1.0.23 started
+failing intermittently: **Release 3/6 full-suite runs failing, peaks up to
+9.47904e+24**; Debug 1/5, peaks 3.86 and 991.5; **ASan 0/6 with ZERO sanitizer
+errors**. Inside any failing run all five reverb modes reported the IDENTICAL
+peak; the magnitude varied wildly between runs; it passed in isolation; the
+earlier single-mode block of the same test always passed. This was escalated to
+Mike as a suspected reverb explosion in the shipped build, with a "do not send
+1.0.23" push notification. **That escalation was WRONG and has been retracted.**
+Root cause: `reverbMixTest`'s per-mode loop called `buf.getMagnitude (0, n)` and
+`buf.getMagnitude (1, n)` intending "channel 0 / channel 1". **`juce::AudioBuffer`
+has two overloads: `(channel, startSample, numSamples)` and `(startSample,
+numSamples)`, and the 2-arg one already scans EVERY channel.** Both calls hit
+the 2-arg form, so the second meant samples 1..n inclusive and read index n --
+one past the block, into the **32 uninitialised trailing bytes
+`AudioBuffer::allocateData` over-allocates and `clear()` never touches**. That
+stale heap word was being reported as the reverb's peak. Proven by planting a
+sentinel in the slack with memcpy: `getMagnitude(0,n)` = 0.25,
+`getMagnitude(1,n)` = 9.99e23. It explains every observation: identical across
+modes because each iteration re-mallocs the same chunk and re-reads the same
+untouched word; varying per run because the slack holds whatever was there
+before; absent in isolation because a fresh allocator hands back zeroed slack;
+**invisible to ASan because the read is INSIDE the allocation (the +32 is part
+of the user block) and ASan does not detect uninitialised reads at all -- that
+is MSan's job**; worse in Release because its allocation history leaves larger
+junk. **`source/dsp` was never touched; the reverb DSP was innocent.** Fixed in
+the test only; new `bufferMagnitudeInRangeTest` plants the sentinel and pins the
+mechanism. Release 3/6 failing -> 0/10, Debug -> 0/10.
+Lessons: (1) **`juce::AudioBuffer::getMagnitude` is an overload trap -- a first
+argument meant as a channel index silently becomes startSample**; all 25 two-arg
+call sites were audited, only that one was wrong. (2) A clean ASan run does NOT
+clear uninitialised-read suspicions. (3) A recently tightened assertion can
+expose a long-standing latent fault: the old bound was `peak < 4.0`, so the 3.86
+case would have passed silently for weeks. (4) `build_release.sh` runs the suite
+under `set -e`, so this could have aborted release builds at random.
+Process error worth not repeating: the orchestrator speculated aloud that this
+might be connected to the 1.0.13 field reports of loud reverb bursts. **There is
+no evidence for that; 1.0.13 has a separate confirmed cause (the FDNReverb
+one-past-the-end read fixed in 1.0.14, a different engine.)**
+
+- **The 1.0.23 chaos waveform cue was drawn in modes the drift never reaches.**
+  `chaosPhase` is passed ONLY into `oscs[s].updateBlock`, i.e.
+  `WavetableOscillator::phaseOffset`; the sample/granular `else` branch never
+  receives it. `chaosPos` reaches the wavetable position and granular
+  `grainPos`; **sample mode gets neither.** So the cue moved the drawn FILE in
+  sample/granular where nothing in the audio matched. Now gated per mode in ONE
+  place (`WaveDisplay::chaosViz` is mode-aware) rather than at the three paint
+  sites, so there is no second copy to drift: wavetable keeps slide + stretch,
+  analog/FM/pluck keep stretch only (phaseOffset never reaches them),
+  noise/sample/granular get none. Sample and granular drawings are now
+  bit-identical with drift on and off; the sample/granular `columnPeak` site had
+  its cue removed outright, not merely zeroed.
+- **Per-kind browse folder.** `getLastContentFolder`/`setLastContentFolder`
+  shared ONE settings key, so picking a wavetable moved the folder the sample
+  chooser opened in. Split into `lastWavetableFolder`/`lastSampleFolder`
+  following the existing `lastIRFolder` precedent, with a fallback to the legacy
+  `lastContentFolder` key so no user's remembered folder resets. API is
+  `ContentKind { wavetable, sample }`.
+- **Delete user presets** (Mike approved right-click). Right-click a row ->
+  anchored menu -> "Move to Trash". `moveToTrash()`, NEVER `deleteFile()`, so it
+  is recoverable -- this file already records a tester recovering a preset
+  precisely because a tool trashed rather than deleted. Factory presets show the
+  item DISABLED (feedback beats a dead click) and are refused in three
+  independent places; `isUser` is the discriminator so bank-subfolder presets are
+  deletable. The favourite key (`category + "/" + name`) is removed BEFORE the
+  rescan or it lingers and re-attaches to a later preset of the same name.
+  Deleting the loaded preset leaves the sound untouched and only clears
+  `currentIndex` (so next/prev go to first/last, never out of range). Empty bank
+  folders are left alone deliberately. **Behaviour change: right-click no longer
+  loads a preset.** The menu goes through `showPopupAnchored`, never
+  `showMenuAsync`. No editor change was needed: `ContentComponent::mouseDown`
+  only shows the MIDI-Learn menu when it finds a `paramID` property walking up
+  from the event component, and nothing in the preset drawer has one, so the two
+  coexist without either swallowing the other.
+
+Suite 2003 -> **2071 assertions ALL PASS**, Debug + Release + **ASan x3**. Every
+fix verified to FAIL with itself reverted. **macOS 1.0.24 pkg** signed +
+notarized + stapled, `spctl` accepted, universal, `minos 11.0`, md5
+`fc94c8248c5f7beff742d92a4bc70645`. **Windows exe from draft release
+`ci-windows-0936a0a`** (CI run `35781146606`), md5
+`1730b309da84182a3e622ec6b70438e4`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.24/`. Repo is
+PUBLIC. Tester note `docs/tester-note-1.0.24.txt` flags both intentional
+behaviour changes up front (right-click, and the waveform no longer reacting in
+Sample/Granular) because each would otherwise come back as a bug report. **The
+changelog deliberately has NO reverb entry**: the only reverb-related change was
+the internal test fix, and mentioning it would imply a fault that never existed.
+
+**Pending: Mike installs (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.24-macOS.pkg -target /`,
+then Plug-in Manager -> Reset & Rescan -> relaunch Logic), runs the gauntlet,
+sends to Paul and Phil. Bump to 1.0.25 after that.** Open, not done: delay
+ping-pong WIDTH (still never started, several rounds old now); the wavetable
+chaos-PHASE stepping measured in 1.0.22 (step index 50.55 at default, wavetable
+only) is still unfixed pending Paul's answer on which oscillator type he heard
+the grit on; whether Hall's MIX taper should change is still a taste question
+for Phil; and the plate reverb's index bounds were confirmed **by reading, not
+by measurement** -- stress-proving the engine is a separate task nobody has done.
+
 ## Current state (2026-09-21): v1.0.23 (main `b6425d6`) built + staged; reverb normalised + retuned, stereo chorus, ASSIGN hidden-control fix, even-unison silence fix
 
 **1.0.22 (`24fa573`, 2026-09-20) WAS SENT to the testers** and never got its

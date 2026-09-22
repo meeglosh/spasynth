@@ -165,6 +165,41 @@ float WaveDisplay::normToX (float norm, juce::Rectangle<float> area) const
     return area.getX() + ((norm - viewStart) / viewLength) * area.getWidth();
 }
 
+// Visual gains for the chaos drift cues (see WaveDisplay::ChaosViz). The
+// audio-path drift at the registry DEFAULTS (depth 0.4 x mix 1.0, phase
+// amount 0.15 cycles, pitch amount 8 ct) is 0.06 cycles / 0.032 semitones
+// at a walker's full swing -- a 0.06-cycle slide is ~6% of the display
+// width and 0.032 semitones is invisible, which is why the shape hardly
+// moved before. Phase: 2x, so a default full-swing slide is 12% of the
+// width (the slide wraps, so at maximum the shape simply scrolls through
+// a whole cycle, never off the display). Pitch: 2^tanh(4 x semitones),
+// ~+-9% stretch at a default full swing, saturating at exactly 2x / 0.5x
+// (one octave, i.e. double / half the visible cycles) at the maximum
+// 1-semitone drift so it can never become cartoonish.
+constexpr float chaosVizPhaseGain = 2.0f;
+constexpr float chaosVizPitchGain = 4.0f;
+
+WaveDisplay::ChaosViz WaveDisplay::chaosViz (juce::Rectangle<float> area) const
+{
+    ChaosViz v;
+    if (! isLive())
+        return v;
+
+    const auto pitchSemis = telemetry->slotChaosPitch[(size_t) slot].load (std::memory_order_relaxed);
+    const auto phaseCycles = telemetry->slotChaosPhase[(size_t) slot].load (std::memory_order_relaxed);
+    if (pitchSemis == 0.0f && phaseCycles == 0.0f)
+        return v;
+
+    // Wrap the gained phase to [-0.5, 0.5) cycles so the slide is the
+    // shortest way round, then scale to pixels.
+    auto cycles = phaseCycles * chaosVizPhaseGain;
+    cycles -= std::floor (cycles + 0.5f);
+    v.slidePx = cycles * area.getWidth();
+
+    v.stretch = std::exp2 (std::tanh (pitchSemis * chaosVizPitchGain)) - 1.0f;
+    return v;
+}
+
 std::vector<WaveDisplay::XfadeRamp> WaveDisplay::getXfadeRamps() const
 {
     std::vector<XfadeRamp> out;
@@ -310,6 +345,26 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     const auto mode = (params::OscMode) (int) value (
         params::id::oscSlot (slot, params::id::osc::mode));
 
+    // Organic Chaos pitch / phase drift moves the drawn SHAPE (see
+    // WaveDisplay::ChaosViz): a drawn horizontal fraction `ph` (0..1 across
+    // the area) reads its source material at `chaosSrc (ph)` -- stretched
+    // about the centre by the pitch cue, slid by the phase cue, wrapped.
+    // Every mode below routes its read position through this one lambda so
+    // the cue reads the same on a wavetable frame, an ideal-cycle preview
+    // and a sample envelope. With no drift it returns `ph` untouched (not
+    // even a 0.5 +/- round trip), so the undrifted drawing stays
+    // bit-identical to the pre-chaos-viz one.
+    const auto viz = chaosViz (area);
+    const auto slideNorm = area.getWidth() > 0.0f ? viz.slidePx / area.getWidth() : 0.0f;
+    const auto chaosSrc = [&] (float ph)
+    {
+        if (viz.slidePx == 0.0f && viz.stretch == 0.0f)
+            return ph;
+        auto src = 0.5f + (ph - 0.5f) * (1.0f + viz.stretch) - slideNorm;
+        src -= std::floor (src);
+        return src;
+    };
+
     if (mode == params::OscMode::wavetable)
     {
         if (processor.isWavetableLoading (slot))
@@ -340,7 +395,7 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         constexpr int steps = 128;
         for (int i = 0; i <= steps; ++i)
         {
-            const auto idx = (int) ((float) i / steps * (dsp::Wavetable::tableSize - 1));
+            const auto idx = (int) (chaosSrc ((float) i / steps) * (dsp::Wavetable::tableSize - 1));
             const auto sample = a[idx] + frac * (b[idx] - a[idx]);
             const auto x = area.getX() + area.getWidth() * (float) i / steps;
             const auto y = area.getCentreY() - sample * area.getHeight() * 0.42f;
@@ -366,7 +421,8 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
         constexpr int steps = 160;
         for (int i = 0; i <= steps; ++i)
         {
-            const auto ph = (float) i / steps;
+            const auto drawPh = (float) i / steps;
+            const auto ph = chaosSrc (drawPh);
             float v = 0.0f;
 
             if (mode == params::OscMode::analog)
@@ -413,7 +469,7 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
                 v = white * std::exp (-(3.5f - 2.5f * damp) * ph);
             }
 
-            const auto x = area.getX() + area.getWidth() * ph;
+            const auto x = area.getX() + area.getWidth() * drawPh;
             const auto y = area.getCentreY() - v * area.getHeight() * 0.42f;
             if (i == 0)
                 wave.startNewSubPath (x, y);
@@ -471,8 +527,13 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     juce::Path fill;
     fill.startNewSubPath (area.getX(), area.getCentreY());
-    const auto columnPeak = [&] (int c)
+    const auto columnPeak = [&] (int drawColumn)
     {
+        // Drift cue: read the peak of the source column the drawn column
+        // maps to (identity when there is no drift).
+        const auto c = juce::jlimit (0, columns - 1, viz.slidePx == 0.0f && viz.stretch == 0.0f
+            ? drawColumn
+            : (int) (chaosSrc ((float) drawColumn / (float) (columns - 1)) * (float) (columns - 1)));
         const auto start = viewStartSample + (juce::int64) c * viewSampleCount / columns;
         const auto end = juce::jmin (numSamples,
                                      viewStartSample + (juce::int64) (c + 1) * viewSampleCount / columns);

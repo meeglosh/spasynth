@@ -18784,6 +18784,233 @@ static void reverbNormalisationTest()
     }
 }
 
+// --- Organic Chaos waveform visualization (slotChaosPitch/Phase) ------------
+// Tester feedback: "the oscillator waveform meters should react a little
+// more to the chaos inputs". Only position drift reached the WaveDisplay
+// (folded into slotPosition); pitch and phase drift were never published.
+
+// Finds the first WaveDisplay (OSC A) in a live editor tree.
+static spa::ui::WaveDisplay* findFirstWaveDisplay (juce::Component& root)
+{
+    if (auto* w = dynamic_cast<spa::ui::WaveDisplay*> (&root))
+        return w;
+    for (auto* child : root.getChildren())
+        if (auto* w = findFirstWaveDisplay (*child))
+            return w;
+    return nullptr;
+}
+
+// The narrating voice publishes the pitch / phase drift the audio path
+// applies: non-zero while chaos is active with that drift on and a note
+// sounding; exactly 0 when chaos is disabled or that drift is switched off.
+// Real processor, real ChaosGenerator, no stubs.
+static void chaosVizTelemetryTest()
+{
+    std::cout << "chaosVizTelemetryTest\n";
+    namespace id = spa::params::id;
+
+    // Runs ~0.5 s of a held note and reports the peak |drift| seen per block
+    // for slot 0 (the default-enabled OSC A).
+    struct Peaks { float pitch = 0.0f, phase = 0.0f; };
+    const auto run = [] (bool enable, bool pitchOn, bool phaseOn) -> Peaks
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::chaos::enable, enable ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::depth, 1.0f);
+        setParam (proc, id::chaos::mix, 1.0f);
+        setParam (proc, id::chaos::rate, 8.0f);
+        setParam (proc, id::chaos::pitchOn, pitchOn ? 1.0f : 0.0f);
+        setParam (proc, id::chaos::phaseOn, phaseOn ? 1.0f : 0.0f);
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::analog);
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        auto& tel = proc.getTelemetry();
+        Peaks pk;
+        for (int b = 0; b < (int) (48000.0 * 0.5 / 512); ++b)
+        {
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            pk.pitch = juce::jmax (pk.pitch, std::abs (tel.slotChaosPitch[0].load()));
+            pk.phase = juce::jmax (pk.phase, std::abs (tel.slotChaosPhase[0].load()));
+        }
+        return pk;
+    };
+
+    const auto on = run (true, true, true);
+    expect (on.pitch > 1.0e-4f, "slotChaosPitch non-zero with chaos on, pitch drift on (peak "
+                                + juce::String (on.pitch) + " st)");
+    expect (on.phase > 1.0e-4f, "slotChaosPhase non-zero with chaos on, phase drift on (peak "
+                                + juce::String (on.phase) + " cyc)");
+    expect (on.pitch <= 1.0f + 1.0e-4f, "pitch drift never exceeds the 100 ct maximum");
+    expect (on.phase <= 1.0f + 1.0e-4f, "phase drift never exceeds the 1-cycle maximum");
+
+    const auto off = run (false, true, true);
+    expect (off.pitch == 0.0f && off.phase == 0.0f, "both drifts read exactly 0 with chaos disabled");
+
+    const auto noPitch = run (true, false, true);
+    expect (noPitch.pitch == 0.0f, "slotChaosPitch exactly 0 with pitch drift off");
+    expect (noPitch.phase > 1.0e-4f, "slotChaosPhase still non-zero with pitch drift off");
+
+    const auto noPhase = run (true, true, false);
+    expect (noPhase.phase == 0.0f, "slotChaosPhase exactly 0 with phase drift off");
+    expect (noPhase.pitch > 1.0e-4f, "slotChaosPitch still non-zero with phase drift off");
+}
+
+// The WaveDisplay's reported slide / stretch is non-zero only when the slot
+// is live AND telemetry carries drift, and paintDisplay() draws through the
+// same geometry: the painted image changes exactly when the getter says it
+// does, and is bit-identical to the idle drawing when the drifts read 0.
+static void chaosVizDisplayTest()
+{
+    std::cout << "chaosVizDisplayTest\n";
+    namespace id = spa::params::id;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::analog);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    editor->resized();
+
+    auto* wave = findFirstWaveDisplay (*editor);
+    expect (wave != nullptr, "WaveDisplay found");
+    if (wave == nullptr)
+        return;
+
+    const auto render = [&]
+    {
+        juce::Image image (juce::Image::ARGB, juce::jmax (1, wave->getWidth()),
+                           juce::jmax (1, wave->getHeight()), true);
+        juce::Graphics g (image);
+        wave->paintEntireComponent (g, false);
+        return image;
+    };
+    const auto identical = [] (const juce::Image& a, const juce::Image& b)
+    {
+        if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+            return false;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                    return false;
+        return true;
+    };
+
+    auto& tel = proc.getTelemetry();
+
+    // Idle (no voices): zero, regardless of what telemetry holds.
+    tel.slotChaosPitch[0].store (0.3f);
+    tel.slotChaosPhase[0].store (0.2f);
+    auto v = wave->getChaosVizOffsetsForTest();
+    expect (v.slidePx == 0.0f && v.stretch == 0.0f, "idle slot reports exactly zero slide/stretch");
+    const auto idleImage = render();
+
+    // Live with drift: non-zero, and the drawing moves.
+    tel.activeVoices.store (1);
+    v = wave->getChaosVizOffsetsForTest();
+    expect (v.slidePx != 0.0f, "live slot with phase drift reports non-zero slide ("
+                               + juce::String (v.slidePx) + " px)");
+    expect (v.stretch != 0.0f, "live slot with pitch drift reports non-zero stretch ("
+                               + juce::String (v.stretch) + ")");
+    const auto driftImage = render();
+    expect (! identical (idleImage, driftImage), "paint applies the reported drift (image differs)");
+
+    // Phase only / pitch only, so each cue is independently observable.
+    tel.slotChaosPitch[0].store (0.0f);
+    v = wave->getChaosVizOffsetsForTest();
+    expect (v.slidePx != 0.0f && v.stretch == 0.0f, "phase-only drift: slide non-zero, stretch exactly 0");
+    tel.slotChaosPitch[0].store (0.3f);
+    tel.slotChaosPhase[0].store (0.0f);
+    v = wave->getChaosVizOffsetsForTest();
+    expect (v.slidePx == 0.0f && v.stretch != 0.0f, "pitch-only drift: stretch non-zero, slide exactly 0");
+
+    // Live but drifts read 0: zero, and bit-identical to the idle drawing.
+    tel.slotChaosPitch[0].store (0.0f);
+    v = wave->getChaosVizOffsetsForTest();
+    expect (v.slidePx == 0.0f && v.stretch == 0.0f, "live slot with zero drift reports exactly zero");
+    expect (identical (idleImage, render()), "zero drift paints bit-identically to the idle drawing");
+
+    tel.activeVoices.store (0);
+}
+
+// Visibility bar, measured at the real display size: at the REGISTRY
+// DEFAULT drift amounts (walker at full swing) the phase slide must be
+// clearly visible, and at the maximum amounts both cues stay bounded
+// (slide within +-width/2 by construction, stretch within one octave).
+static void chaosVizVisibilityTest()
+{
+    std::cout << "chaosVizVisibilityTest\n";
+    namespace id = spa::params::id;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    editor->resized();
+
+    auto* wave = findFirstWaveDisplay (*editor);
+    expect (wave != nullptr, "WaveDisplay found");
+    if (wave == nullptr)
+        return;
+
+    const auto width = wave->waveArea().getWidth();
+    expect (width > 50.0f, "wave area has a real width (" + juce::String (width) + " px)");
+
+    // Registry defaults, read from the fresh APVTS rather than assumed.
+    const auto def = [&] (const juce::String& pid)
+    {
+        auto* p = proc.getAPVTS().getParameter (pid);
+        return p != nullptr ? p->convertFrom0to1 (p->getDefaultValue()) : 0.0f;
+    };
+    const auto scale = def (id::chaos::depth) * def (id::chaos::mix);
+    const auto defPitch = def (id::chaos::pitchAmount) * 0.01f * scale;   // semitones
+    const auto defPhase = def (id::chaos::phaseAmount) * scale;           // cycles
+    std::cout << "  defaults: depth " << def (id::chaos::depth) << " mix " << def (id::chaos::mix)
+              << " pitchAmt " << def (id::chaos::pitchAmount) << " ct phaseAmt "
+              << def (id::chaos::phaseAmount) << " -> drift " << defPitch << " st, "
+              << defPhase << " cyc\n";
+
+    auto& tel = proc.getTelemetry();
+    tel.activeVoices.store (1);
+    tel.slotChaosPitch[0].store (defPitch);
+    tel.slotChaosPhase[0].store (defPhase);
+    const auto atDefault = wave->getChaosVizOffsetsForTest();
+    const auto defaultStretchPx = std::abs (atDefault.stretch) * width * 0.5f;   // edge movement
+    std::cout << "  at defaults: slide " << atDefault.slidePx << " px, stretch "
+              << atDefault.stretch << " (" << defaultStretchPx << " px at the edges) of "
+              << width << " px\n";
+
+    // The "clearly visible" bar: at least 10 px of slide at defaults, never
+    // more than half the display (the wrap point).
+    expect (std::abs (atDefault.slidePx) >= 10.0f,
+            "default phase drift slides the shape >= 10 px (" + juce::String (atDefault.slidePx) + ")");
+    expect (std::abs (atDefault.slidePx) <= width * 0.5f, "default slide within +-width/2");
+
+    // Maximum amounts: depth 1, mix 1, pitch 100 ct, phase 1 cycle.
+    tel.slotChaosPitch[0].store (1.0f);
+    tel.slotChaosPhase[0].store (1.0f);
+    const auto atMax = wave->getChaosVizOffsetsForTest();
+    std::cout << "  at maximum: slide " << atMax.slidePx << " px, stretch " << atMax.stretch
+              << " (" << std::abs (atMax.stretch) * width * 0.5f << " px at the edges)\n";
+    expect (std::abs (atMax.slidePx) <= width * 0.5f, "maximum slide within +-width/2");
+    expect (atMax.stretch > 0.0f && atMax.stretch <= 1.0f + 1.0e-4f,
+            "maximum pitch-up stretch caps at one octave (2x)");
+    // The slide wraps, so a half-cycle drift is the largest possible slide.
+    tel.slotChaosPhase[0].store (0.25f);
+    expect (std::abs (std::abs (wave->getChaosVizOffsetsForTest().slidePx) - width * 0.5f) < 1.0f,
+            "a quarter-cycle drift (x2 gain) is the half-width wrap point");
+    tel.slotChaosPitch[0].store (-1.0f);
+    const auto down = wave->getChaosVizOffsetsForTest().stretch;
+    expect (down < 0.0f && down >= -0.5f - 1.0e-4f, "maximum pitch-down stretch caps at 0.5x");
+
+    tel.activeVoices.store (0);
+}
+
+
 
 int main (int argc, char* argv[])
 {
@@ -19095,6 +19322,65 @@ int main (int argc, char* argv[])
     // Temporary visual-review render for the stereo chorus (WIDTH knob +
     // MODE selector). Remove after review, same as --snapshot-assign's
     // pattern.
+    // Visual-review render for the chaos waveform cue: OSC A analog saw,
+    // a note held with chaos at the REGISTRY DEFAULTS (on) and with chaos
+    // disabled (off), captured mid-drift. Prints the geometry actually
+    // applied so the still frame can be interpreted.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-chaosviz")
+    {
+        namespace id = spa::params::id;
+        for (const bool chaosOn : { true, false })
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setParam (proc, id::chaos::enable, chaosOn ? 1.0f : 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::analog);
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+            editor->addToDesktop (0);
+            editor->setVisible (true);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            // ~2 s of audio (the walkers sit at exactly 0 until their first
+            // target renewal at the default 2 Hz rate), pumping the message
+            // loop between blocks so the 24 Hz display timer runs.
+            for (int b = 0; b < 190; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                if (b % 8 == 7)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            }
+
+            if (auto* wave = findFirstWaveDisplay (*editor))
+            {
+                const auto v = wave->getChaosVizOffsetsForTest();
+                std::cout << (chaosOn ? "chaos on" : "chaos off") << ": pitch "
+                          << proc.getTelemetry().slotChaosPitch[0].load() << " st, phase "
+                          << proc.getTelemetry().slotChaosPhase[0].load() << " cyc -> slide "
+                          << v.slidePx << " px, stretch " << v.stretch << "\n";
+            }
+
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+            const juce::File outDir (argv[2]);
+            outDir.createDirectory();
+            const auto file = outDir.getChildFile (chaosOn ? "spasynth-chaosviz-on.png"
+                                                           : "spasynth-chaosviz-off.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+            editor->removeFromDesktop();
+        }
+        return 0;
+    }
+
     if (argc >= 3 && juce::String (argv[1]) == "--snapshot-chorus")
     {
         namespace id = spa::params::id;
@@ -19452,6 +19738,9 @@ int main (int argc, char* argv[])
     RUN (chorusWidthPercentPlumbingTest);
     RUN (unisonBlendCentreTest);
     RUN (reverbNormalisationTest);
+    RUN (chaosVizTelemetryTest);
+    RUN (chaosVizDisplayTest);
+    RUN (chaosVizVisibilityTest);
 
    #undef RUN
 

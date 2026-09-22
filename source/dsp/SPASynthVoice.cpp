@@ -687,6 +687,16 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
                 const auto& stat = shared.slots[(size_t) s];
                 const auto slotChaosPos = chaosActive && ch.positionOn
                     ? chaosGen.slotPosition (s) * ch.positionAmount * chaosScale : 0.0f;
+
+                // Pitch / phase drift, computed exactly as the per-slot audio
+                // path above does (which skips disabled slots -- publish 0
+                // for those so the display never shows a stale drift).
+                const auto slotChaosPitch = stat.enabled && chaosActive && ch.pitchOn
+                    ? chaosGen.slotPitch (s) * ch.pitchAmountCents * 0.01f * chaosScale : 0.0f;
+                const auto slotChaosPhase = stat.enabled && chaosActive && ch.phaseOn
+                    ? chaosGen.slotPhase (s) * ch.phaseAmount * chaosScale : 0.0f;
+                tel->slotChaosPitch[(size_t) s].store (slotChaosPitch, std::memory_order_relaxed);
+                tel->slotChaosPhase[(size_t) s].store (slotChaosPhase, std::memory_order_relaxed);
                 float pos = 0.0f;
                 if (stat.mode == params::OscMode::wavetable)
                     pos = juce::jlimit (0.0f, 1.0f,

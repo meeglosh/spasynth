@@ -26,6 +26,15 @@ struct Telemetry
     // sample playhead, or grain-cloud centre, by mode).
     std::array<std::atomic<float>, params::maxOscSlots> slotPosition {};
 
+    // Organic Chaos pitch / phase drift per slot, as the audio path applies
+    // them this chunk (semitones added to the oscillator pitch; cycles fed to
+    // the wavetable phase offset). Exactly 0 while chaos is inactive, that
+    // drift is switched off, or the slot is disabled, so the WaveDisplay can
+    // draw the undrifted shape bit-identically rather than a stale value.
+    // Position drift is already folded into slotPosition above.
+    std::array<std::atomic<float>, params::maxOscSlots> slotChaosPitch {};   // semitones
+    std::array<std::atomic<float>, params::maxOscSlots> slotChaosPhase {};   // cycles
+
     // Live granular grain cloud per slot, for the animated waveform playheads:
     // each active grain's normalized read position (0..1) and window amplitude
     // (0..1); count is how many entries are valid. Cosmetic only, so relaxed

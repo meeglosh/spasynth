@@ -100,8 +100,30 @@ public:
     };
     std::vector<XfadeRamp> getXfadeRamps() const;
 
+    // Organic Chaos visualization geometry: how the drawn waveform SHAPE is
+    // displaced this paint, from the pitch / phase drift the narrating voice
+    // publishes (Telemetry::slotChaosPitch/Phase). Phase drift slides the
+    // shape horizontally (wrapping), pitch drift stretches it about the
+    // centre (pitch up = more cycles visible). Both carry a deliberate
+    // visual gain (see chaosVizPhaseGain / chaosVizPitchGain in
+    // Displays.cpp) so the DEFAULT drift amounts read on the display.
+    // Position drift is not here -- it already reaches the display through
+    // slotPosition. SINGLE SOURCE of the drawn geometry: paintDisplay()
+    // applies exactly this (via chaosViz()), and tests read it through
+    // getChaosVizOffsetsForTest() without a pixel read. Both are exactly 0
+    // (no displacement) whenever the slot is idle, chaos is inactive, or
+    // that drift is off, so the drawing is then bit-identical to the
+    // undrifted one.
+    struct ChaosViz
+    {
+        float slidePx = 0.0f;   // horizontal slide of the shape, pixels, wrapped to +-width/2
+        float stretch = 0.0f;   // horizontal scale factor minus 1 (0 = none; >0 = more cycles)
+    };
+    ChaosViz getChaosVizOffsetsForTest() const { return chaosViz (waveArea()); }
+
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+    ChaosViz chaosViz (juce::Rectangle<float> area) const;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void zoomAt (float normCursor, float factor);
 

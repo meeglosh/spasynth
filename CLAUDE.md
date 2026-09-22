@@ -130,7 +130,21 @@ Suite **1904 -> 1977 assertions ALL PASS**, Debug + Release + **ASan x3**
 **macOS 1.0.23 pkg** signed + notarized + stapled, `spctl` accepted,
 universal, minos 11.0,
 macOS md5 `4e698e94fcd1292c91357443b586de4d`
-Windows md5 `932f78c43d8e06a10ec8e5dce3aaff58` (`ci-windows-b6425d6`, CI run `35676577098` (re-run))
+Windows md5 `932f78c43d8e06a10ec8e5dce3aaff58` (`ci-windows-26d96f1`, CI run `35676577098` (re-run))
+**Final 1.0.23 artifacts are from the in-place rebuild at `26d96f1`** (the
+`b6425d6` pkg/exe were superseded and overwritten). **Incident:** the first
+CI run on `26d96f1` built fine but the "Publish installer to draft release"
+step got `HTTP 403: Resource not accessible by integration` on the asset
+upload (draft created, 0 assets) -- GitHub-side flake, same night as an API
+529; visibility was still PUBLIC and the workflow unchanged. `gh run rerun
+--failed <id>` WORKED (exit 0, re-queued on the same SHA), so the note that
+the PAT lacks Actions:write is stale -- try `gh run rerun` before the
+empty-commit workaround. The workflow's delete-existing-draft logic cleaned
+up the orphan. **Process slip, recorded:** the hash/notes edit was chained
+under `set -e` behind a heredoc'd python step that asserted on a guessed
+anchor; the chain did not stop, so `1b4d243` shipped the hash swap without
+this note, and a second attempt guessed again. Anchor on text you have
+READ, and guard on file CONTENT after an interpreter step.
 Both byte-identical across `dist/installers/` and
 `dist/shopify/SPASynth-{Standard,Pro}-1.0.23/`. Repo is PUBLIC. Paste-ready
 tester note: `docs/tester-note-1.0.23.txt`.

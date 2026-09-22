@@ -34,6 +34,18 @@
   BLEND fully down muted everything. The innermost pair now stands in for
   the center, so BLEND at 0 still sounds. This is also reachable by
   modulation, which is how we found it.
+- The oscillator waveform displays now visibly react to Organic Chaos.
+  Before, only chaos position drift reached the display, and only
+  indirectly, so unless the chaos amounts were cranked the waveform barely
+  moved even though the sound was drifting. The display now shows chaos
+  pitch and phase drift too, in every oscillator mode while a note is
+  sounding: the drawn shape slides sideways with phase drift and stretches
+  or compresses with pitch drift, clearly visible but modest at the
+  default settings, and capped at maximum so it never becomes a scribble.
+  When chaos is off, or the oscillator is idle, the display draws exactly
+  as it did before; the one limit is Noise mode, where the shape is random
+  by nature, so the drift cue is not visible there. This came from
+  feedback.
 
 
 

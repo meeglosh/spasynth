@@ -6,6 +6,7 @@ This round is fixes from the 1.0.22 feedback, including the reverb question.
 - Chorus is now genuinely stereo, with a WIDTH control and a Vintage / Modern mode. The old chorus moved both channels together, so it imaged as mono and could read as a phaser. WIDTH sets how far apart the two channels move, from together at 0 to fully opposed at 100; Vintage is modelled on the bucket-brigade chorus of an early-80s analogue polysynth, darker and swirlier, and Modern is clean and full-bandwidth. Defaults are Modern and WIDTH 50, so existing presets pick up the width. That change to existing presets is intended.
 - ASSIGN could pick a hidden control. In DEST mode, clicking a knob could assign a parameter hidden underneath it, left over from a previous oscillator engine, so choosing FM Ratio could write Pluck Damp. Hidden controls are no longer assignable.
 - An oscillator could go silent at BLEND 0 with an even unison count, because there was no centre voice to fall back on. The innermost pair now stands in for the centre, so BLEND at 0 still sounds.
+- The oscillator waveform displays now visibly react to Organic Chaos. Before, only chaos position drift reached the display, and only indirectly, so unless the chaos amounts were cranked the waveform barely moved even though the sound was drifting. The display now shows chaos pitch and phase drift too, in every oscillator mode while a note is sounding: the shape slides sideways with phase drift and stretches or compresses with pitch drift, clearly visible but modest at the default settings, and capped at maximum so it never becomes a scribble. When chaos is off, or the oscillator is idle, the display draws exactly as before; the one limit is Noise mode, where the shape is random by nature, so the drift cue is not visible there.
 - Not in this build: the delay ping-pong WIDTH request. It is still on the list.
 
 Worth trying specifically
@@ -13,6 +14,7 @@ Worth trying specifically
 - Chorus on a pad, in both Vintage and Modern, with WIDTH swept from 0 to 100. Listen for it going from mono to wide, and for Vintage being darker and swirlier than Modern.
 - ASSIGN: put an oscillator in Pluck, switch it to FM, then DEST-assign INDEX and confirm the matrix shows FM Index, not a Pluck parameter. Note that RATIO is not a modulation target, so clicking it in DEST mode now selects nothing; before this fix it silently picked the hidden Pluck Damp underneath it.
 - Set an even unison count (2, 4, 6 or 8), turn BLEND fully down, and confirm the oscillator still makes sound.
+- Organic Chaos: turn it on with pitch and phase drift enabled at their default amounts, hold a note, and watch the oscillator waveform wander; then turn chaos off and confirm it goes still.
 
 Install notes
 - macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.

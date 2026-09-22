@@ -99,6 +99,29 @@ three are in, one is not.
    test in 1.0.20. **Rule: adding any randomizable param reshuffles seeds
    and can surface latent bugs; that is the guard working, not noise.**
 
+**Added before the 1.0.23 build went out (rebuilt in place, never sent):
+oscillator waveform displays now react to chaos.** Mike: "it does a little
+when parameters are cranked, otherwise hard to see". Cause: `WaveDisplay`
+read only `slotPosition` + `grainViz`; chaos pitch and phase drift were
+NEVER published, so only position drift reached the display, indirectly.
+Fix: `Telemetry::slotChaosPitch` (semitones) / `slotChaosPhase` (cycles),
+stored in the writerSerial-gated narration block in `computeChunk` next to
+`slotPosition`, exactly 0 when chaos/that drift/the slot is off. Display:
+`WaveDisplay::chaosViz()` -- phase = horizontal slide with wrap
+(`chaosVizPhaseGain 2.0`), pitch = stretch about centre via
+`2^tanh(4*semis)-1` so it saturates at 2x/0.5x; every mode routes its read
+position through one `chaosSrc(ph)` lambda; bit-identical when drifts read
+0. Measured at defaults (depth 0.4, mix 1, pitchAmt **8 ct**, phaseAmt
+0.15): slide 39.5px at full walker swing (12% of a 329px strip), pitch
+stretch +/-9%. **Correction on record: I told the agent pitchAmount
+defaulted to 1.0 (a bad awk parse); it read the registry and found 8 ct.
+Always read the registry, never a summary.** Noise mode shows no cue (shape
+is per-step random). `chaosVizTelemetryTest/DisplayTest/VisibilityTest`;
+both anti-vacuous reverts fail. Suite 1977 -> 2003 ALL PASS. The agent was
+killed mid-task by an API 529 and resumed via SendMessage from the on-disk
+state (telemetry half + display half were already complete; only tests
+remained) -- resume the same agent, do not restart, when that happens.
+
 **NOT in 1.0.23:** delay ping-pong WIDTH (Phil's item 1) -- never started;
 the tester note says so.
 

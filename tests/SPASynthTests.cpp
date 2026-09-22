@@ -3632,6 +3632,48 @@ namespace
     // full reverb.) Settle the gain smoothing on silence, then probe the first
     // sample of an impulse — the reverb tail is still silent there, so that
     // sample is essentially the dry signal scaled by the dry level.
+    // Guards the measurement idiom the level tests rely on. juce::AudioBuffer
+    // over-allocates 32 uninitialised bytes past the sample data
+    // (allocateData: numChannels*size*sizeof(Type) + channelListSize + 32),
+    // and clear() never touches them. So any magnitude/RMS query whose
+    // startSample+numSamples exceeds the block length reads stale heap and
+    // reports it as signal -- deterministic here, but in a real test run it
+    // looks like a random, order-dependent DSP explosion.
+    static void bufferMagnitudeInRangeTest()
+    {
+        std::cout << "bufferMagnitudeInRangeTest\n";
+        constexpr int n = 512;
+        juce::AudioBuffer<float> buf (2, n);
+        buf.clear();
+        for (int ch = 0; ch < 2; ++ch)
+            for (int s = 0; s < n; ++s)
+                buf.setSample (ch, s, 0.25f);
+
+        // Plant a sentinel in JUCE's own trailing slack (inside the malloc'd
+        // block, so this is not a heap overflow) to stand in for whatever the
+        // previous occupant of that chunk left behind.
+        const float poison = 9.99e23f;
+        std::memcpy (buf.getWritePointer (1) + n, &poison, sizeof (float));
+
+        const float allChannels = buf.getMagnitude (0, n);
+        expect (allChannels > 0.24f && allChannels < 0.26f,
+                "getMagnitude(0, n) scans every channel in range only ("
+                + juce::String (allChannels) + ")");
+
+        float manual = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int s = 0; s < n; ++s)
+                manual = juce::jmax (manual, std::abs (buf.getSample (ch, s)));
+        expect (std::abs (manual - allChannels) < 1.0e-6f,
+                "in-range magnitude matches an explicit per-sample scan");
+
+        // And prove the sentinel really is reachable by an off-by-one query,
+        // so this test fails loudly if anyone reintroduces one.
+        expect (buf.getMagnitude (1, n) > 1.0e20f,
+                "a startSample=1,numSamples=n query does read past the block "
+                "(that is exactly the bug this test exists to prevent)");
+    }
+
     static void reverbMixTest()
     {
         std::cout << "reverbMixTest\n";
@@ -3743,7 +3785,16 @@ namespace
                             buf.setSample (1, s, noise() * 0.5f);
                         }
                     fx.process (buf, mp);
-                    peak = juce::jmax (peak, buf.getMagnitude (0, n), buf.getMagnitude (1, n));
+                    // getMagnitude(startSample, numSamples) already scans EVERY
+                    // channel -- it is not the (channel, start, num) overload.
+                    // The second call here used to be getMagnitude(1, n), read
+                    // as "channel 1", which actually means samples 1..n: one
+                    // past the block, into the uninitialised 32-byte tail JUCE
+                    // over-allocates in AudioBuffer::allocateData. That stale
+                    // heap word became the reported "peak", producing bogus
+                    // failures up to 9.5e24 that were order- and
+                    // layout-dependent (see bufferMagnitudeInRangeTest).
+                    peak = juce::jmax (peak, buf.getMagnitude (0, n));
                 }
                 minPeak = juce::jmin (minPeak, peak);
                 maxPeak = juce::jmax (maxPeak, peak);
@@ -18860,9 +18911,13 @@ static void chaosVizTelemetryTest()
 }
 
 // The WaveDisplay's reported slide / stretch is non-zero only when the slot
-// is live AND telemetry carries drift, and paintDisplay() draws through the
-// same geometry: the painted image changes exactly when the getter says it
-// does, and is bit-identical to the idle drawing when the drifts read 0.
+// is live AND telemetry carries drift AND the cue is legitimate for the
+// current osc mode, and paintDisplay() draws through the same geometry: the
+// painted image changes exactly when the getter says it does, and is
+// bit-identical to the idle drawing when the drifts read 0. This test drives
+// WAVETABLE mode, the one mode where both cues are honest (phase drift only
+// ever reaches WavetableOscillator); the per-mode rule itself is asserted by
+// chaosVizPerModeCueTest.
 static void chaosVizDisplayTest()
 {
     std::cout << "chaosVizDisplayTest\n";
@@ -18870,7 +18925,7 @@ static void chaosVizDisplayTest()
 
     spa::SPASynthProcessor proc;
     proc.prepareToPlay (48000.0, 512);
-    setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::analog);
+    setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::wavetable);
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
     editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
@@ -18948,6 +19003,9 @@ static void chaosVizVisibilityTest()
 
     spa::SPASynthProcessor proc;
     proc.prepareToPlay (48000.0, 512);
+    // The phase slide only exists in wavetable mode (see chaosViz()), so the
+    // visibility bar for it has to be measured there.
+    setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) spa::params::OscMode::wavetable);
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
     editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
     editor->resized();
@@ -19010,6 +19068,460 @@ static void chaosVizVisibilityTest()
     tel.activeVoices.store (0);
 }
 
+// The per-mode rule for the chaos drift cue (see chaosViz() in
+// Displays.cpp). A cue may only be drawn where the drift it stands for
+// actually reaches that engine's audio AND the drawn thing represents that
+// quantity. Concretely, in SPASynthVoice::computeChunk the phase drift is
+// handed only to WavetableOscillator, and the sample/granular display draws
+// the audio FILE, which no drift moves. So, with identical non-zero
+// telemetry in every mode:
+//   wavetable           slide != 0 and stretch != 0
+//   analog / FM / pluck stretch != 0, slide EXACTLY 0
+//   noise               both EXACTLY 0
+//   sample / granular   both EXACTLY 0
+// This shipped wrong in 1.0.23 (a tester saw the sample/granular waveform
+// moving although nothing in the audio moved with it).
+static void chaosVizPerModeCueTest()
+{
+    std::cout << "chaosVizPerModeCueTest\n";
+    namespace id = spa::params::id;
+    using Mode = spa::params::OscMode;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    editor->resized();
+
+    auto* wave = findFirstWaveDisplay (*editor);
+    expect (wave != nullptr, "WaveDisplay found");
+    if (wave == nullptr)
+        return;
+
+    // Real telemetry values, well inside the legal drift ranges, held
+    // constant so every mode below is judged on exactly the same input.
+    auto& tel = proc.getTelemetry();
+    tel.activeVoices.store (1);
+    tel.slotChaosPitch[0].store (0.3f);
+    tel.slotChaosPhase[0].store (0.2f);
+
+    const auto vizIn = [&] (Mode m)
+    {
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) m);
+        return wave->getChaosVizOffsetsForTest();
+    };
+
+    const auto wt = vizIn (Mode::wavetable);
+    expect (wt.slidePx != 0.0f && wt.stretch != 0.0f,
+            "wavetable keeps both cues (slide " + juce::String (wt.slidePx)
+            + " px, stretch " + juce::String (wt.stretch) + ")");
+
+    for (const auto m : { Mode::analog, Mode::fm, Mode::pluck })
+    {
+        const auto v = vizIn (m);
+        expect (v.stretch != 0.0f, "ideal-cycle preview keeps the pitch stretch (mode "
+                                   + juce::String ((int) m) + ")");
+        expect (v.slidePx == 0.0f, "ideal-cycle preview has EXACTLY zero phase slide (mode "
+                                   + juce::String ((int) m) + ")");
+    }
+
+    const auto noise = vizIn (Mode::noise);
+    expect (noise.slidePx == 0.0f && noise.stretch == 0.0f,
+            "noise has no cue at all (both exactly zero)");
+
+    const auto smp = vizIn (Mode::sample);
+    expect (smp.slidePx == 0.0f && smp.stretch == 0.0f,
+            "sample has no cue at all (both exactly zero)");
+
+    const auto gran = vizIn (Mode::granular);
+    expect (gran.slidePx == 0.0f && gran.stretch == 0.0f,
+            "granular has no cue at all (both exactly zero)");
+
+    // And the painted image proves it for a REAL loaded file: with the same
+    // drift telemetry live, the drawn sample/granular waveform must be
+    // bit-identical to the undrifted drawing. (Without a file loaded the
+    // display draws a placeholder, which would make this vacuous, so the
+    // file is loaded first and its arrival asserted.)
+    const auto numSamples = 48000;
+    juce::AudioBuffer<float> buffer (1, numSamples);
+    for (int i = 0; i < numSamples; ++i)
+        buffer.setSample (0, i, (float) std::sin (juce::MathConstants<double>::twoPi * 220.0
+                                                  * i / 48000.0)
+                                * (0.2f + 0.8f * (float) i / (float) numSamples));
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("spasynth-chaosviz-mode", ".wav");
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+        auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
+                                                       .withSampleRate (48000.0)
+                                                       .withNumChannels (1)
+                                                       .withBitsPerSample (24));
+        if (writer != nullptr)
+            writer->writeFromAudioSampleBuffer (buffer, 0, numSamples);
+    }
+
+    proc.loadSampleFromFile (0, file);
+    bool loaded = false;
+    const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) 15000;
+    while (juce::Time::getMillisecondCounter() < deadline)
+    {
+        if (proc.getSampleName (0).isNotEmpty() || proc.getSampleError (0).isNotEmpty())
+        {
+            loaded = proc.getSampleError (0).isEmpty();
+            break;
+        }
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    }
+    expect (loaded, "per-mode cue test sample loads");
+
+    const auto render = [&]
+    {
+        juce::Image image (juce::Image::ARGB, juce::jmax (1, wave->getWidth()),
+                           juce::jmax (1, wave->getHeight()), true);
+        juce::Graphics g (image);
+        wave->paintEntireComponent (g, false);
+        return image;
+    };
+    // One assertion per image pair, never one per pixel.
+    const auto identical = [] (const juce::Image& a, const juce::Image& b)
+    {
+        if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+            return false;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                    return false;
+        return true;
+    };
+
+    for (const auto m : { Mode::sample, Mode::granular })
+    {
+        setParam (proc, id::oscSlot (0, id::osc::mode), (float) (int) m);
+        tel.slotChaosPitch[0].store (0.0f);
+        tel.slotChaosPhase[0].store (0.0f);
+        const auto still = render();
+        tel.slotChaosPitch[0].store (0.3f);
+        tel.slotChaosPhase[0].store (0.2f);
+        expect (identical (still, render()),
+                "the drawn file waveform does not move with chaos drift (mode "
+                + juce::String ((int) m) + ")");
+    }
+
+    tel.activeVoices.store (0);
+    tel.slotChaosPitch[0].store (0.0f);
+    tel.slotChaosPhase[0].store (0.0f);
+    file.deleteFile();
+}
+
+// The last-browsed content folder is remembered SEPARATELY for wavetables
+// and for samples/SFX (tester request: picking one used to move where the
+// other opened), and an existing user's single pre-1.0.24
+// "lastContentFolder" value still seeds both until each kind is browsed on
+// its own. Hermetic: the suite redirects the settings file to a temp dir.
+static void lastContentFolderPerKindTest()
+{
+    std::cout << "lastContentFolderPerKindTest\n";
+    using Kind = spa::library::ContentKind;
+
+    const auto settingsFile = spa::library::getSettingsFile();
+    expect (settingsFile.getFullPathName().contains ("SPASynthTests-settings-"),
+            "content-folder test runs against the hermetic settings file");
+
+    const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    const auto mkdir = [&] (const juce::String& name)
+    {
+        const auto d = tmp.getChildFile (name + juce::String (juce::Random::getSystemRandom().nextInt (1000000)));
+        d.createDirectory();
+        return d;
+    };
+    const auto wtDir = mkdir ("spasynth-wt-");
+    const auto smpDir = mkdir ("spasynth-smp-");
+    const auto legacyDir = mkdir ("spasynth-legacy-");
+
+    // Independence: each kind remembers its own, and setting one never
+    // moves the other.
+    spa::library::clearContentFolderKeysForTest();
+    spa::library::setLastContentFolder (Kind::wavetable, wtDir.getChildFile ("a.wav"));
+    expect (spa::library::getLastContentFolder (Kind::wavetable) == wtDir,
+            "wavetable folder remembered");
+    expect (spa::library::getLastContentFolder (Kind::sample) != wtDir,
+            "picking a wavetable does NOT move the sample folder");
+
+    spa::library::setLastContentFolder (Kind::sample, smpDir.getChildFile ("b.wav"));
+    expect (spa::library::getLastContentFolder (Kind::sample) == smpDir,
+            "sample folder remembered");
+    expect (spa::library::getLastContentFolder (Kind::wavetable) == wtDir,
+            "picking a sample does NOT move the wavetable folder");
+
+    // Migration: with ONLY the legacy key seeded, both kinds start there.
+    spa::library::clearContentFolderKeysForTest();
+    spa::library::setLegacyContentFolderForTest (legacyDir);
+    expect (spa::library::getLastContentFolder (Kind::wavetable) == legacyDir,
+            "wavetable falls back to the legacy lastContentFolder value");
+    expect (spa::library::getLastContentFolder (Kind::sample) == legacyDir,
+            "sample falls back to the legacy lastContentFolder value");
+
+    // Browsing one kind then takes it off the legacy value; the other stays.
+    spa::library::setLastContentFolder (Kind::sample, smpDir.getChildFile ("c.wav"));
+    expect (spa::library::getLastContentFolder (Kind::sample) == smpDir,
+            "the browsed kind leaves the legacy value behind");
+    expect (spa::library::getLastContentFolder (Kind::wavetable) == legacyDir,
+            "the un-browsed kind still uses the legacy value");
+
+    spa::library::clearContentFolderKeysForTest();
+    wtDir.deleteRecursively();
+    smpDir.deleteRecursively();
+    legacyDir.deleteRecursively();
+}
+
+
+// Right-click "Move to Trash" on a user preset row, at the PresetManager
+// level: the file leaves its folder (via the Trash, never deleteFile), a
+// factory preset is refused outright, an emptied bank folder is left alone,
+// and the navigation cursor stays sane when the deleted preset was the one
+// currently loaded.
+static void presetDeleteTest()
+{
+    std::cout << "presetDeleteTest\n";
+
+    namespace lib = spa::library;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-delete-test", "");
+    lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                           [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); },
+                           presetsRoot);
+
+    const juce::String ext (lib::PresetManager::presetExtension);
+
+    // A factory preset (not deletable), two User-root presets, and one
+    // lone preset in a bank folder (so deleting it empties the bank).
+    const auto factoryDir = presetsRoot.getChildFile ("Factory").getChildFile ("Keys");
+    factoryDir.createDirectory();
+    const auto factoryFile = factoryDir.getChildFile ("Zz Factory Keys" + ext);
+
+    expect (pm.saveUserPreset ("Zz Delete Me"), "user preset A saves");
+    // Give the factory entry REAL preset XML (copied from the one just
+    // saved), not a placeholder -- loadNext() below has to be able to
+    // actually load it for the navigation assertions to mean anything.
+    factoryFile.replaceWithText (pm.getUserPresetFolder()
+                                     .getChildFile ("Zz Delete Me" + ext).loadFileAsString());
+    expect (pm.saveUserPreset ("Zz Keep Me"), "user preset B saves");
+
+    const auto bankFolder = pm.getUserPresetFolder().getChildFile ("Zz Bank");
+    bankFolder.createDirectory();
+    expect (pm.saveUserPreset ("Zz Only In Bank", bankFolder), "bank preset saves");
+
+    pm.rescan();
+
+    const auto fileFor = [&pm] (const juce::String& name) -> juce::File
+    {
+        for (const auto& p : pm.getPresets())
+            if (p.name == name)
+                return p.file;
+        return {};
+    };
+
+    const auto deleteMe = fileFor ("Zz Delete Me");
+    const auto keepMe   = fileFor ("Zz Keep Me");
+    const auto inBank   = fileFor ("Zz Only In Bank");
+    expect (deleteMe.existsAsFile() && keepMe.existsAsFile() && inBank.existsAsFile(),
+            "all three user presets exist before any delete");
+
+    // A factory preset must never be removable, whatever is asked of it.
+    expect (! pm.deleteUserPreset (factoryFile), "deleteUserPreset refuses a factory preset");
+    expect (factoryFile.existsAsFile(), "the factory preset file is still there afterwards");
+
+    // A path this manager never scanned is refused too.
+    expect (! pm.deleteUserPreset (presetsRoot.getChildFile ("nope" + ext)),
+            "deleteUserPreset refuses an unscanned file");
+
+    // Delete the preset that is NOT loaded: the loaded one keeps its cursor.
+    expect (pm.loadPresetFile (keepMe), "load the preset that will survive");
+    const auto keepName = pm.getCurrentName();
+    expect (pm.deleteUserPreset (deleteMe), "deleteUserPreset accepts a user preset");
+    expect (! deleteMe.existsAsFile(), "the deleted preset's file is gone from its folder");
+    expect (pm.getCurrentName() == keepName, "the loaded preset's name is untouched by the delete");
+    expect (pm.getCurrentIndex() >= 0
+                && pm.getCurrentIndex() < (int) pm.getPresets().size()
+                && pm.getPresets()[(size_t) pm.getCurrentIndex()].file == keepMe,
+            "the navigation cursor still points at the still-loaded preset after the rescan");
+
+    bool stillListed = false;
+    for (const auto& p : pm.getPresets())
+        if (p.name == "Zz Delete Me")
+            stillListed = true;
+    expect (! stillListed, "the deleted preset is gone from the manager's list");
+
+    // Delete the preset that IS loaded: the sound stays as it is (nothing is
+    // re-applied, so currentName is untouched), the cursor goes to -1, and
+    // next/prev then land on the ends of the list rather than out of range.
+    expect (pm.deleteUserPreset (keepMe), "the currently-loaded preset can be deleted");
+    expect (pm.getCurrentIndex() == -1, "the navigation cursor clears when the loaded preset goes");
+    expect (pm.getCurrentName() == keepName,
+            "the loaded sound is left alone -- its name does not change on delete");
+    pm.loadNext();
+    expect (pm.getCurrentIndex() >= 0 && pm.getCurrentIndex() < (int) pm.getPresets().size(),
+            "loadNext() after deleting the loaded preset lands in range");
+    pm.loadPrevious();
+    expect (pm.getCurrentIndex() >= 0 && pm.getCurrentIndex() < (int) pm.getPresets().size(),
+            "loadPrevious() after deleting the loaded preset lands in range");
+
+    // Emptying a bank leaves the user's folder in place (we never delete a
+    // folder they made), but the bank drops out of the category list.
+    expect (pm.deleteUserPreset (inBank), "the bank's only preset deletes");
+    expect (bankFolder.isDirectory(), "the now-empty bank folder is left in place");
+    expect (! pm.getCategories().contains ("Zz Bank"),
+            "the emptied bank no longer appears as a category");
+
+    presetsRoot.deleteRecursively();
+}
+
+// The same feature at the browser level: the right-click menu's shape
+// (enabled only for user presets), the row disappearing, the favourite
+// entry being cleaned out of settings so it cannot re-apply to a later
+// preset of the same name, and no new click-grabs-keyboard-focus offenders.
+static void presetBrowserDeleteTest()
+{
+    std::cout << "presetBrowserDeleteTest\n";
+
+    namespace lib = spa::library;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    auto& pm = proc.getPresetManager();
+    const juce::String ext (lib::PresetManager::presetExtension);
+
+    // Hermetic: the whole run redirects defaultPresetsRoot() into a temp dir
+    // (see main()), and the processor's PresetManager is rooted there.
+    const auto factoryDir = lib::defaultPresetsRoot().getChildFile ("Factory")
+                                .getChildFile ("ZZ Delete Test Pack");
+    factoryDir.createDirectory();
+    const auto factoryFile = factoryDir.getChildFile ("ZZ Browser Factory Keys" + ext);
+    factoryFile.replaceWithText ("placeholder");
+
+    expect (pm.saveUserPreset ("ZZ Browser Delete Me"), "browser-test user preset saves");
+    pm.rescan();
+
+    const juce::String favKey = "User/ZZ Browser Delete Me";
+    lib::setPresetFavorite (favKey, true);
+    expect (lib::getFavoritePresets().contains (favKey), "the preset starts out favourited");
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+    spa::ui::PresetBrowser* browser = nullptr;
+    std::function<void (juce::Component&)> findBrowser = [&] (juce::Component& c)
+    {
+        if (browser == nullptr)
+            browser = dynamic_cast<spa::ui::PresetBrowser*> (&c);
+        for (auto* child : c.getChildren())
+            findBrowser (*child);
+    };
+    findBrowser (*editor);
+    expect (browser != nullptr, "preset browser found in the editor tree");
+
+    if (browser == nullptr)
+    {
+        factoryDir.deleteRecursively();
+        return;
+    }
+
+    browser->openImmediately();
+    browser->resized();
+    browser->refresh();
+
+    const auto userRow = browser->findVisibleRow ("ZZ Browser Delete Me");
+    const auto factoryRow = browser->findVisibleRow ("ZZ Browser Factory Keys");
+    expect (userRow >= 0 && factoryRow >= 0, "both test presets are visible rows in the browser");
+
+    // Factory row: the menu exists (so a right-click isn't a dead click) but
+    // its one item is disabled, and driving the action does nothing.
+    {
+        auto menu = browser->buildRowMenu (factoryRow);
+        bool sawItem = false, itemEnabled = false;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (it.getItem().itemID == spa::ui::PresetBrowser::deleteMenuItemId)
+            {
+                sawItem = true;
+                itemEnabled = it.getItem().isEnabled;
+            }
+        expect (sawItem, "the factory row's menu still carries the Move to Trash item");
+        expect (! itemEnabled, "the Move to Trash item is DISABLED on a factory row");
+    }
+    expect (! browser->canDeleteRow (factoryRow), "canDeleteRow is false for a factory preset");
+    expect (! browser->deleteRow (factoryRow), "deleteRow refuses a factory preset");
+    expect (factoryFile.existsAsFile(), "the factory preset file is untouched");
+
+    // User row: enabled item, and the action removes it.
+    {
+        auto menu = browser->buildRowMenu (userRow);
+        bool itemEnabled = false;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (it.getItem().itemID == spa::ui::PresetBrowser::deleteMenuItemId)
+                itemEnabled = it.getItem().isEnabled;
+        expect (itemEnabled, "the Move to Trash item is ENABLED on a user row");
+    }
+    expect (browser->canDeleteRow (userRow), "canDeleteRow is true for a user preset");
+
+    juce::File userFile;
+    for (const auto& p : pm.getPresets())
+        if (p.name == "ZZ Browser Delete Me")
+            userFile = p.file;
+    expect (userFile.existsAsFile(), "the user preset file exists before the delete");
+
+    expect (browser->deleteRow (userRow), "deleteRow accepts a user preset");
+    expect (! userFile.existsAsFile(), "the user preset's file is gone from its folder");
+    expect (browser->findVisibleRow ("ZZ Browser Delete Me") < 0,
+            "the row is gone from the browser's filtered view");
+    expect (browser->findVisibleRow ("ZZ Browser Factory Keys") >= 0,
+            "the factory row is still listed");
+
+    // The favourite key must go with it -- otherwise it lingers in settings
+    // and silently re-applies to the next preset saved under the same name.
+    expect (! lib::getFavoritePresets().contains (favKey),
+            "the trashed preset's favourite entry is gone from settings");
+
+    expect (pm.saveUserPreset ("ZZ Browser Delete Me"), "the same name saves again afterwards");
+    expect (! lib::isPresetFavorite (favKey),
+            "a preset re-saved under the same name/category does NOT inherit a stale favourite");
+    browser->refresh();
+    expect (browser->findVisibleRow ("ZZ Browser Delete Me") >= 0,
+            "the re-saved preset shows up as a row again");
+
+    // Nothing added here may grab keyboard focus on click (searchBox is the
+    // one documented exception -- see presetBrowserFocusGrabTest).
+    int focusGrabbers = 0;
+    std::function<void (juce::Component&)> countGrabbers = [&] (juce::Component& c)
+    {
+        if (dynamic_cast<juce::TextEditor*> (&c) != nullptr)
+            return;   // TextEditor subtrees are the documented exception
+        // The drawer itself is the other documented exception (its own
+        // Esc-to-close self-focus) -- same allowlist presetBrowserFocusGrabTest uses.
+        if (&c != browser && c.getMouseClickGrabsKeyboardFocus())
+            ++focusGrabbers;
+        for (auto* child : c.getChildren())
+            countGrabbers (*child);
+    };
+    countGrabbers (*browser);
+    expect (focusGrabbers == 0,
+            "nothing in the browser grabs keyboard focus on click ("
+                + juce::String (focusGrabbers) + " offenders)");
+
+    // Clean up our own leftovers from the hermetic presets root.
+    for (const auto& p : pm.getPresets())
+        if (p.name.startsWith ("ZZ Browser "))
+            p.file.deleteFile();
+    factoryDir.deleteRecursively();
+    lib::setPresetFavorite (favKey, false);
+    pm.rescan();
+}
 
 
 int main (int argc, char* argv[])
@@ -19609,6 +20121,7 @@ int main (int argc, char* argv[])
     RUN (fxDelayReverbTest);
     RUN (convolveTailLengthTest);
     RUN (convolveStartPositionTest);
+    RUN (bufferMagnitudeInRangeTest);
     RUN (reverbMixTest);
     RUN (reverbStabilityTest);
     RUN (plateReverbCharacterTest);
@@ -19741,6 +20254,10 @@ int main (int argc, char* argv[])
     RUN (chaosVizTelemetryTest);
     RUN (chaosVizDisplayTest);
     RUN (chaosVizVisibilityTest);
+    RUN (chaosVizPerModeCueTest);
+    RUN (lastContentFolderPerKindTest);
+    RUN (presetDeleteTest);
+    RUN (presetBrowserDeleteTest);
 
    #undef RUN
 

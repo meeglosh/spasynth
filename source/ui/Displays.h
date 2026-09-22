@@ -107,8 +107,13 @@ public:
     // centre (pitch up = more cycles visible). Both carry a deliberate
     // visual gain (see chaosVizPhaseGain / chaosVizPitchGain in
     // Displays.cpp) so the DEFAULT drift amounts read on the display.
+    // Which of the two cues is legitimate depends on the OSC MODE -- a cue
+    // is only drawn where that drift actually reaches the engine's audio
+    // and where the drawn thing represents it (wavetable: both; analog /
+    // FM / pluck: stretch only; noise, sample, granular: neither). See the
+    // rule spelled out above chaosViz() in Displays.cpp.
     // Position drift is not here -- it already reaches the display through
-    // slotPosition. SINGLE SOURCE of the drawn geometry: paintDisplay()
+    // slotPosition (and the granular grain markers). SINGLE SOURCE of the drawn geometry: paintDisplay()
     // applies exactly this (via chaosViz()), and tests read it through
     // getChaosVizOffsetsForTest() without a pixel read. Both are exactly 0
     // (no displacement) whenever the slot is idle, chaos is inactive, or

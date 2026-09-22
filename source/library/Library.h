@@ -29,8 +29,22 @@ void setLibraryRoot (const juce::File&);
 // browsed from very different locations, e.g. an SFX library vs. an
 // impulse-response folder). Returns an invalid File when never set or the
 // remembered folder is no longer reachable (e.g. its drive is unplugged).
-juce::File getLastContentFolder();
-void setLastContentFolder (const juce::File& pickedFile);
+// Oscillator content is remembered PER CONTENT KIND: wavetables and
+// samples/SFX normally live in completely different folders, so browsing
+// for one must not move where the other opens (tester request). Migration:
+// builds up to 1.0.23 stored a single shared "lastContentFolder"; a kind
+// that has no key of its own yet falls back to that legacy value, so an
+// existing user's remembered folder never silently resets.
+enum class ContentKind { wavetable, sample };
+juce::File getLastContentFolder (ContentKind kind);
+void setLastContentFolder (ContentKind kind, const juce::File& pickedFile);
+
+// Test-only hooks for the migration path above: seed the pre-1.0.24 shared
+// key, and clear all three keys back to "never browsed". They go through
+// the same single PropertiesFile singleton as everything else -- never
+// open a second PropertiesFile (that caused the theme-reset bug).
+void setLegacyContentFolderForTest (const juce::File& folder);
+void clearContentFolderKeysForTest();
 juce::File getLastIRFolder();
 void setLastIRFolder (const juce::File& pickedFile);
 

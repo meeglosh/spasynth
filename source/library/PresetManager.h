@@ -57,6 +57,32 @@ public:
     // just picked or created via the save dialog's "New Folder"), the
     // preset is written there; otherwise it falls back to the User root.
     bool saveUserPreset (const juce::String& name, const juce::File& chosenFolder = {});
+
+    // Moves a USER preset to the system Trash and rescans. Returns false --
+    // touching nothing at all -- for a factory preset, for a file this
+    // manager has not scanned, or if the trash move itself fails.
+    //
+    // juce::File::moveToTrash(), deliberately, NOT deleteFile(): a deleted
+    // preset is a user's own work and this is a one-click action with no
+    // confirmation dialog, so it has to stay recoverable (a tester already
+    // recovered a preset from the Trash once, on 1.0.10).
+    //
+    // The empty bank folder that deleting a bank's last preset leaves behind
+    // is deliberately left in place: it is the user's own folder, and it
+    // drops out of the browser's pack filter by itself (getCategories() is
+    // derived from the presets actually found).
+    //
+    // Navigation: if the deleted preset was the loaded one, the SOUND is left
+    // exactly as it is (nothing is re-applied or reset) and only the
+    // navigation cursor is cleared -- currentIndex becomes -1, so the next
+    // loadNext()/loadPrevious() starts from the ends of the freshly rescanned
+    // list instead of indexing a vector whose entries have just shifted.
+    // Otherwise the cursor is re-resolved by file so next/prev keep their
+    // place across the rescan.
+    bool deleteUserPreset (const juce::File& file);
+
+    // Exposed for tests: -1 = nothing loaded from the list.
+    int getCurrentIndex() const { return currentIndex; }
     juce::File getUserPresetFolder() const { return presetsRoot.getChildFile ("User"); }
 
     juce::String getCurrentName() const { return currentName; }

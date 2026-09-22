@@ -278,6 +278,40 @@ bool PresetManager::saveUserPreset (const juce::String& name, const juce::File& 
     return true;
 }
 
+bool PresetManager::deleteUserPreset (const juce::File& file)
+{
+    // Only a preset this manager actually scanned, and flagged isUser, can
+    // go -- the isUser flag is the single discriminator (it covers bank
+    // subfolders too, whose category is the bank name, not "User").
+    const PresetInfo* entry = nullptr;
+    for (const auto& p : presets)
+        if (p.file == file)
+            entry = &p;
+
+    if (entry == nullptr || ! entry->isUser)
+        return false;
+
+    const auto currentFile = (currentIndex >= 0 && currentIndex < (int) presets.size())
+                                 ? presets[(size_t) currentIndex].file
+                                 : juce::File();
+    const bool wasCurrent = (currentFile == file);
+
+    if (! file.moveToTrash())
+        return false;
+
+    rescan();   // broadcasts; the browser refreshes off it
+
+    // See the header: the loaded sound is untouched either way, only the
+    // navigation cursor is fixed up.
+    currentIndex = -1;
+    if (! wasCurrent && currentFile != juce::File())
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (presets[i].file == currentFile)
+                currentIndex = (int) i;
+
+    return true;
+}
+
 juce::ValueTree PresetManager::makeTemplateState() const
 {
     auto state = defaultState.createCopy();

@@ -359,8 +359,42 @@ namespace
     }
 }
 
-juce::File getLastContentFolder() { return getLastFolder ("lastContentFolder"); }
-void setLastContentFolder (const juce::File& pickedFile) { setLastFolder ("lastContentFolder", pickedFile); }
+namespace
+{
+    // One key per content kind, following the lastIRFolder precedent.
+    const char* contentFolderKey (ContentKind kind)
+    {
+        return kind == ContentKind::wavetable ? "lastWavetableFolder" : "lastSampleFolder";
+    }
+}
+
+juce::File getLastContentFolder (ContentKind kind)
+{
+    // Migration: fall back to the legacy shared key until this kind has
+    // been browsed once on the new scheme (see Library.h).
+    const auto* key = contentFolderKey (kind);
+    if (settings().getValue (key).isEmpty())
+        return getLastFolder ("lastContentFolder");
+    return getLastFolder (key);
+}
+
+void setLastContentFolder (ContentKind kind, const juce::File& pickedFile)
+{
+    setLastFolder (contentFolderKey (kind), pickedFile);
+}
+
+void setLegacyContentFolderForTest (const juce::File& folder)
+{
+    settings().setValue ("lastContentFolder", folder.getFullPathName());
+    settings().saveIfNeeded();
+}
+
+void clearContentFolderKeysForTest()
+{
+    for (const char* key : { "lastContentFolder", "lastWavetableFolder", "lastSampleFolder" })
+        settings().removeValue (key);
+    settings().saveIfNeeded();
+}
 juce::File getLastIRFolder() { return getLastFolder ("lastIRFolder"); }
 void setLastIRFolder (const juce::File& pickedFile) { setLastFolder ("lastIRFolder", pickedFile); }
 

@@ -179,14 +179,42 @@ float WaveDisplay::normToX (float norm, juce::Rectangle<float> area) const
 constexpr float chaosVizPhaseGain = 2.0f;
 constexpr float chaosVizPitchGain = 4.0f;
 
+// A drift cue may only be drawn where the drift it stands for actually
+// reaches that engine's AUDIO and where the drawn thing really represents
+// that quantity. In SPASynthVoice::computeChunk the chaos PHASE drift is
+// passed only into WavetableOscillator (updateBlock's phaseOffset); no
+// other engine ever sees it. The chaos PITCH drift is added to pitchOffset
+// for every engine. And the sample/granular display draws the audio FILE,
+// which does not move when anything drifts. Hence, per mode:
+//   wavetable          slide + stretch (live wave shape; both drifts real)
+//   analog / FM / pluck stretch only (ideal one-cycle preview: a horizontal
+//                      stretch = more/fewer cycles = a pitch change; no
+//                      phase drift reaches these engines)
+//   noise              nothing (its shape is per-step random, so any cue
+//                      would be meaningless)
+//   sample / granular  nothing (the drawn waveform is the file; position
+//                      drift is already shown honestly by the granular
+//                      grain-cloud markers and the sample playhead)
 WaveDisplay::ChaosViz WaveDisplay::chaosViz (juce::Rectangle<float> area) const
 {
     ChaosViz v;
     if (! isLive())
         return v;
 
-    const auto pitchSemis = telemetry->slotChaosPitch[(size_t) slot].load (std::memory_order_relaxed);
-    const auto phaseCycles = telemetry->slotChaosPhase[(size_t) slot].load (std::memory_order_relaxed);
+    const auto mode = (params::OscMode) (int) value (
+        params::id::oscSlot (slot, params::id::osc::mode));
+    const bool drawsPhase = mode == params::OscMode::wavetable;
+    const bool drawsPitch = mode == params::OscMode::wavetable
+                         || mode == params::OscMode::analog
+                         || mode == params::OscMode::fm
+                         || mode == params::OscMode::pluck;
+    if (! drawsPhase && ! drawsPitch)
+        return v;
+
+    const auto pitchSemis = drawsPitch
+        ? telemetry->slotChaosPitch[(size_t) slot].load (std::memory_order_relaxed) : 0.0f;
+    const auto phaseCycles = drawsPhase
+        ? telemetry->slotChaosPhase[(size_t) slot].load (std::memory_order_relaxed) : 0.0f;
     if (pitchSemis == 0.0f && phaseCycles == 0.0f)
         return v;
 
@@ -349,11 +377,12 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     // WaveDisplay::ChaosViz): a drawn horizontal fraction `ph` (0..1 across
     // the area) reads its source material at `chaosSrc (ph)` -- stretched
     // about the centre by the pitch cue, slid by the phase cue, wrapped.
-    // Every mode below routes its read position through this one lambda so
-    // the cue reads the same on a wavetable frame, an ideal-cycle preview
-    // and a sample envelope. With no drift it returns `ph` untouched (not
-    // even a 0.5 +/- round trip), so the undrifted drawing stays
-    // bit-identical to the pre-chaos-viz one.
+    // chaosViz() decides PER MODE which of the two cues is honest here (see
+    // its comment); this lambda just applies whatever survived, so the
+    // wavetable branch gets both, the ideal-cycle preview only the pitch
+    // stretch, and noise / sample / granular nothing at all. With no drift
+    // it returns `ph` untouched (not even a 0.5 +/- round trip), so the
+    // undrifted drawing stays bit-identical to the pre-chaos-viz one.
     const auto viz = chaosViz (area);
     const auto slideNorm = area.getWidth() > 0.0f ? viz.slidePx / area.getWidth() : 0.0f;
     const auto chaosSrc = [&] (float ph)
@@ -527,13 +556,15 @@ void WaveDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
     juce::Path fill;
     fill.startNewSubPath (area.getX(), area.getCentreY());
-    const auto columnPeak = [&] (int drawColumn)
+    const auto columnPeak = [&] (int c)
     {
-        // Drift cue: read the peak of the source column the drawn column
-        // maps to (identity when there is no drift).
-        const auto c = juce::jlimit (0, columns - 1, viz.slidePx == 0.0f && viz.stretch == 0.0f
-            ? drawColumn
-            : (int) (chaosSrc ((float) drawColumn / (float) (columns - 1)) * (float) (columns - 1)));
+        // No chaos drift cue here, deliberately: this draws the audio FILE,
+        // whose waveform does not move when chaos drifts. Phase drift never
+        // reaches the sample or granular engines at all, and position drift
+        // (granular only) is already shown where it is true -- the grain
+        // cloud markers and the sample playhead. chaosViz() returns zero in
+        // these modes, so `chaosSrc` is identity; this column index is the
+        // raw one regardless.
         const auto start = viewStartSample + (juce::int64) c * viewSampleCount / columns;
         const auto end = juce::jmin (numSamples,
                                      viewStartSample + (juce::int64) (c + 1) * viewSampleCount / columns);

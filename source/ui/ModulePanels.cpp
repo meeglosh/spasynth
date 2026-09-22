@@ -266,7 +266,9 @@ void OscStrip::handleAsyncUpdate()
 void OscStrip::chooseContent()
 {
     const auto wavetableMode = currentMode() == params::OscMode::wavetable;
-    const auto lastFolder = library::getLastContentFolder();
+    const auto contentKind = wavetableMode ? library::ContentKind::wavetable
+                                          : library::ContentKind::sample;
+    const auto lastFolder = library::getLastContentFolder (contentKind);
     const auto libraryRoot = library::findLibraryRoot();
 
     fileChooser = std::make_unique<juce::FileChooser> (
@@ -278,11 +280,11 @@ void OscStrip::chooseContent()
 
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode
                             | juce::FileBrowserComponent::canSelectFiles,
-                              [this, wavetableMode] (const juce::FileChooser& fc)
+                              [this, wavetableMode, contentKind] (const juce::FileChooser& fc)
     {
         if (! fc.getResult().existsAsFile())
             return;
-        library::setLastContentFolder (fc.getResult());
+        library::setLastContentFolder (contentKind, fc.getResult());
         if (wavetableMode)
             processor.loadWavetableFromFile (slot, fc.getResult());
         else
@@ -347,7 +349,8 @@ void OscStrip::filesDropped (const juce::StringArray& files, int, int)
             param->setValueNotifyingHost (param->convertTo0to1 ((float) (int) params::OscMode::sample));
     }
 
-    library::setLastContentFolder (chosen);
+    library::setLastContentFolder (wavetableMode ? library::ContentKind::wavetable
+                                                 : library::ContentKind::sample, chosen);
     if (wavetableMode)
         processor.loadWavetableFromFile (slot, chosen);
     else

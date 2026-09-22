@@ -1,4 +1,5 @@
 #include "PresetBrowser.h"
+#include "AssignOverlay.h"   // free spa::ui::showPopupAnchored -- see its declaration comment
 #include "../SPASynthProcessor.h"
 #include "../library/Library.h"
 
@@ -312,6 +313,18 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
 
     const auto& p = presets[(size_t) filtered[(size_t) row]];
 
+    // Right-click opens the row context menu and does nothing else -- it
+    // never loads the preset and never toggles the favourite, wherever in
+    // the row it landed. (JUCE routes a right-click through
+    // listBoxItemClicked exactly like a left-click; see ListBox's
+    // performSelection.) The editor's global MIDI Learn right-click handler
+    // sees this same click and bows out on it -- see the header comment.
+    if (e.mods.isPopupMenu())
+    {
+        showRowMenu (row);
+        return;
+    }
+
     // Star zone toggles favourite instead of loading.
     if (e.getMouseDownX() > list.getWidth() - 34)
     {
@@ -339,6 +352,82 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
 
     if (searchHadFocus && onRequestKeyboardFocus)
         onRequestKeyboardFocus();
+}
+
+int PresetBrowser::findVisibleRow (const juce::String& presetName) const
+{
+    for (size_t row = 0; row < filtered.size(); ++row)
+        if (presets[(size_t) filtered[row]].name == presetName)
+            return (int) row;
+
+    return -1;
+}
+
+bool PresetBrowser::canDeleteRow (int row) const
+{
+    if (row < 0 || row >= (int) filtered.size())
+        return false;
+
+    // isUser, not category == "User": a preset inside a bank subfolder
+    // carries the bank's name as its category but is still the user's.
+    return presets[(size_t) filtered[(size_t) row]].isUser;
+}
+
+juce::PopupMenu PresetBrowser::buildRowMenu (int row) const
+{
+    juce::PopupMenu menu;
+
+    if (row < 0 || row >= (int) filtered.size())
+        return menu;
+
+    const auto& p = presets[(size_t) filtered[(size_t) row]];
+    menu.addSectionHeader (p.name);
+    menu.addItem (deleteMenuItemId, "Move to Trash", canDeleteRow (row));
+    return menu;
+}
+
+void PresetBrowser::showRowMenu (int row)
+{
+    auto menu = buildRowMenu (row);
+    if (menu.getNumItems() == 0)
+        return;
+
+    // Never menu.showMenuAsync: a plain PopupMenu with nothing in the editor
+    // holding real keyboard focus flashes and vanishes under a real AU/VST3
+    // host. See ContentComponent::showPopupAnchored's declaration comment.
+    juce::Component::SafePointer<PresetBrowser> safe (this);
+    showPopupAnchored (*this, menu, juce::PopupMenu::Options().withMousePosition(),
+                       [safe, row] (int result)
+                       {
+                           if (safe != nullptr && result == deleteMenuItemId)
+                               safe->deleteRow (row);
+                       });
+}
+
+bool PresetBrowser::deleteRow (int row)
+{
+    if (! canDeleteRow (row))
+        return false;
+
+    // Copy what's needed out first -- refresh() below rebuilds `presets`,
+    // so any reference into it dies partway through this function.
+    const auto& p = presets[(size_t) filtered[(size_t) row]];
+    const auto file = p.file;
+    const auto key = favoriteKey (p);
+
+    if (! processor.getPresetManager().deleteUserPreset (file))
+        return false;
+
+    // The favourite key is category + "/" + name, not a path, so leaving it
+    // behind would linger in the settings file forever AND silently re-apply
+    // itself to any later preset saved with the same name in the same bank.
+    library::setPresetFavorite (key, false);
+
+    // The manager's rescan broadcast is async; refresh now so the row is gone
+    // immediately, with the search text, type chip, pack pick and favourites
+    // chip all re-applied by applyFilter().
+    refresh();
+    return true;
 }
 
 bool PresetBrowser::keyPressed (const juce::KeyPress& key)

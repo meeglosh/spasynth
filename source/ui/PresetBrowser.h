@@ -55,6 +55,29 @@ public:
 
     void refresh();   // re-pull presets, categories, theme colours
 
+    // --- row context menu (right-click) --------------------------------------
+    // Right-clicking a row opens a one-item "Move to Trash" menu. The item is
+    // present but DISABLED on a factory row, so a factory preset can never be
+    // removed while the right-click still gives visible feedback.
+    //
+    // The global right-click MIDI Learn handler (ContentComponent::mouseDown,
+    // installed with addMouseListener(this, true) over the whole editor) and
+    // this menu cannot collide: that handler walks up from the clicked
+    // component looking for a "paramID" component property and returns
+    // without showing anything when it finds none, and nothing in this drawer
+    // carries one. So a right-click on a row reaches both, and only this one
+    // puts up a menu.
+    static constexpr int deleteMenuItemId = 1;
+
+    bool canDeleteRow (int row) const;            // false for factory/out-of-range rows
+    juce::PopupMenu buildRowMenu (int row) const;  // also the test surface for the item's state
+    void showRowMenu (int row);                    // goes through showPopupAnchored -- never showMenuAsync
+    bool deleteRow (int row);                      // the menu action; trashes + cleans the favourite
+
+    // Test helpers: the filtered (visible) row list.
+    int getNumVisibleRows() const { return (int) filtered.size(); }
+    int findVisibleRow (const juce::String& presetName) const;
+
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;

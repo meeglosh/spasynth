@@ -1,0 +1,18 @@
+SPASynth 1.0.24 - what's new since 1.0.23
+
+A small round, all of it from the 1.0.23 feedback.
+
+- You can now delete your own presets. Right-click a preset in the browser and choose Move to Trash; it goes to the system Trash, so you can recover it. Only your own presets can be deleted, and factory presets show the option greyed out so you get an answer rather than nothing. Changed on purpose, and worth expecting: right-clicking a preset no longer loads it, because right-click now opens this menu. Left-click still loads, exactly as before.
+- The oscillator waveform no longer reacts to chaos in Sample and Granular modes. This is the fix, not a regression. In 1.0.23 the waveform moved for chaos drift in those two modes as well, but there the display is showing the audio file itself, which chaos does not alter, so the movement was misleading. Chaos position drift is still shown where it really applies: the grain cloud in Granular and the playhead in Sample. Wavetable and the synth engines are unchanged and still react as they did in 1.0.23.
+- The file browser now remembers where you were, separately for wavetables and for samples. The two used to share one remembered folder, so loading a wavetable moved where the sample browser would open, and the other way round. Each keeps its own place now, and your existing remembered folder carries over to both the first time.
+
+Worth trying specifically
+- Save a throwaway preset, right-click it, choose Move to Trash, and confirm it disappears from the browser and is sitting recoverable in the Trash.
+- Right-click a factory preset and confirm Move to Trash is there but greyed out.
+- Left-click presets as usual and confirm they still load, and that right-clicking no longer loads anything.
+- Put an oscillator in Sample mode with Organic Chaos on, hold a note, and confirm the waveform itself no longer wanders; the playhead should still move. Do the same in Granular and confirm the grain cloud still moves. Then check a Wavetable oscillator and confirm it still reacts to chaos as it did in 1.0.23.
+- Load a wavetable from one folder, then load a sample from a different folder, then go back to each loader in turn and confirm both open where you last were.
+
+Install notes
+- macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

@@ -1,5 +1,34 @@
 # SPASynth changelog
 
+## 1.0.24
+
+- You can now delete your own presets: right-click a preset in the
+  browser and choose Move to Trash. It only works on presets you saved
+  yourself; factory presets show the option greyed out, so a right-click
+  still tells you where you stand rather than doing nothing. Deleted
+  presets go to the system Trash, so nothing is lost and you can put one
+  back if you change your mind. Worth noting because it is a change in
+  behavior: right-clicking a preset no longer loads it, since right-click
+  now opens this menu, and left-click still loads as before. This came
+  from feedback.
+- The oscillator waveform no longer moves for chaos drift that does not
+  apply to the current engine. In 1.0.23 we made the waveform react to
+  Organic Chaos, but it also moved in Sample and Granular modes, where
+  that particular drift does not change what you hear: in those modes the
+  display is showing the audio file itself, which chaos does not alter.
+  Chaos position drift is still shown where it genuinely applies, by the
+  moving grain cloud in Granular and by the playhead in Sample. Wavetable
+  and the synth engines are unchanged. This came from feedback.
+- The file browser now remembers where you were, separately for
+  wavetables and for samples. Previously the two shared one remembered
+  folder, so loading a wavetable moved the folder the sample browser
+  would open in, and the other way round, which meant navigating back and
+  forth every time. Each now keeps its own place. Your existing
+  remembered folder carries over to both the first time. This came from
+  feedback.
+
+
+
 ## 1.0.23
 
 - Reverb: the five modes now sit at a consistent level, and the tone

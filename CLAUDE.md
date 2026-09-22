@@ -129,8 +129,8 @@ Suite **1904 -> 1977 assertions ALL PASS**, Debug + Release + **ASan x3**
 (1976 under ASan); every fix verified to FAIL with itself reverted.
 **macOS 1.0.23 pkg** signed + notarized + stapled, `spctl` accepted,
 universal, minos 11.0,
-macOS md5 `f3de568635723570d2cb4724ab179d61`
-Windows md5 `6fffe0e373d8acbe76ca44a0de2e5499` (`ci-windows-b6425d6`, CI run `35663687985`)
+macOS md5 `4e698e94fcd1292c91357443b586de4d`
+Windows md5 `932f78c43d8e06a10ec8e5dce3aaff58` (`ci-windows-b6425d6`, CI run `35676577098` (re-run))
 Both byte-identical across `dist/installers/` and
 `dist/shopify/SPASynth-{Standard,Pro}-1.0.23/`. Repo is PUBLIC. Paste-ready
 tester note: `docs/tester-note-1.0.23.txt`.

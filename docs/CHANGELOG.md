@@ -29,6 +29,16 @@
   straight away instead of staying greyed out until you move the mouse over
   it. The assignment was always working; only the row's own display was
   slow to catch up.
+- RANDOMIZE ALL could sometimes hand you a patch that showed on the meters
+  but was far too quiet to hear, especially after several rolls in a row.
+  We tracked down the combinations responsible, including a filter tuned
+  far from the note being played, a mod matrix route pushed too hard, a
+  sparse arpeggiator, and a sample start landing in a quiet stretch of a
+  longer sound file. Random sample starts now only land on parts of the
+  file you can hear, so you still get a different slice each roll. This
+  came from feedback.
+- Fixed a possible crash when closing SPASynth right after clicking
+  RANDOMIZE ALL several times in quick succession.
 
 ## 1.0.24
 

@@ -5693,6 +5693,433 @@ namespace
     // RANDOMIZE ALL's headphone-safety guards (gain-budget trim + limiter
     // forced on) are invariants over any roll, so this iterates many rolls
     // rather than checking a single one - RNG-robust.
+    // ------------------------------------------------------------------
+    // Regression test for a 1.0.25 crash: chaining randomizeAll() many times
+    // on one processor (randomizeLoudnessGuardTest's own pattern -- no lock,
+    // 30 rolls, no note-off between rolls) intermittently SIGSEGV'd in
+    // Release with empty stdout. It was FIRST suspected to be a new
+    // bandpass/notch-resonance silence clamp (a setValueNotifyingHost write
+    // to filter1Resonance/filter2Resonance added from inside randomizeAll),
+    // because removing only that clamp made it pass -- but that correlation
+    // was misleading: a from-scratch hand-built repro (this test's earlier
+    // form) that wrote resonance the exact same way, on the message thread,
+    // never crashed, and re-running the UNMODIFIED (no resonance clamp)
+    // baseline through this SEEDED 30-roll loop under ASan reproduced the
+    // exact same failure -- so the resonance write was never the cause.
+    // ASan's real signal (asan_randomize.log / crash_repro2.log): JUCE's
+    // LeakedObjectDetector reporting ~64 live LambdaThread/Thread instances
+    // and ~128 live WaitableEvents, plus a juce_MessageManager_mac.mm:435
+    // assertion. Root cause: every randomizeAll() roll can reselect an
+    // oscillator's built-in Table, and each reselection launches a
+    // background build (juce::Thread::launch, self-deleting LambdaThread) --
+    // 30 rolls queue far more builds than can finish in the time it takes to
+    // render a few blocks and move to the next roll, and
+    // ~SPASynthProcessor() never waited for outstanding background
+    // threads before tearing down, so dozens of self-deleting threads could
+    // still be mid-flight (including about to call
+    // MessageManager::callAsync) when the processor -- and, in this test,
+    // the whole process shortly after -- went away. Fixed by
+    // activeBackgroundThreads (SPASynthProcessor.h/.cpp): every
+    // juce::Thread::launch() site increments it, decrements it as the last
+    // thing the launched lambda does, and ~SPASynthProcessor() waits (bounded
+    // at 3s; builds are documented elsewhere as "a handful of ms") for it to
+    // reach zero. Verified anti-vacuous: this exact seeded loop reproduced
+    // the leak/assertion on the PRE-fix code (with AND without the resonance
+    // clamp, proving the clamp was never the cause) and is clean under ASan
+    // after the fix, with 5/5 clean runs of the original
+    // randomizeLoudnessGuardTest in the plain Release build.
+    // Measures ~SPASynthProcessor()'s worst-case background-thread wait
+    // (1.0.25, coordinator ask): 30 rapid RANDOMIZE ALL rolls (queuing as
+    // many background Table builds as that triggers), then immediate
+    // destruction with NO message-loop pump in between -- the worst case,
+    // since nothing ever lands until the destructor's own wait loop runs.
+    static void destructorBackgroundWaitTimingTest()
+    {
+        std::cout << "destructorBackgroundWaitTimingTest\n";
+        namespace params = spa::params;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        juce::Random::getSystemRandom() = juce::Random (0xBEEF1025);
+
+        double maxDestructMs = 0.0;
+        for (int trial = 0; trial < 5; ++trial)
+        {
+            auto proc = std::make_unique<spa::SPASynthProcessor>();
+            proc->prepareToPlay (sampleRate, blockSize);
+            for (int roll = 0; roll < 30; ++roll)
+                proc->randomizeAll();
+
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            proc.reset();   // destructor runs here
+            const auto t1 = juce::Time::getMillisecondCounterHiRes();
+            const auto ms = t1 - t0;
+            std::cout << "  trial " << trial << ": destructor took " << ms << "ms\n";
+            maxDestructMs = juce::jmax (maxDestructMs, ms);
+        }
+
+        std::cout << "  worst-case destructor wait over 5 trials: " << maxDestructMs << "ms\n";
+        expect (maxDestructMs < 3100.0, "destructor wait stays within its 3s bound ("
+                                          + juce::String (maxDestructMs, 1) + "ms)");
+    }
+
+    // Mechanical cause-finder for the 1.0.25 residual quiet cases (coordinator
+    // ask, superseding the loading-state hypothesis which was directly
+    // disproved -- see chainedRandomizeBackgroundThreadLeakTest and
+    // randomizeNeverSilentChainedTest's own comment). For each known
+    // residual (scenario/roll/note), replays the exact deterministic chain
+    // to reach that state, snapshots it, renders a baseline RMS, then for
+    // every registry Section resets JUST that section to its defaults,
+    // re-renders, and restores the snapshot before the next section --
+    // isolating which section's rolled values are responsible. Bisects
+    // within the winning section to the individual parameter(s). Opt-in
+    // (slow-ish, purely diagnostic, not a pass/fail gate) via
+    // SPASYNTH_BISECTION_TEST=1.
+    static void randomizeQuietCauseBisectionTest()
+    {
+        std::cout << "randomizeQuietCauseBisectionTest\n";
+        if (std::getenv ("SPASYNTH_BISECTION_TEST") == nullptr)
+        {
+            std::cout << "  SKIPPED (opt-in: SPASYNTH_BISECTION_TEST=1)\n";
+            return;
+        }
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto renderRms = [&] (spa::SPASynthProcessor& proc, int note, int vel) -> float
+        {
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) vel), 0);
+            constexpr int totalBlocks = 282;
+            constexpr int skipBlocks = 94;
+            float sumSq = 0.0f;
+            int samples = 0;
+            for (int b = 0; b < totalBlocks; ++b)
+            {
+                if (b == totalBlocks - 1)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                if (b >= skipBlocks)
+                {
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        const auto* d = buffer.getReadPointer (ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            sumSq += d[i] * d[i];
+                    }
+                    samples += buffer.getNumSamples() * buffer.getNumChannels();
+                }
+            }
+            return samples > 0 ? std::sqrt (sumSq / (float) samples) : 0.0f;
+        };
+
+        // Onset window: peak + RMS over the first ~500ms after note-on
+        // (coordinator ask B) -- the chained test's own skip-first-1s/
+        // judge-only-the-tail windowing can flag a plucky (moderate/low
+        // sustain) patch as "silent" when its attack is clearly audible,
+        // which Mike would hear as a normal pluck, not silence.
+        const auto renderOnset = [&] (spa::SPASynthProcessor& proc, int note, int vel) -> std::pair<float, float>
+        {
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) vel), 0);
+            constexpr int onsetBlocks = 47;   // ~500ms @ 48kHz/512
+            float peak = 0.0f, sumSq = 0.0f;
+            int samples = 0;
+            for (int b = 0; b < onsetBlocks; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                peak = juce::jmax (peak, buffer.getMagnitude (0, buffer.getNumSamples()));
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                {
+                    const auto* d = buffer.getReadPointer (ch);
+                    for (int i = 0; i < buffer.getNumSamples(); ++i)
+                        sumSq += d[i] * d[i];
+                }
+                samples += buffer.getNumSamples() * buffer.getNumChannels();
+            }
+            return { peak, samples > 0 ? std::sqrt (sumSq / (float) samples) : 0.0f };
+        };
+
+        const auto resetSectionToDefault = [&] (spa::SPASynthProcessor& proc, params::Section sec)
+        {
+            for (const auto& def : params::all())
+                if (def.section == sec)
+                    if (auto* p = proc.getAPVTS().getParameter (def.id))
+                        p->setValueNotifyingHost (p->getDefaultValue());
+        };
+
+        const auto resetParamToDefault = [&] (spa::SPASynthProcessor& proc, const juce::String& pid)
+        {
+            if (auto* p = proc.getAPVTS().getParameter (pid))
+                p->setValueNotifyingHost (p->getDefaultValue());
+        };
+
+        const std::vector<params::Section> groups = {
+            params::Section::global, params::Section::oscA, params::Section::oscB, params::Section::oscC,
+            params::Section::filter1, params::Section::filter2, params::Section::ampEnv,
+            params::Section::env2, params::Section::env3, params::Section::lfo1, params::Section::lfo2,
+            params::Section::lfo3, params::Section::macros, params::Section::arp, params::Section::chaos,
+            params::Section::fxDist, params::Section::fxChorus, params::Section::fxDelay,
+            params::Section::fxReverb, params::Section::fxEQ, params::Section::fxMod,
+            params::Section::fxTremVib, params::Section::fxLimiter, params::Section::fxConvolve,
+            params::Section::matrix,
+        };
+
+        struct Residual { int lockGroup; int roll; int note; };
+        const std::vector<Residual> residuals = {
+            { -1, 10, 36 }, { -1, 30, 36 }, { -1, 30, 48 }, { -1, 30, 60 }, { -1, 30, 72 }, { -1, 30, 84 },
+            { -1, 40, 72 }, { -1, 40, 84 }, { -1, 49, 60 }, { -1, 56, 60 },
+            { 0, 2, 60 }, { 1, 9, 60 }, { 2, 10, 60 },
+        };
+
+        std::map<juce::String, int> culpritCounts;
+        std::map<juce::String, juce::String> culpritExample;
+
+        for (const auto& r : residuals)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            if (r.lockGroup >= 0)
+                proc.setLockGroupLocked (r.lockGroup, true);
+            for (int roll = 0; roll <= r.roll; ++roll)
+            {
+                const float wildness = (roll % 3 == 0) ? 1.0f : (roll % 3 == 1 ? 0.7f : 0.4f);
+                proc.setRandomWildness (wildness);
+                juce::Random::getSystemRandom() = juce::Random ((juce::int64) (r.lockGroup + 1) * 100003
+                                                                  + (juce::int64) roll * 7919 + 13);
+                proc.randomizeAll();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            }
+
+            const auto snapshot = proc.buildStateTree (false);
+            const auto baselineRms = renderRms (proc, r.note, 100);
+            proc.restoreStateTree (snapshot);
+            const auto onset = renderOnset (proc, r.note, 100);
+            proc.restoreStateTree (snapshot);
+            std::cout << "  [scenario=" << r.lockGroup << " roll=" << r.roll << " note=" << r.note
+                       << "] onset(500ms) peak=" << onset.first << " rms=" << onset.second
+                       << " -- heldTailRms=" << baselineRms << "\n";
+
+            // Record every section's post-reset RMS (not just ones clearing
+            // an absolute bar) so a case with no single dominant section
+            // still shows its top contributors instead of just "unresolved".
+            std::vector<std::pair<float, params::Section>> allResults;
+            for (auto sec : groups)
+            {
+                proc.restoreStateTree (snapshot);
+                resetSectionToDefault (proc, sec);
+                const auto rms = renderRms (proc, r.note, 100);
+                allResults.push_back ({ rms, sec });
+            }
+            std::sort (allResults.begin(), allResults.end(),
+                       [] (const auto& a, const auto& b) { return a.first > b.first; });
+
+            const auto label = "scenario=" + juce::String (r.lockGroup) + " roll=" + juce::String (r.roll)
+                              + " note=" + juce::String (r.note);
+
+            // "Found" = clearly dominant: the top section beats baseline by
+            // 4x (a real recovery, not sampling noise) AND clears the top-2
+            // gap by a healthy margin (a genuine single-section effect, not
+            // several sections tied).
+            const bool found = ! allResults.empty()
+                              && allResults[0].first > baselineRms * 4.0f
+                              && allResults[0].first > 0.005f
+                              && (allResults.size() < 2 || allResults[0].first > allResults[1].first * 1.5f);
+            const auto winner = allResults.empty() ? params::Section::global : allResults[0].second;
+            const auto winnerRms = allResults.empty() ? baselineRms : allResults[0].first;
+
+            if (! found)
+            {
+                juce::String top3;
+                for (size_t i = 0; i < allResults.size() && i < 3; ++i)
+                    top3 << params::sectionName (allResults[i].second) << "=" << allResults[i].first << " ";
+
+                // Try the top-2 sections' resets TOGETHER before giving up --
+                // several residuals show two sections each partially
+                // recovering it alone (e.g. Filter 1 + Amp Env), suggesting
+                // a two-factor combination rather than a single culprit.
+                float pairRms = baselineRms;
+                juce::String pairLabel;
+                if (allResults.size() >= 2)
+                {
+                    proc.restoreStateTree (snapshot);
+                    resetSectionToDefault (proc, allResults[0].second);
+                    resetSectionToDefault (proc, allResults[1].second);
+                    pairRms = renderRms (proc, r.note, 100);
+                    pairLabel = params::sectionName (allResults[0].second) + "+"
+                              + params::sectionName (allResults[1].second);
+                }
+
+                if (pairRms > baselineRms * 4.0f && pairRms > 0.005f)
+                {
+                    std::cout << "  [" << label << "] baselineRms=" << baselineRms
+                               << " -- TWO-FACTOR: " << pairLabel << " together recover it to "
+                               << pairRms << " (neither alone did: " << top3 << ")\n";
+                    ++culpritCounts["two-factor:" + pairLabel];
+
+                    // Bisect each side of the pair: with the OTHER section
+                    // fully defaulted, find the single param in THIS section
+                    // that (alone) gives the biggest recovery.
+                    for (auto [sideSection, otherSection] :
+                         { std::pair (allResults[0].second, allResults[1].second),
+                           std::pair (allResults[1].second, allResults[0].second) })
+                    {
+                        juce::String sideCulprit; float sideRms = baselineRms; juce::String sideVal;
+                        for (const auto& def : params::all())
+                        {
+                            if (def.section != sideSection)
+                                continue;
+                            proc.restoreStateTree (snapshot);
+                            resetSectionToDefault (proc, otherSection);
+                            resetParamToDefault (proc, def.id);
+                            const auto rms = renderRms (proc, r.note, 100);
+                            if (rms > sideRms)
+                            {
+                                sideRms = rms;
+                                sideCulprit = def.id;
+                                proc.restoreStateTree (snapshot);
+                                if (auto* p = proc.getAPVTS().getParameter (def.id))
+                                    sideVal = juce::String (p->convertFrom0to1 (p->getValue()));
+                            }
+                        }
+                        std::cout << "      within " << params::sectionName (sideSection)
+                                   << " (with " << params::sectionName (otherSection) << " defaulted): "
+                                   << (sideCulprit.isNotEmpty()
+                                         ? sideCulprit + "=" + sideVal + " -> rms=" + juce::String (sideRms)
+                                         : juce::String ("no single param stands out"))
+                                   << "\n";
+                    }
+                }
+                else
+                {
+                    std::cout << "  [" << label << "] baselineRms=" << baselineRms
+                               << " -- NO single section, and top-2 combined (" << pairLabel
+                               << "=" << pairRms << ") STILL doesn't clearly dominate; top sections: "
+                               << top3 << "\n";
+                    ++culpritCounts["unresolved (no single/pair section)"];
+                }
+                continue;
+            }
+
+            // Bisect within the winning section: try each of its params alone,
+            // keep the single param giving the highest recovered RMS.
+            proc.restoreStateTree (snapshot);
+            juce::String culpritParam;
+            float culpritRms = baselineRms;
+            juce::String culpritRolledValue;
+            for (const auto& def : params::all())
+            {
+                if (def.section != winner)
+                    continue;
+                proc.restoreStateTree (snapshot);
+                resetParamToDefault (proc, def.id);
+                const auto rms = renderRms (proc, r.note, 100);
+                if (rms > baselineRms * 3.0f && rms > culpritRms)
+                {
+                    culpritRms = rms;
+                    culpritParam = def.id;
+                    proc.restoreStateTree (snapshot);
+                    if (auto* p = proc.getAPVTS().getParameter (def.id))
+                        culpritRolledValue = juce::String (p->convertFrom0to1 (p->getValue()));
+                }
+            }
+
+            proc.restoreStateTree (snapshot);
+            const auto sectionName = params::sectionName (winner);
+            if (culpritParam.isNotEmpty())
+            {
+                std::cout << "  [" << label << "] baselineRms=" << baselineRms
+                           << " section=" << sectionName << " culprit=" << culpritParam
+                           << " rolledValue=" << culpritRolledValue
+                           << " rmsAfterResettingJustThisParam=" << culpritRms << "\n";
+                ++culpritCounts[sectionName + ":" + culpritParam];
+                if (culpritExample.find (sectionName + ":" + culpritParam) == culpritExample.end())
+                    culpritExample[sectionName + ":" + culpritParam] = label + " rolledValue=" + culpritRolledValue
+                        + " baselineRms=" + juce::String (baselineRms) + " afterResetRms=" + juce::String (culpritRms);
+            }
+            else
+            {
+                std::cout << "  [" << label << "] baselineRms=" << baselineRms
+                           << " section=" << sectionName << " (whole-section reset recovers to "
+                           << winnerRms << ") but NO SINGLE param in it does alone -- combination within "
+                           << sectionName << "\n";
+                ++culpritCounts[sectionName + ":(combination)"];
+            }
+        }
+
+        std::cout << "  --- culprit summary (hermetic residuals) ---\n";
+        for (const auto& kv : culpritCounts)
+            std::cout << "    " << kv.first << ": " << kv.second
+                       << (culpritExample.count (kv.first) ? " e.g. " + culpritExample[kv.first] : juce::String())
+                       << "\n";
+
+        expect (true, "bisection diagnostic completed");
+    }
+
+    static void chainedRandomizeBackgroundThreadLeakTest()
+    {
+        std::cout << "chainedRandomizeBackgroundThreadLeakTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (sampleRate, blockSize);
+        auto& apvts = proc.getAPVTS();
+
+        const auto rv = [&] (const juce::String& pid)
+        {
+            auto* p = apvts.getParameter (pid);
+            return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
+        };
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        proc.processBlock (buffer, midi);
+        midi.clear();
+
+        // Exact mirror of randomizeLoudnessGuardTest's own loop (30 chained
+        // randomizeAll() calls, no explicit lock, no note-off between rolls)
+        // but with the system RNG SEEDED so a crash is reproducible instead
+        // of depending on whatever state juce::Random::getSystemRandom() is
+        // in from earlier tests in the same process.
+        juce::Random::getSystemRandom() = juce::Random (0x5EED1025);
+
+        for (int roll = 0; roll < 30; ++roll)
+        {
+            proc.randomizeAll();
+            std::cout << "  roll " << roll
+                       << " filter1Type=" << (int) rv (id::filter1Type)
+                       << " filter1Enable=" << rv (id::filter1Enable)
+                       << " filter1Cutoff=" << rv (id::filter1Cutoff)
+                       << " filter1Resonance=" << rv (id::filter1Resonance)
+                       << " filter2Type=" << (int) rv (id::filter2Type)
+                       << " filter2Enable=" << rv (id::filter2Enable)
+                       << " filter2Resonance=" << rv (id::filter2Resonance)
+                       << "\n";
+            for (int b = 0; b < 4; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+            }
+            std::cout << "  roll " << roll << " rendered ok\n";
+        }
+
+        expect (true, "chainedRandomizeBackgroundThreadLeakTest completed without crashing");
+    }
+
     static void randomizeLoudnessGuardTest()
     {
         std::cout << "randomizeLoudnessGuardTest\n";
@@ -5873,7 +6300,7 @@ namespace
                                    << " unisonDetune=" << rv (params::id::oscSlot (s, osc::unisonDetune))
                                    << " unisonBlend=" << rv (params::id::oscSlot (s, osc::unisonBlend))
                                    << " unisonWidth=" << rv (params::id::oscSlot (s, osc::unisonWidth))
-                                   << " wtLoading=" << proc.isWavetableLoading (s)
+                                   << " wtLoading=" << (int) proc.isWavetableLoading (s)
                                    << " wtName=" << proc.getWavetableName (s)
                                    << "\n";
                     }
@@ -5937,6 +6364,234 @@ namespace
                                      + juce::String (silentDefault) + "/150 silent)");
         expect (silentMax == 0, "no silent patches over 75 seeds at max wildness ("
                                  + juce::String (silentMax) + "/75 silent)");
+    }
+
+    // Strengthens the 1.0.25 silence guard for realistic RANDOMIZE ALL use:
+    // Mike reported hitting silence again in a DAW/standalone session after
+    // several new randomizable params (chorus width/mode, LFO smooth/jitter,
+    // loop xfade, delay width) reshuffled the RNG sequence and several
+    // audibility-floor gaps went unnoticed because randomizeNeverSilentTest
+    // above only ever: used a FRESH processor per seed (never chained
+    // rolls), tested exactly one note (60), and judged digital silence only.
+    // This test instead CHAINS rolls on one processor per scenario (roll,
+    // play, roll again), tests several notes across the practical range, a
+    // perceptual (-50 dBFS) threshold as well as digital silence, and every
+    // lock group locked in turn -- staying fully hermetic (no real library,
+    // no file I/O) so it belongs in the default suite. It found the same
+    // arp-chance dry-spell cause the real-library diagnostic harness
+    // (randomizeAllChainedRealLibraryTest, --real-library) found against
+    // Mike's actual library: raising SPASynthProcessor::randomizeAll's
+    // minAudibleArpChance floor back down to its pre-1.0.25 0.6f makes this
+    // FAIL (verified by hand -- see the CLAUDE.md entry for this round).
+    static void randomizeNeverSilentChainedTest()
+    {
+        std::cout << "randomizeNeverSilentChainedTest\n";
+        namespace params = spa::params;
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+        // Perceptual thresholds (1.0.25, per Mike's clarification against the
+        // real report): the complaint was never digital silence -- the output
+        // meter showed *some* level, it was just far too quiet to hear at a
+        // normal listening level. -40 dBFS RMS / -30 dBFS peak is the bar for
+        // "registers on a meter but is inaudible". History of getting here:
+        // a "still building" theory (background wavetable loads queuing
+        // behind each other) was directly disproved by A/B -- see
+        // chainedRandomizeBackgroundThreadLeakTest. A mechanical
+        // section-by-section bisection (randomizeQuietCauseBisectionTest)
+        // then found the real hermetic culprits: ampEnv.sustain at a
+        // moderate roll, combined with a sparse arp or a subtractive
+        // filter, compounding to fail this gate -- now floored, but ONLY in
+        // that combination (see randomizeAll's Cause 10). Before applying
+        // that floor, re-measuring the ONSET (first ~500ms) of each
+        // residual showed most had a clearly audible attack -- a
+        // characterful pluck, not silence -- so the classifier now judges
+        // the WHOLE note: a render only counts as silent if BOTH the onset
+        // and the held tail are below the bar (mirrors how the real-library
+        // harness already tells "healthy onset, sparse tail" apart from
+        // "quiet throughout").
+        constexpr float quietRmsThreshold = 0.01f;     // -40 dBFS
+        constexpr float quietPeakThreshold = 0.0316f;  // -30 dBFS
+
+        // Whole-note classifier (1.0.25, coordinator direction B): the old
+        // version skipped the first ~1s and judged only the held tail, so a
+        // plucky (moderate/low sustain) patch whose ATTACK is clearly
+        // audible still got counted as "silent" -- Mike would hear that
+        // patch fine. Now tracks the ONSET (first ~500ms after note-on,
+        // matching randomizeQuietCauseBisectionTest's onset measurement)
+        // separately from the held tail (same skip-first-1s window as
+        // before); a render only counts as silent if BOTH windows are below
+        // the bar, mirroring how the real-library harness already tells a
+        // healthy-onset-then-sparse-tail apart from quiet-throughout.
+        const auto renderNote = [&] (spa::SPASynthProcessor& proc, int note, int vel,
+                                     float& onsetPeakOut, float& onsetRmsOut,
+                                     float& tailPeakOut, float& tailRmsOut)
+        {
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) vel), 0);
+
+            constexpr int totalBlocks = 282;   // ~3.0s @ 48kHz/512
+            constexpr int skipBlocks = 94;      // ~1.0s
+            constexpr int onsetBlocks = 47;     // ~500ms
+            float onsetPeak = 0.0f, onsetSumSq = 0.0f;
+            int onsetSamples = 0;
+            float tailPeak = 0.0f, tailSumSq = 0.0f;
+            int tailSamples = 0;
+            for (int b = 0; b < totalBlocks; ++b)
+            {
+                if (b == totalBlocks - 1)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                const auto mag = buffer.getMagnitude (0, buffer.getNumSamples());
+                if (b < onsetBlocks)
+                {
+                    onsetPeak = juce::jmax (onsetPeak, mag);
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        const auto* d = buffer.getReadPointer (ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            onsetSumSq += d[i] * d[i];
+                    }
+                    onsetSamples += buffer.getNumSamples() * buffer.getNumChannels();
+                }
+                if (b >= skipBlocks)
+                {
+                    tailPeak = juce::jmax (tailPeak, mag);
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        const auto* d = buffer.getReadPointer (ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            tailSumSq += d[i] * d[i];
+                    }
+                    tailSamples += buffer.getNumSamples() * buffer.getNumChannels();
+                }
+            }
+            onsetPeakOut = onsetPeak;
+            onsetRmsOut = onsetSamples > 0 ? std::sqrt (onsetSumSq / (float) onsetSamples) : 0.0f;
+            tailPeakOut = tailPeak;
+            tailRmsOut = tailSamples > 0 ? std::sqrt (tailSumSq / (float) tailSamples) : 0.0f;
+        };
+
+        int totalSilent = 0, totalTested = 0;
+        // Distribution reporting: bucket every render's RMS in dBFS so the
+        // quiet tail is visible even when nothing crosses the fail bar.
+        std::map<int, int> rmsDbBuckets;   // floor(dBFS/5)*5 -> count
+        float minRmsSeen = 1.0f;
+
+        const auto runScenario = [&] (int lockGroup, int rolls, bool multiNote)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            if (lockGroup >= 0)
+                proc.setLockGroupLocked (lockGroup, true);
+
+            for (int roll = 0; roll < rolls; ++roll)
+            {
+                const float wildness = (roll % 3 == 0) ? 1.0f : (roll % 3 == 1 ? 0.7f : 0.4f);
+                proc.setRandomWildness (wildness);
+                juce::Random::getSystemRandom() = juce::Random ((juce::int64) (lockGroup + 1) * 100003
+                                                                  + (juce::int64) roll * 7919 + 13);
+                proc.randomizeAll();
+
+                // Realistic pacing: a real host pumps its message loop
+                // continuously, so any background wavetable/sample load
+                // this roll kicked off gets a chance to land (its
+                // MessageManager::callAsync completion only runs here)
+                // before the note is played, the same way a user pressing
+                // RANDOMIZE ALL then playing a key a moment later would
+                // experience it. Added while investigating whether the
+                // "still building" state itself (not the eventual content)
+                // explains residual quiet renders -- see
+                // chainedRandomizeBackgroundThreadLeakTest and the
+                // isWavetableLoading/latest-wins coalescing fix in
+                // randomizeAll's Thread::launch sites.
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+                const std::vector<int> notes = (multiNote && roll % 5 == 0)
+                    ? std::vector<int> { 36, 48, 60, 72, 84 } : std::vector<int> { 60 };
+
+                for (int note : notes)
+                {
+                    ++totalTested;
+                    float onsetPeak = 0.0f, onsetRms = 0.0f, tailPeak = 0.0f, tailRms = 0.0f;
+                    renderNote (proc, note, 100, onsetPeak, onsetRms, tailPeak, tailRms);
+                    // The tail window is what the distribution/min-seen
+                    // reporting has always tracked; keep that for the
+                    // histogram even though the pass/fail verdict now also
+                    // considers the onset.
+                    const auto rms = tailRms;
+                    minRmsSeen = juce::jmin (minRmsSeen, rms);
+                    const auto rmsDb = rms > 0.0f ? juce::Decibels::gainToDecibels (rms) : -120.0f;
+                    ++rmsDbBuckets[(int) std::floor (rmsDb / 5.0f) * 5];
+                    const bool onsetQuiet = onsetRms < quietRmsThreshold && onsetPeak < quietPeakThreshold;
+                    const bool tailQuiet = tailRms < quietRmsThreshold && tailPeak < quietPeakThreshold;
+                    if (onsetQuiet && tailQuiet)
+                    {
+                        ++totalSilent;
+                        std::cout << "  [silent] lockGroup=" << lockGroup << " roll=" << roll
+                                   << " note=" << note << " onsetPeak=" << onsetPeak << " onsetRms=" << onsetRms
+                                   << " tailPeak=" << tailPeak << " tailRms=" << tailRms << "\n";
+                        if (std::getenv ("SPASYNTH_DUMP_CHAINED_SILENT") != nullptr)
+                        {
+                            namespace id = spa::params::id;
+                            const auto rv = [&] (const juce::String& pid)
+                            {
+                                auto* p = proc.getAPVTS().getParameter (pid);
+                                return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
+                            };
+                            for (int s = 0; s < params::numOscSlots; ++s)
+                                std::cout << "    osc[" << s << "] enable=" << rv (id::oscSlot (s, id::osc::enable))
+                                           << " mode=" << (int) rv (id::oscSlot (s, id::osc::mode))
+                                           << " level=" << rv (id::oscSlot (s, id::osc::level))
+                                           << " table=" << (int) rv (id::oscSlot (s, id::osc::table))
+                                           << " wtLoading=" << (int) proc.isWavetableLoading (s)
+                                           << " wtName=\"" << proc.getWavetableName (s) << "\""
+                                           << " smpLoading=" << (int) proc.isSampleLoading (s)
+                                           << "\n";
+                            std::cout << "    filter1Enable=" << rv (id::filter1Enable)
+                                       << " filter1Type=" << (int) rv (id::filter1Type)
+                                       << " filter1Cutoff=" << rv (id::filter1Cutoff)
+                                       << " filter2Enable=" << rv (id::filter2Enable)
+                                       << " filter2Type=" << (int) rv (id::filter2Type)
+                                       << " filter2Cutoff=" << rv (id::filter2Cutoff) << "\n";
+                            std::cout << "    ampAttack=" << rv (id::ampAttack)
+                                       << " ampDecay=" << rv (id::ampDecay)
+                                       << " ampSustain=" << rv (id::ampSustain)
+                                       << " ampRelease=" << rv (id::ampRelease) << "\n";
+                            std::cout << "    voiceMode=" << (int) rv (id::voiceMode)
+                                       << " oversampling=" << (int) rv (id::oversampling) << "\n";
+                            for (int rr = 0; rr < params::numModRoutes; ++rr)
+                            {
+                                const auto destChoice = (int) rv (id::routeParam (rr, id::route::dest));
+                                if (destChoice <= 0) continue;
+                                const auto& dests = params::modDestinations();
+                                const auto destName = (destChoice - 1) < (int) dests.size()
+                                    ? dests[(size_t) (destChoice - 1)].def->id : juce::String ("?");
+                                std::cout << "    route[" << rr << "] src=" << (int) rv (id::routeParam (rr, id::route::source))
+                                           << " dest=" << destName << " depth=" << rv (id::routeParam (rr, id::route::depth)) << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        runScenario (-1, 60, true);
+        for (int g = 0; g < params::numLockGroups; ++g)
+            runScenario (g, 12, false);
+
+        std::cout << "  rms distribution (dBFS bucket -> count), min rms seen = "
+                   << (minRmsSeen > 0.0f ? juce::Decibels::gainToDecibels (minRmsSeen) : -120.0f)
+                   << " dBFS:\n";
+        for (const auto& kv : rmsDbBuckets)
+            std::cout << "    [" << kv.first << ", " << (kv.first + 5) << ") dBFS: " << kv.second << "\n";
+
+        expect (totalSilent == 0, "no patches quieter than -40dBFS RMS / -30dBFS peak at BOTH onset and held tail, over "
+                                   + juce::String (totalTested)
+                                   + " chained (roll,note) renders across all notes/lock groups ("
+                                   + juce::String (totalSilent) + " too quiet)");
     }
 
     // Regression for a run-to-run NONDETERMINISM bug found while chasing
@@ -8205,6 +8860,481 @@ namespace
 
         lib::setLibraryRoot (savedRoot);
         presetsRoot.deleteRecursively();
+    }
+
+    // ------------------------------------------------------------------
+    // Diagnostic harness for the 1.0.25 "RANDOMIZE ALL sometimes lands on
+    // silence again" regression report. Opt-in only (--real-library /
+    // SPASYNTH_REAL_LIBRARY_TEST=1) -- NEVER part of the default suite --
+    // because it needs the real installed library and can run for
+    // several minutes. Unlike randomizeNeverSilentTest (fresh processor
+    // per seed, no library, one note, digital-silence threshold only),
+    // this reproduces how Mike actually hit it: CHAINED rolls on one
+    // processor instance, the real SFX library loaded read-only, notes
+    // across the range and a couple of velocities, a pumped message loop
+    // so async wavetable/sample loads have a realistic chance to land,
+    // every lock group locked in turn, and a PERCEPTUAL silence
+    // threshold (-50 dBFS RMS) in addition to digital silence. For every
+    // silent case it dumps the full rolled state and classifies a cause
+    // so this is diagnostic, not just pass/fail. It never writes
+    // anywhere -- lib::setLibraryRoot only points read access at the
+    // library, and the hermetic presets/settings overrides main() already
+    // installs stay in effect.
+    static void randomizeAllChainedRealLibraryTest()
+    {
+        std::cout << "randomizeAllChainedRealLibraryTest\n";
+
+        if (! g_realLibraryTestOptIn)
+        {
+            std::cout << "  SKIPPED (opt-in: --real-library or SPASYNTH_REAL_LIBRARY_TEST=1)\n";
+            return;
+        }
+
+        namespace lib = spa::library;
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto realLibRoot = juce::File ("/Users/Shared/Silverplatter Audio/SPASynth Library");
+        if (! realLibRoot.isDirectory())
+        {
+            std::cout << "  SKIPPED: real library not found at \"" << realLibRoot.getFullPathName()
+                       << "\" on this machine\n";
+            return;
+        }
+
+        const auto startTime = juce::Time::getMillisecondCounterHiRes();
+        const auto savedRoot = lib::getLibraryRoot();
+        lib::setLibraryRoot (realLibRoot);
+
+        auto packs = lib::scanLibrary (realLibRoot);
+        expect (! packs.empty(), "real library scans to at least one pack for the chained harness");
+
+        // A handful of real files spanning short/long/with-silence, used to
+        // seed "loaded factory-style" scenarios (samples/granular engines
+        // reading real content rather than the synthetic short WAVs the
+        // hermetic suite uses elsewhere).
+        std::vector<juce::File> seedFiles;
+        for (const auto& p : packs)
+        {
+            if (p.wavs.isEmpty())
+                continue;
+            seedFiles.push_back (p.wavs[0]);                       // smallest (often shortest)
+            seedFiles.push_back (p.wavs[p.wavs.size() - 1]);        // largest (often longest)
+            if (seedFiles.size() >= 12)
+                break;
+        }
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+        constexpr float silentPeakThreshold = 1.0e-3f;
+        constexpr float silentRmsThreshold = 1.0e-4f;
+        constexpr float perceptualRmsThreshold = 0.00316f;   // -50 dBFS
+
+        struct Verdict { bool digitalSilent; bool perceptualQuiet; float peak; float rms; float earlyRms; };
+
+        // Renders `note`/`vel` on the CURRENT state of `proc` for a 3.5s
+        // hold (skip the first 1.2s so a slow attack or a synced arp gets
+        // going), classifying against both thresholds. Also tracks
+        // `earlyRms` -- RMS over that first ~1.2s onset window -- so a
+        // silent/quiet verdict on the TAIL window can be told apart from a
+        // patch that was never audible in the first place: earlyRms healthy
+        // + tail quiet usually means real content ran out (a short one-shot,
+        // a sample's trailing silence, an arp gap) rather than the patch
+        // itself being quiet throughout.
+        const auto renderNote = [&] (spa::SPASynthProcessor& proc, int note, int vel) -> Verdict
+        {
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) vel), 0);
+
+            constexpr int totalBlocks = 328;    // ~3.5s @ 48kHz/512
+            constexpr int skipBlocks = 113;      // ~1.2s
+            float peak = 0.0f, sumSq = 0.0f, earlySumSq = 0.0f;
+            int samples = 0, earlySamples = 0;
+            for (int b = 0; b < totalBlocks; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                const auto mag = buffer.getMagnitude (0, buffer.getNumSamples());
+                peak = juce::jmax (peak, mag);
+                if (b >= skipBlocks)
+                {
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        const auto* d = buffer.getReadPointer (ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            sumSq += d[i] * d[i];
+                    }
+                    samples += buffer.getNumSamples() * buffer.getNumChannels();
+                }
+                else
+                {
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        const auto* d = buffer.getReadPointer (ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            earlySumSq += d[i] * d[i];
+                    }
+                    earlySamples += buffer.getNumSamples() * buffer.getNumChannels();
+                }
+            }
+            const auto rms = samples > 0 ? std::sqrt (sumSq / (float) samples) : 0.0f;
+            const auto earlyRms = earlySamples > 0 ? std::sqrt (earlySumSq / (float) earlySamples) : 0.0f;
+            Verdict v { peak < silentPeakThreshold || rms < silentRmsThreshold,
+                        rms < perceptualRmsThreshold,
+                        peak, rms, earlyRms };
+            return v;
+        };
+
+        const auto dumpState = [&] (spa::SPASynthProcessor& proc) -> juce::String
+        {
+            juce::String out;
+            const auto rv = [&] (const juce::String& id)
+            {
+                auto* p = proc.getAPVTS().getParameter (id);
+                return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
+            };
+            for (int s = 0; s < params::numOscSlots; ++s)
+            {
+                namespace osc = params::id::osc;
+                out << "    osc[" << s << "] enable=" << rv (params::id::oscSlot (s, osc::enable))
+                    << " mode=" << (int) rv (params::id::oscSlot (s, osc::mode))
+                    << " level=" << rv (params::id::oscSlot (s, osc::level))
+                    << " keytrack=" << rv (params::id::oscSlot (s, osc::keytrack))
+                    << " sampleStart=" << rv (params::id::oscSlot (s, osc::sampleStart))
+                    << " loop=" << rv (params::id::oscSlot (s, osc::loop))
+                    << " loopStart=" << rv (params::id::oscSlot (s, osc::loopStart))
+                    << " loopEnd=" << rv (params::id::oscSlot (s, osc::loopEnd))
+                    << " grainPos=" << rv (params::id::oscSlot (s, osc::grainPos))
+                    << " grainDensity=" << rv (params::id::oscSlot (s, osc::grainDensity))
+                    << " grainSize=" << rv (params::id::oscSlot (s, osc::grainSize))
+                    << " wtLoading=" << (int) proc.isWavetableLoading (s)
+                    << " smpLoading=" << (int) proc.isSampleLoading (s)
+                    << "\n";
+            }
+            out << "    ampAttack=" << rv (params::id::ampAttack)
+                << " ampDecay=" << rv (params::id::ampDecay)
+                << " ampSustain=" << rv (params::id::ampSustain)
+                << " ampRelease=" << rv (params::id::ampRelease) << "\n";
+            out << "    filter1Enable=" << rv (params::id::filter1Enable)
+                << " filter1Type=" << (int) rv (params::id::filter1Type)
+                << " filter1Cutoff=" << rv (params::id::filter1Cutoff)
+                << " filter2Enable=" << rv (params::id::filter2Enable)
+                << " filter2Type=" << (int) rv (params::id::filter2Type)
+                << " filter2Cutoff=" << rv (params::id::filter2Cutoff) << "\n";
+            out << "    arpEnable=" << rv (params::id::arp::enable)
+                << " arpChance=" << rv (params::id::arp::chance)
+                << " arpStutter=" << rv (params::id::arp::stutter)
+                << " arpJump=" << rv (params::id::arp::jump)
+                << " arpDivision=" << (int) rv (params::id::arp::division)
+                << " arpMode=" << (int) rv (params::id::arp::mode) << "\n";
+            out << "    chaosEnable=" << rv (params::id::chaos::enable)
+                << " chaosDepth=" << rv (params::id::chaos::depth)
+                << " chaosAmpOn=" << rv (params::id::chaos::ampOn)
+                << " chaosAmpAmount=" << rv (params::id::chaos::ampAmount)
+                << " chaosDistOn=" << rv (params::id::chaos::distOn) << "\n";
+            for (int r = 0; r < params::numModRoutes; ++r)
+            {
+                const auto destChoice = (int) rv (params::id::routeParam (r, params::id::route::dest));
+                if (destChoice <= 0)
+                    continue;
+                const auto& dests = params::modDestinations();
+                const auto destName = (destChoice - 1) < (int) dests.size()
+                    ? dests[(size_t) (destChoice - 1)].def->id : juce::String ("?");
+                out << "    route[" << r << "] src=" << (int) rv (params::id::routeParam (r, params::id::route::source))
+                    << " dest=" << destName
+                    << " depth=" << rv (params::id::routeParam (r, params::id::route::depth)) << "\n";
+            }
+            out << "    voiceMode=" << (int) rv (params::id::voiceMode)
+                << " oversampling=" << (int) rv (params::id::oversampling)
+                << " masterGain=" << rv (params::id::masterGain)
+                << " limEnable=" << rv (params::id::fx::limEnable)
+                << " limCeiling=" << rv (params::id::fx::limCeiling) << "\n";
+            return out;
+        };
+
+        int totalSilent = 0, totalPerceptualOnly = 0, totalTested = 0;
+        // Sparse-content vs quiet-throughout split (coordinator ask): a
+        // healthy onset (earlyRms above this) followed by a quiet/silent
+        // TAIL window usually means real content ran out under a held note
+        // (a short one-shot, a sample's trailing silence/end, an arp gap) --
+        // genuinely sparse source material, not a patch that's quiet from
+        // the start. Anything below the onset bar for the whole render is
+        // "quiet throughout". The bar matches the perceptual RMS threshold
+        // itself, so "healthy onset" means the first ~1.2s alone would NOT
+        // have been flagged quiet on its own.
+        int sparseTailCount = 0, quietThroughoutCount = 0;
+        int realLibBisectionCount = 0;
+        std::map<juce::String, int> realLibCulpritCounts;
+        const std::vector<params::Section> bisectionGroups = {
+            params::Section::global, params::Section::oscA, params::Section::oscB, params::Section::oscC,
+            params::Section::filter1, params::Section::filter2, params::Section::ampEnv,
+            params::Section::env2, params::Section::env3, params::Section::lfo1, params::Section::lfo2,
+            params::Section::lfo3, params::Section::macros, params::Section::arp, params::Section::chaos,
+            params::Section::fxDist, params::Section::fxChorus, params::Section::fxDelay,
+            params::Section::fxReverb, params::Section::fxEQ, params::Section::fxMod,
+            params::Section::fxTremVib, params::Section::fxLimiter, params::Section::fxConvolve,
+            params::Section::matrix,
+        };
+        std::map<juce::String, int> causeCounts;
+        std::map<juce::String, juce::String> causeExample;
+
+        const auto classifyCause = [&] (spa::SPASynthProcessor& proc, bool anyEnabledSampleMode,
+                                        bool anyEnabledGranular) -> juce::String
+        {
+            const auto rv = [&] (const juce::String& id)
+            {
+                auto* p = proc.getAPVTS().getParameter (id);
+                return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
+            };
+            if (rv (params::id::arp::enable) >= 0.5f
+                && (rv (params::id::arp::chance) < 0.05f || (int) rv (params::id::arp::division) < 4))
+                return "arp chance/division";
+            if (anyEnabledSampleMode && rv (params::id::oscSlot (0, params::id::osc::sampleStart)) > 0.9f)
+                return "sample start near end-of-file";
+            if (anyEnabledGranular)
+                return "granular position/density";
+            for (int r = 0; r < params::numModRoutes; ++r)
+            {
+                const auto destChoice = (int) rv (params::id::routeParam (r, params::id::route::dest));
+                const auto depth = rv (params::id::routeParam (r, params::id::route::depth));
+                if (destChoice > 0 && std::abs (depth) > 0.6f)
+                    return "mod matrix route onto level/cutoff/sustain";
+            }
+            if (rv (params::id::ampAttack) > 2.0f)
+                return "slow amp attack";
+            if (rv (params::id::filter1Enable) >= 0.5f || rv (params::id::filter2Enable) >= 0.5f)
+                return "filter cutoff far from note";
+            if (rv (params::id::chaos::enable) >= 0.5f && rv (params::id::chaos::ampOn) >= 0.5f)
+                return "chaos amp drive";
+            return "unclassified";
+        };
+
+        // scenario -1 = nothing locked; 0..numLockGroups-1 = that group locked.
+        for (int scenario = -1; scenario < params::numLockGroups; ++scenario)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            if (scenario >= 0)
+                proc.setLockGroupLocked (scenario, true);
+
+            const juce::String scenarioName = scenario < 0
+                ? juce::String ("unlocked")
+                : "locked:" + params::lockGroupName ((params::LockGroup) scenario);
+
+            // A third of the runs in the unlocked scenario seed real sample
+            // content into slot 0/1 first, mirroring a "loaded factory-style
+            // patch, then randomize on top of it" session rather than an
+            // always-synthetic one.
+            const bool seedSamples = (scenario == -1) && ! seedFiles.empty();
+            if (seedSamples)
+            {
+                proc.loadSampleFromFile (0, seedFiles[0]);
+                if (seedFiles.size() > 1)
+                    proc.loadSampleFromFile (1, seedFiles[1]);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            }
+
+            const int rolls = scenario < 0 ? 300 : 60;
+            for (int roll = 0; roll < rolls; ++roll)
+            {
+                const float wildness = (roll % 3 == 0) ? 1.0f : (roll % 3 == 1 ? 0.7f : 0.4f);
+                proc.setRandomWildness (wildness);
+                juce::Random::getSystemRandom() = juce::Random ((juce::int64) (scenario + 1) * 100003
+                                                                  + (juce::int64) roll * 7919 + 13);
+                proc.randomizeAll();
+
+                // Force sample content back onto a seeded slot when the roll
+                // moved it off sample/granular mode, so the "real content"
+                // scenario keeps exercising it every roll (a user re-rolling
+                // repeatedly on a sample-based patch will often nudge it back
+                // by hand rather than accept every mode roll).
+                if (seedSamples)
+                {
+                    namespace osc = params::id::osc;
+                    if (auto* m = proc.getAPVTS().getParameter (params::id::oscSlot (0, osc::mode)))
+                        if ((int) m->convertFrom0to1 (m->getValue()) != (int) params::OscMode::sample
+                            && (int) m->convertFrom0to1 (m->getValue()) != (int) params::OscMode::granular)
+                            m->setValueNotifyingHost (m->convertTo0to1 (
+                                (float) (int) (roll % 2 == 0 ? params::OscMode::sample : params::OscMode::granular)));
+                }
+
+                // Realistic pump: a user presses RANDOMIZE ALL, glances at
+                // the screen, plays within roughly a second.
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+
+                const bool anySample = [&]
+                {
+                    namespace osc = params::id::osc;
+                    for (int s = 0; s < params::numOscSlots; ++s)
+                    {
+                        auto* mp = proc.getAPVTS().getParameter (params::id::oscSlot (s, osc::mode));
+                        auto* ep = proc.getAPVTS().getParameter (params::id::oscSlot (s, osc::enable));
+                        if (mp != nullptr && ep != nullptr && ep->getValue() >= 0.5f
+                            && (int) mp->convertFrom0to1 (mp->getValue()) == (int) params::OscMode::sample)
+                            return true;
+                    }
+                    return false;
+                }();
+                const bool anyGranular = [&]
+                {
+                    namespace osc = params::id::osc;
+                    for (int s = 0; s < params::numOscSlots; ++s)
+                    {
+                        auto* mp = proc.getAPVTS().getParameter (params::id::oscSlot (s, osc::mode));
+                        auto* ep = proc.getAPVTS().getParameter (params::id::oscSlot (s, osc::enable));
+                        if (mp != nullptr && ep != nullptr && ep->getValue() >= 0.5f
+                            && (int) mp->convertFrom0to1 (mp->getValue()) == (int) params::OscMode::granular)
+                            return true;
+                    }
+                    return false;
+                }();
+
+                // Test coverage per roll: full note range every 4th roll (or
+                // every roll for the small locked-group sweeps), a single
+                // mid note otherwise, plus a low-velocity pass occasionally.
+                std::vector<int> testNotes;
+                std::vector<int> testVels;
+                if (scenario >= 0 || roll % 4 == 0)
+                {
+                    testNotes = { 36, 48, 60, 72, 84 };
+                    testVels = { 100 };
+                }
+                else
+                {
+                    testNotes = { 60 };
+                    testVels = { 100 };
+                }
+                if (roll % 5 == 0)
+                    testVels.push_back (40);
+
+                for (int note : testNotes)
+                {
+                    for (int vel : testVels)
+                    {
+                        ++totalTested;
+                        const auto v = renderNote (proc, note, vel);
+                        if (v.digitalSilent || v.perceptualQuiet)
+                        {
+                            ++totalSilent;
+                            if (! v.digitalSilent)
+                                ++totalPerceptualOnly;
+                            if (v.earlyRms >= perceptualRmsThreshold)
+                                ++sparseTailCount;
+                            else
+                            {
+                                ++quietThroughoutCount;
+
+                                // Mechanical cause bisection (coordinator ask, same
+                                // method as randomizeQuietCauseBisectionTest's
+                                // hermetic version): up to 30 quiet-throughout
+                                // real-library cases, opt-in alongside
+                                // --real-library via the same
+                                // SPASYNTH_BISECTION_TEST=1 flag so a plain
+                                // --real-library run stays at its usual cost.
+                                if (std::getenv ("SPASYNTH_BISECTION_TEST") != nullptr
+                                    && realLibBisectionCount < 20)
+                                {
+                                    ++realLibBisectionCount;
+                                    const auto snap = proc.buildStateTree (false);
+                                    std::vector<std::pair<float, params::Section>> results;
+                                    for (auto sec : bisectionGroups)
+                                    {
+                                        proc.restoreStateTree (snap);
+                                        for (const auto& def : params::all())
+                                            if (def.section == sec)
+                                                if (auto* p = proc.getAPVTS().getParameter (def.id))
+                                                    p->setValueNotifyingHost (p->getDefaultValue());
+                                        const auto rv2 = renderNote (proc, note, vel);
+                                        results.push_back ({ rv2.rms, sec });
+                                    }
+                                    std::sort (results.begin(), results.end(),
+                                               [] (const auto& a, const auto& b) { return a.first > b.first; });
+                                    proc.restoreStateTree (snap);
+
+                                    juce::String verdict;
+                                    if (! results.empty() && results[0].first > v.rms * 4.0f && results[0].first > 0.005f
+                                        && (results.size() < 2 || results[0].first > results[1].first * 1.5f))
+                                    {
+                                        verdict = "single:" + params::sectionName (results[0].second);
+                                    }
+                                    else if (results.size() >= 2)
+                                    {
+                                        proc.restoreStateTree (snap);
+                                        for (const auto& def : params::all())
+                                            if (def.section == results[0].second || def.section == results[1].second)
+                                                if (auto* p = proc.getAPVTS().getParameter (def.id))
+                                                    p->setValueNotifyingHost (p->getDefaultValue());
+                                        const auto pairRv = renderNote (proc, note, vel);
+                                        proc.restoreStateTree (snap);
+                                        if (pairRv.rms > v.rms * 4.0f && pairRv.rms > 0.005f)
+                                            verdict = "pair:" + params::sectionName (results[0].second) + "+"
+                                                    + params::sectionName (results[1].second);
+                                        else
+                                            verdict = "unresolved";
+                                    }
+                                    else
+                                        verdict = "unresolved";
+
+                                    const auto bisectDesc = "scenario=" + scenarioName + " roll=" + juce::String (roll)
+                                        + " note=" + juce::String (note) + " vel=" + juce::String (vel)
+                                        + " peak=" + juce::String (v.peak, 6) + " rms=" + juce::String (v.rms, 6);
+                                    std::cout << "  [bisect] " << bisectDesc << " verdict=" << verdict
+                                               << " top3=";
+                                    for (size_t i = 0; i < results.size() && i < 3; ++i)
+                                        std::cout << params::sectionName (results[i].second) << "=" << results[i].first << " ";
+                                    std::cout << "\n";
+                                    ++realLibCulpritCounts[verdict];
+                                }
+                            }
+
+                            const auto cause = classifyCause (proc, anySample, anyGranular);
+                            ++causeCounts[cause];
+                            const auto seedDesc = "scenario=" + scenarioName + " roll=" + juce::String (roll)
+                                + " note=" + juce::String (note) + " vel=" + juce::String (vel)
+                                + " peak=" + juce::String (v.peak, 6) + " rms=" + juce::String (v.rms, 6);
+                            if (causeExample.find (cause) == causeExample.end())
+                            {
+                                causeExample[cause] = seedDesc + "\n" + dumpState (proc);
+                                std::cout << "  [silent] " << seedDesc
+                                           << " cause=" << cause << "\n" << dumpState (proc);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - startTime;
+        std::cout << "  tested " << totalTested << " (note,roll,scenario) renders, "
+                   << totalSilent << " silent (" << totalPerceptualOnly << " perceptual-only, "
+                   << (totalSilent - totalPerceptualOnly) << " digital) in "
+                   << (int) (elapsedMs / 1000.0) << "s\n";
+        std::cout << "  of those " << totalSilent << " silent/quiet renders: "
+                   << sparseTailCount << " had a healthy onset then went quiet in the tail "
+                      "(genuinely sparse real content -- a short one-shot, trailing silence, an "
+                      "arp gap), " << quietThroughoutCount << " were quiet from the very start "
+                      "(the patch itself, not the content)\n";
+        std::cout << "  cause table:\n";
+        for (const auto& kv : causeCounts)
+            std::cout << "    " << kv.first << ": " << kv.second << " occurrences, example:\n"
+                       << causeExample[kv.first] << "\n";
+
+        if (realLibBisectionCount > 0)
+        {
+            std::cout << "  --- mechanical culprit bisection (" << realLibBisectionCount
+                       << " quiet-throughout real-library cases) ---\n";
+            for (const auto& kv : realLibCulpritCounts)
+                std::cout << "    " << kv.first << ": " << kv.second << "\n";
+        }
+
+        lib::setLibraryRoot (savedRoot);
+
+        // Diagnostic only -- report, don't fail the harness itself (the
+        // hermetic randomizeNeverSilentTest / randomizeNeverSilentChainedTest
+        // are the pass/fail gates in the default suite).
+        expect (true, "diagnostic harness completed (" + juce::String (totalSilent)
+                       + "/" + juce::String (totalTested) + " silent renders)");
     }
 
     // Renders the editor offscreen for visual review: SPASynthTests --snapshot <dir>
@@ -13707,6 +14837,32 @@ namespace
 
         const auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (50); };
 
+        // 1.0.25: replaced the fixed 50ms pump-then-check below with a
+        // pump-UNTIL-it-actually-happens loop for the repaint-count
+        // assertions specifically. Found flaky under ASan running in full-
+        // suite order (not in isolation): 1/1 seen so far, "picking DEST
+        // alone" failed to see the counter advance within a fixed window --
+        // ASan's slower execution (and whatever else is mid-flight earlier
+        // in a full-suite run) can push the AsyncUpdater/repaint dispatch
+        // past a fixed budget that was plenty on an isolated, unloaded run.
+        // Polls in short slices up to a generous 2s ceiling rather than
+        // guessing a bigger fixed number; returns as soon as the count
+        // moves, so a healthy run is no slower than before.
+        const auto pumpUntilRepaintCountAbove = [&] (int previousCount) -> int
+        {
+            constexpr int timeoutMs = 2000;
+            constexpr int sliceMs = 10;
+            int waited = 0;
+            while (waited < timeoutMs)
+            {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (sliceMs);
+                waited += sliceMs;
+                if (matrixPanel->getContentRepaintCountForTest() > previousCount)
+                    break;
+            }
+            return matrixPanel->getContentRepaintCountForTest();
+        };
+
         // Row 0 starts fully empty (both None) -- dimmed, and the fixture's
         // very first construction already counts as one legitimate repaint
         // (InertGateWatcher fires once for each listener add's initial
@@ -13722,32 +14878,30 @@ namespace
         // simulateUserComboPick, going through the same GestureGate/
         // ComboBoxAttachment/APVTS write a live click does.
         matrixPanel->simulateUserComboPick (0, false /* dest */, cutoffDestChoice);
-        pump();
+        const int afterDestOnly = pumpUntilRepaintCountAbove (baseline);
         expect (matrixPanel->isRouteDimmedForTest (0),
                 "row 0 still dimmed after DEST only (source still None) -- live state is correct");
-        expect (matrixPanel->getContentRepaintCountForTest() > baseline,
+        expect (afterDestOnly > baseline,
                 "FIX: picking DEST alone still repaints the wash-painting component "
                 "(the row's dim reason changed even though it's still dimmed)");
-        const int afterDestOnly = matrixPanel->getContentRepaintCountForTest();
 
         // Pick SOURCE too -- the route is now complete, so the row should
         // un-dim, and the wash-painting component must be told to repaint so
         // that shows up ON SCREEN without needing an unrelated hover.
         matrixPanel->simulateUserComboPick (0, true /* source */, (int) params::ModSource::lfo2);
-        pump();
+        const int afterComplete = pumpUntilRepaintCountAbove (afterDestOnly);
         expect (! matrixPanel->isRouteDimmedForTest (0), "row 0 reads undimmed once both halves are real");
-        expect (matrixPanel->getContentRepaintCountForTest() > afterDestOnly,
+        expect (afterComplete > afterDestOnly,
                 "FIX: completing the route repaints the wash-painting component -- "
                 "REVERTS to failing (stale paint) if content.repaint() is only ever "
                 "wired to chaos::syncToBpm and not to the route's own source/dest params");
-        const int afterComplete = matrixPanel->getContentRepaintCountForTest();
 
         // Reverse (brief step 3): clearing one half back to None must dim
         // the row again, and must repaint just as promptly.
         matrixPanel->simulateUserComboPick (0, true /* source */, spa::ui::kNoneRouteChoiceIndex);
-        pump();
+        const int afterCleared = pumpUntilRepaintCountAbove (afterComplete);
         expect (matrixPanel->isRouteDimmedForTest (0), "row 0 dims again once SOURCE is cleared back to None");
-        expect (matrixPanel->getContentRepaintCountForTest() > afterComplete,
+        expect (afterCleared > afterComplete,
                 "FIX: clearing a half repaints the wash-painting component immediately");
     }
 
@@ -21542,6 +22696,11 @@ int main (int argc, char* argv[])
     RUN (fxPanelDisplayMinimumHeightTest);
     RUN (fxPanelCaptionFitsColumnTest);
     RUN (modMatrixDimWashRepaintTest);
+    RUN (randomizeAllChainedRealLibraryTest);
+    RUN (randomizeNeverSilentChainedTest);
+    RUN (chainedRandomizeBackgroundThreadLeakTest);
+    RUN (destructorBackgroundWaitTimingTest);
+    RUN (randomizeQuietCauseBisectionTest);
 
    #undef RUN
 

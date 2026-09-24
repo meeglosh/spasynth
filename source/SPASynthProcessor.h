@@ -354,7 +354,7 @@ private:
         juce::String path;                                    // "" = factory
         juce::String error;
         std::atomic<int> pendingLoads { 0 };                  // in-flight background loads
-        int requestSerial = 0;   // latest-swap-wins, same rationale as SlotSample::requestSerial
+        std::atomic<int> requestSerial { 0 };   // latest-swap-wins, same rationale as SlotSample::requestSerial (atomic: read from background build/load threads too, see the early-exit "skip if superseded" checks)
     };
     std::shared_ptr<const dsp::Wavetable> factoryTable;
     // Pre-built Table-menu wavetables, indexed by WavetableTableChoice; built
@@ -373,10 +373,22 @@ private:
         juce::String path;
         juce::String error;
         std::atomic<int> pendingLoads { 0 };                  // in-flight background loads
-        int requestSerial = 0;   // latest-swap-wins: newest request supersedes older ones
+        std::atomic<int> requestSerial { 0 };   // latest-swap-wins: newest request supersedes older ones (atomic: read from background load threads too)
     };
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread
+
+    // Every juce::Thread::launch() call site (sample load, wavetable load,
+    // built-in wavetable build) increments this before launching and
+    // decrements it as the very last thing the launched lambda does (after
+    // its MessageManager::callAsync has been queued). ~SPASynthProcessor()
+    // waits for it to reach zero before returning -- see that destructor's
+    // comment for why: JUCE's LambdaThread self-deletes on its own thread
+    // (Thread::launch's deleteOnThreadEnd), so nothing else owns its
+    // lifetime, and without this a background build/load can still be
+    // mid-flight when the processor (and, in a real host, potentially the
+    // whole plugin/message-manager teardown) goes away.
+    std::atomic<int> activeBackgroundThreads { 0 };
 
     // Constructed after the APVTS (they capture parameter/default state).
     std::unique_ptr<MidiLearnManager> midiLearn;

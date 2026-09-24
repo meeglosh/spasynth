@@ -285,6 +285,40 @@ SPASynthProcessor::~SPASynthProcessor()
 {
     stopTimer();
 
+    // Wait for every background sample/wavetable load or built-in-wavetable
+    // build this processor has launched (juce::Thread::launch, self-deleting
+    // LambdaThreads) to finish before tearing anything else down. Found via
+    // ASan on a chained-RANDOMIZE-ALL repro (filterResonanceWriteCrashReproTest):
+    // calling randomizeAll() repeatedly (every roll can reselect a slot's
+    // built-in Table, each triggering a fresh background build) queues
+    // background threads far faster than each can finish; the test process
+    // exited (and, along the way, JUCE's MessageManager began shutting down)
+    // with dozens of those threads still mid-flight, which surfaced as
+    // JUCE's LeakedObjectDetector reporting live LambdaThread/Thread/
+    // WaitableEvent/FFT instances and, separately, a
+    // juce_MessageManager_mac.mm:435 assertion consistent with a background
+    // thread calling MessageManager::callAsync() after/during MessageManager
+    // teardown. The existing WeakReference guard in each load lambda already
+    // makes touching `this` from the async completion callback race-free
+    // against THIS processor's own destruction, but it does nothing to stop
+    // the underlying OS thread from still being alive (and about to touch
+    // the message manager) once the processor -- and, in a real host, quite
+    // possibly the whole plugin instance shortly after -- is gone. A bounded
+    // wait here (builds/loads are documented elsewhere as "a handful of ms")
+    // closes that window; the queued MessageManager::callAsync completions
+    // are harmless no-ops once weak == nullptr, so nothing here needs their
+    // result, just their thread to have finished running.
+    {
+        constexpr int maxWaitMs = 3000;
+        int waited = 0;
+        while (activeBackgroundThreads.load (std::memory_order_acquire) > 0 && waited < maxWaitMs)
+        {
+            juce::Thread::sleep (2);
+            waited += 2;
+        }
+        jassert (activeBackgroundThreads.load (std::memory_order_acquire) == 0);
+    }
+
     for (int s = 0; s < params::numOscSlots; ++s)
     {
         apvts.removeParameterListener (params::id::oscSlot (s, params::id::osc::mode), this);
@@ -514,8 +548,23 @@ void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
     // concurrent check-vs-delete to race against, even though WeakReference
     // itself isn't thread-safe in general.
     juce::WeakReference<SPASynthProcessor> weak (this);
+    ++activeBackgroundThreads;
     juce::Thread::launch ([weak, slot, file, serial]
     {
+        // 1.0.25: skip the (potentially slow -- the loader retries with
+        // sleeps up to ~360ms) load entirely if a newer request for this
+        // slot already landed. See setBuiltInWavetable's identical check
+        // for the full rationale.
+        if (weak == nullptr || serial != weak->slotSamples[(size_t) slot].requestSerial.load())
+        {
+            if (weak != nullptr)
+            {
+                weak->slotSamples[(size_t) slot].pendingLoads.fetch_sub (1);
+                --weak->activeBackgroundThreads;
+            }
+            return;
+        }
+
         auto result = dsp::loadSampleFromFile (file);
 
         juce::MessageManager::callAsync ([weak, slot, serial, loaded = std::move (result),
@@ -529,6 +578,15 @@ void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
                 return;   // superseded by a newer request — drop this stale result
             weak->installSample (slot, std::move (loaded.sample), path, loaded.error);
         });
+
+        // Only the counter decrement below touches `this` directly (no
+        // WeakReference dereference of processor members) -- see the
+        // destructor's comment: it must NEVER decrement below zero on a
+        // still-valid processor, so `this` here is safe exactly because the
+        // destructor's wait loop guarantees no processor is destroyed while
+        // this count is still nonzero.
+        if (weak != nullptr)
+            --weak->activeBackgroundThreads;
     });
 }
 
@@ -751,13 +809,138 @@ void SPASynthProcessor::randomizeAll()
             if (loopEnd < loopStart + 0.05f)
                 setNorm (params::id::oscSlot (s, osc::loopEnd),
                          juce::jlimit (0.0f, 1.0f, loopStart + 0.2f));
+
+            // Cause 5 (1.0.25 -- revised twice now). Round 1 was a blind
+            // 0.85 ceiling on sampleStart/grainPos; a ceiling can't know
+            // where a real file's audible content actually is. Round 2
+            // replaced it with a FIXED safe window (PresetManager's
+            // writeSafeSampleLoop/safeGrainPosBase idea: a short loop near
+            // the file start) -- which closed the silence gap but killed
+            // all RANDOMIZE ALL variety on sample start/loop/grain position,
+            // since every roll landed on the exact same spot. This round:
+            // energy-aware RANDOM choice instead of a fixed spot. SampleData
+            // already computes an RMS-like ampCurve at load time (background
+            // thread, peak-of-file normalized to 1.0, see SampleData.h) for
+            // the SFX-follower mod sources -- reused here rather than
+            // computing a second envelope. A candidate hop qualifies if it's
+            // within ~20 dB of the file's peak (0.1 linear, since ampCurve
+            // is already peak-normalized), and sampleStart/loopStart is
+            // drawn uniformly from whichever qualifying hops still leave the
+            // loopCapSeconds-wide loop window inside the file; grainPos is a
+            // separate independent draw from every qualifying hop (grains
+            // don't loop a window the same way, so no fit constraint).
+            // Falls back to the round-2 fixed safe window when no envelope
+            // is available (very short/edge-case files) or no hop clears
+            // the bar (a uniformly quiet/flat file), and further back to
+            // the original blind ceiling when no content is loaded yet.
+            constexpr float safeSampleWindowBase = 0.12f;       // mirrors safeGrainPosBase
+            constexpr double safeSampleLoopCapSeconds = 1.2;    // mirrors loopCapSeconds
+            constexpr float withinPeakLinear = 0.1f;            // -20 dB, ampCurve is peak-normalized
+            if (const auto* sampleData = slotSamples[(size_t) s].current.get())
+            {
+                const auto duration = sampleData->lengthSeconds();
+                const auto fixedSafeStartNorm = duration > safeSampleLoopCapSeconds ? safeSampleWindowBase : 0.0f;
+
+                float startNorm = fixedSafeStartNorm;
+                float grainPosNorm = fixedSafeStartNorm;
+                if (! sampleData->ampCurve.empty() && sampleData->hopSeconds > 0.0 && duration > 0.0)
+                {
+                    const auto numHops = (int) sampleData->ampCurve.size();
+                    const auto loopWidthSeconds = juce::jmin (duration, safeSampleLoopCapSeconds);
+                    const auto maxStartHop = juce::jmax (0,
+                        (int) ((duration - loopWidthSeconds) / sampleData->hopSeconds));
+                    const auto windowHops = juce::jmax (1,
+                        (int) (loopWidthSeconds / sampleData->hopSeconds));
+
+                    std::vector<int> loudStartHops, loudGrainHops;
+                    for (int h = 0; h < numHops; ++h)
+                        if (sampleData->ampCurve[(size_t) h] >= withinPeakLinear)
+                            loudGrainHops.push_back (h);
+
+                    // sampleStart/loopStart aren't just a point -- the whole
+                    // loopCapSeconds window that starts there is what
+                    // actually plays on every loop repeat. Qualify a start
+                    // hop on the window's AVERAGE level (not just its own
+                    // hop), so a start that looks loud but immediately dips
+                    // into near-silence for the rest of the loop doesn't
+                    // qualify.
+                    for (int h = 0; h <= maxStartHop; ++h)
+                    {
+                        float sum = 0.0f;
+                        int n = 0;
+                        for (int w = h; w < juce::jmin (numHops, h + windowHops); ++w)
+                        {
+                            sum += sampleData->ampCurve[(size_t) w];
+                            ++n;
+                        }
+                        if (n > 0 && (sum / (float) n) >= withinPeakLinear)
+                            loudStartHops.push_back (h);
+                    }
+
+                    if (! loudStartHops.empty())
+                    {
+                        const auto hop = loudStartHops[(size_t) rng.nextInt ((int) loudStartHops.size())];
+                        startNorm = (float) juce::jlimit (0.0, 0.999,
+                            (hop * sampleData->hopSeconds) / duration);
+                    }
+                    if (! loudGrainHops.empty())
+                    {
+                        const auto hop = loudGrainHops[(size_t) rng.nextInt ((int) loudGrainHops.size())];
+                        grainPosNorm = (float) juce::jlimit (0.0, 0.999,
+                            (hop * sampleData->hopSeconds) / duration);
+                    }
+                }
+
+                const float loopEndNorm = duration > 0.0
+                    ? juce::jlimit (0.0f, 0.999f,
+                          startNorm + (float) juce::jmin (1.0, safeSampleLoopCapSeconds / duration))
+                    : 0.999f;
+
+                setNorm (params::id::oscSlot (s, osc::sampleStart), startNorm);
+                setNorm (params::id::oscSlot (s, osc::loopStart), startNorm);
+                setNorm (params::id::oscSlot (s, osc::loopEnd), loopEndNorm);
+                setNorm (params::id::oscSlot (s, osc::grainPos), grainPosNorm);
+            }
+            else
+            {
+                constexpr float maxSafeSampleStart = 0.85f;
+                const auto sampleStart = realValue (params::id::oscSlot (s, osc::sampleStart));
+                if (sampleStart > maxSafeSampleStart)
+                    setNorm (params::id::oscSlot (s, osc::sampleStart), maxSafeSampleStart);
+
+                constexpr float maxSafeGrainPos = 0.85f;
+                const auto grainPos = realValue (params::id::oscSlot (s, osc::grainPos));
+                if (grainPos > maxSafeGrainPos)
+                    setNorm (params::id::oscSlot (s, osc::grainPos), maxSafeGrainPos);
+            }
+
+            // Cause 6: at high wildness grainDensity's full range (1-100/s)
+            // opens all the way down to ~1 grain/sec, which combined with a
+            // short grainSize leaves multi-hundred-ms gaps between grains --
+            // audible as near-total silence over a held-note test window,
+            // even though the engine is technically firing. A density floor
+            // guarantees overlap without capping the density knob's usable
+            // range from above (still 1-100/s by hand).
+            constexpr float minSafeGrainDensity = 4.0f;
+            const auto grainDensity = realValue (params::id::oscSlot (s, osc::grainDensity));
+            if (grainDensity < minSafeGrainDensity)
+                if (auto* param = apvts.getParameter (params::id::oscSlot (s, osc::grainDensity)))
+                    param->setValueNotifyingHost (param->convertTo0to1 (minSafeGrainDensity));
         }
     }
 
     if (filterUnlocked)
     {
         // High-passing everything above the note range means silence: pull
-        // HP/notch cutoffs back into a musical zone.
+        // HP/notch cutoffs back into a musical zone. Trigger threshold
+        // dropped 2000 -> 1200 Hz (1.0.25, randomizeAllChainedRealLibraryTest
+        // against the real library, playing notes across MIDI 36-84 rather
+        // than the old test's note-60-only coverage): the old 2000 Hz
+        // threshold left plenty of room for an HP/notch sitting between
+        // ~1050 and 2000 Hz to remove a high-note fundamental (MIDI 84 is
+        // ~1046 Hz) without ever tripping the guard. The clamp target's top
+        // end also drops 1000 -> 800 Hz so a re-rolled cutoff stays below
+        // that fundamental with margin.
         const auto type = (params::FilterType) (int) realValue (params::id::filter1Type);
         const auto cutoff = realValue (params::id::filter1Cutoff);
         const bool subtractive = type == params::FilterType::hp12
@@ -765,10 +948,10 @@ void SPASynthProcessor::randomizeAll()
                               || type == params::FilterType::notch12
                               || type == params::FilterType::notch24;
 
-        if (subtractive && cutoff > 2000.0f)
+        if (subtractive && cutoff > 1200.0f)
             if (auto* param = apvts.getParameter (params::id::filter1Cutoff))
                 param->setValueNotifyingHost (
-                    param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 650.0f));
 
         // Same guard for filter 2 when it rolls enabled + subtractive-high.
         const auto f2Enabled = realValue (params::id::filter2Enable) >= 0.5f;
@@ -778,10 +961,10 @@ void SPASynthProcessor::randomizeAll()
                                 || f2Type == params::FilterType::hp24
                                 || f2Type == params::FilterType::notch12
                                 || f2Type == params::FilterType::notch24;
-        if (f2Enabled && f2Subtractive && f2Cutoff > 2000.0f)
+        if (f2Enabled && f2Subtractive && f2Cutoff > 1200.0f)
             if (auto* param = apvts.getParameter (params::id::filter2Cutoff))
                 param->setValueNotifyingHost (
-                    param->convertTo0to1 (150.0f + rng.nextFloat() * 850.0f));
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 650.0f));
 
         // Bandpass centred far from a played note's fundamental/harmonics
         // silences it just as completely as an over-eager HP/notch -- traced
@@ -789,21 +972,88 @@ void SPASynthProcessor::randomizeAll()
         // cutoff ~4.5-12.9 kHz) all the way to SPASynthVoice's oscillator sum
         // itself measuring 0 at the sample level once that filter's mix blend
         // was engaged. Reusing this pass's existing HP/notch case, so this
-        // was a missing bandpass case, not a new mechanism. A wide clamp
-        // (100 Hz-3 kHz) keeps plenty of filter character while guaranteeing
-        // the band overlaps a mid-range note's fundamental and early
-        // harmonics.
+        // was a missing bandpass case, not a new mechanism.
+        //
+        // 1.0.25 follow-up (randomizeNeverSilentChainedTest's chained,
+        // full-note-range coverage, plus randomizeAllChainedRealLibraryTest):
+        // even inside the 100 Hz-3 kHz band above, a BP centred at (say)
+        // 1.6 kHz measured ~-49 dBFS against a played note near 260 Hz --
+        // an attempted fix that instead capped RESONANCE (to widen the
+        // passband) turned out to reproduce an unrelated pre-existing
+        // background-thread-leak crash under repeated randomizeAll() and was
+        // reverted; see chainedRandomizeBackgroundThreadLeakTest. The right
+        // fix is the PASSBAND'S POSITION, not its width: randomizeAll has no
+        // idea which note will be played, so instead of guessing a cutoff
+        // that happens to be close enough, floor filterKeytrack/
+        // filter2Keytrack at 0.9 whenever that filter is a bandpass --
+        // SPASynthVoice already computes `cutoff * 2^(keytrack*(note-60)/12)`
+        // (see the "Cutoff with keytracking" comment there), so at keytrack
+        // ~1 the passband tracks ANY played note relative to C3 rather than
+        // sitting fixed at whatever cutoff got rolled. The cutoff clamp
+        // itself is also tightened (150 Hz-1.2 kHz, was 100 Hz-3 kHz) so the
+        // reference note (C3/MIDI 60) it's centred on on is itself always
+        // audible, keytracking then carries that centring to every other
+        // note. Filter 2 gets the identical treatment, so a series/parallel
+        // pair of bandpasses both track together rather than drifting apart.
         const bool bandpass1 = type == params::FilterType::bp12 || type == params::FilterType::bp24;
-        if (bandpass1 && (cutoff < 100.0f || cutoff > 3000.0f))
+        if (bandpass1 && (cutoff < 150.0f || cutoff > 1200.0f))
             if (auto* param = apvts.getParameter (params::id::filter1Cutoff))
                 param->setValueNotifyingHost (
-                    param->convertTo0to1 (100.0f + rng.nextFloat() * 2900.0f));
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 1050.0f));
+        if (bandpass1)
+        {
+            constexpr float minSafeBandpassKeytrack = 0.9f;
+            if (auto* param = apvts.getParameter (params::id::filter1Keytrack))
+            {
+                const auto kt = param->convertFrom0to1 (param->getValue());
+                if (kt < minSafeBandpassKeytrack)
+                    param->setValueNotifyingHost (param->convertTo0to1 (minSafeBandpassKeytrack));
+            }
+        }
 
         const bool bandpass2 = f2Type == params::FilterType::bp12 || f2Type == params::FilterType::bp24;
-        if (f2Enabled && bandpass2 && (f2Cutoff < 100.0f || f2Cutoff > 3000.0f))
+        if (f2Enabled && bandpass2 && (f2Cutoff < 150.0f || f2Cutoff > 1200.0f))
             if (auto* param = apvts.getParameter (params::id::filter2Cutoff))
                 param->setValueNotifyingHost (
-                    param->convertTo0to1 (100.0f + rng.nextFloat() * 2900.0f));
+                    param->convertTo0to1 (150.0f + rng.nextFloat() * 1050.0f));
+        if (f2Enabled && bandpass2)
+        {
+            constexpr float minSafeBandpassKeytrack = 0.9f;
+            if (auto* param = apvts.getParameter (params::id::filter2Keytrack))
+            {
+                const auto kt = param->convertFrom0to1 (param->getValue());
+                if (kt < minSafeBandpassKeytrack)
+                    param->setValueNotifyingHost (param->convertTo0to1 (minSafeBandpassKeytrack));
+            }
+        }
+
+        // A narrow (high-resonance) notch behaves like a bandpass's mirror
+        // image: it removes a specific band rather than passing it, but on
+        // sparse harmonic content (a near-sine wavetable, a thin sample) a
+        // notch that happens to land on the note's fundamental can still
+        // strip most of what's audible. Same keytracking fix, gated on
+        // resonance so an unresonant/wide notch (which barely dents the
+        // spectrum) is left alone.
+        constexpr float narrowNotchResonance = 0.5f;
+        const bool narrowNotch1 = (type == params::FilterType::notch12 || type == params::FilterType::notch24)
+                                 && realValue (params::id::filter1Resonance) > narrowNotchResonance;
+        if (narrowNotch1)
+            if (auto* param = apvts.getParameter (params::id::filter1Keytrack))
+            {
+                const auto kt = param->convertFrom0to1 (param->getValue());
+                if (kt < 0.9f)
+                    param->setValueNotifyingHost (param->convertTo0to1 (0.9f));
+            }
+        const bool narrowNotch2 = f2Enabled
+                                 && (f2Type == params::FilterType::notch12 || f2Type == params::FilterType::notch24)
+                                 && realValue (params::id::filter2Resonance) > narrowNotchResonance;
+        if (narrowNotch2)
+            if (auto* param = apvts.getParameter (params::id::filter2Keytrack))
+            {
+                const auto kt = param->convertFrom0to1 (param->getValue());
+                if (kt < 0.9f)
+                    param->setValueNotifyingHost (param->convertTo0to1 (0.9f));
+            }
 
         // Low-pass cut low enough to remove even the note's fundamental is
         // the mirror image of the HP/notch case above.
@@ -856,6 +1106,40 @@ void SPASynthProcessor::randomizeAll()
                     const auto trimmed = juce::jlimit (-60.0f, 0.0f,
                                                         realValue (levelId) + trimDb);
                     param->setValueNotifyingHost (param->convertTo0to1 (trimmed));
+                }
+            }
+        }
+
+        // Cause 8 (1.0.25, randomizeNeverSilentChainedTest, chained rolls
+        // across the full note range -- the old single-note-60,
+        // fresh-processor-per-seed test never hit this): a single enabled
+        // oscillator at an individually-reasonable low level (e.g. -14dB, no
+        // guard above touches this -- it's not "too loud") measured well
+        // under the perceptual floor at every note once an active filter
+        // was in the signal path, even though neither the oscillator level
+        // nor the filter's own cutoff guard above looked extreme in
+        // isolation -- an initial version of this guard tried to name the
+        // exact filter shapes at fault (bandpass/notch) and missed a highpass
+        // case entirely. Simplified to mirror the gain-budget ceiling just
+        // above but as a floor: whenever the enabled oscillators' combined
+        // level is this quiet, bring it back up to a floor rather than
+        // trying to enumerate every DSP combination that can compound with
+        // it. A normal, comfortably-loud roll is untouched (gainSum is
+        // almost always well above the floor).
+        constexpr float minGainSum = 0.7f; // ~-3.1 dB combined
+        if (gainSum < minGainSum && gainSum > 0.0f)
+        {
+            const float boostDb = 20.0f * std::log10 (minGainSum / gainSum);
+            for (int s = 0; s < params::numOscSlots; ++s)
+            {
+                if (realValue (params::id::oscSlot (s, osc::enable)) < 0.5f)
+                    continue;
+                const auto levelId = params::id::oscSlot (s, osc::level);
+                if (auto* param = apvts.getParameter (levelId))
+                {
+                    const auto boosted = juce::jlimit (-60.0f, 0.0f,
+                                                        realValue (levelId) + boostDb);
+                    param->setValueNotifyingHost (param->convertTo0to1 (boosted));
                 }
             }
         }
@@ -967,22 +1251,33 @@ void SPASynthProcessor::randomizeAll()
     if (matrixUnlocked)
     {
         // Cause 2: cap how hard any single route can push a level-ish
-        // destination toward its floor. 0.5 leaves a route's duck/swell
-        // clearly audible (matrix modulation is supposed to move things) but
-        // means a static-ish source at its extreme can no longer, by itself,
-        // walk the destination's effective normalized value all the way to
-        // 0 -- observed at |depth| approaching 1.0 with the destination
-        // already sitting low from its own roll.
-        constexpr float maxRiskyRouteDepth = 0.5f;
+        // destination toward its floor. Dropped 0.5 -> 0.4 (1.0.25, found by
+        // randomizeAllChainedRealLibraryTest against the real library) --
+        // 0.5 still leaves a route's duck/swell clearly audible (matrix
+        // modulation is supposed to move things) while a static-ish source
+        // at its extreme can no longer, by itself, walk the destination's
+        // effective normalized value all the way to 0.
+        constexpr float maxRiskyRouteDepth = 0.4f;
 
+        // Cause 2c: grainPos/grainDensity/grainSize joined the risky list --
+        // the mod matrix pushing grainPos further toward end-of-file, or
+        // grainDensity/grainSize toward a sparse combination, defeats the
+        // per-slot floors just added above just as effectively as pushing a
+        // level toward 0. Added for every enabled slot regardless of its
+        // currently-rolled mode (cheap, and harmless for a slot the mod
+        // matrix or a later manual mode change lands in sample/granular).
         juce::Array<int> riskyDests;
         for (int s = 0; s < params::numOscSlots; ++s)
         {
             if (realValue (params::id::oscSlot (s, params::id::osc::enable)) >= 0.5f)
             {
-                const auto idx = params::modDestIndex (params::id::oscSlot (s, params::id::osc::level));
-                if (idx >= 0)
-                    riskyDests.add (idx);
+                for (const char* key : { params::id::osc::level, params::id::osc::grainPos,
+                                          params::id::osc::grainDensity, params::id::osc::grainSize })
+                {
+                    const auto idx = params::modDestIndex (params::id::oscSlot (s, key));
+                    if (idx >= 0)
+                        riskyDests.add (idx);
+                }
             }
         }
         if (const auto idx = params::modDestIndex (params::id::ampSustain); idx >= 0)
@@ -1014,15 +1309,43 @@ void SPASynthProcessor::randomizeAll()
         }
     }
 
+    const bool chaosUnlocked = (lockedMask & (1u << (int) params::LockGroup::chaos)) == 0;
+    if (chaosUnlocked && realValue (params::id::chaos::enable) >= 0.5f
+        && realValue (params::id::chaos::ampOn) >= 0.5f)
+    {
+        // Cause 7 (1.0.25, randomizeAllChainedRealLibraryTest): Organic
+        // Chaos's amp drive multiplies the voice's gain by a slow random
+        // walk; at the top of ampAmount's range that walk can sit near-zero
+        // for long enough that a held note's whole test window reads as
+        // silence even though every other stage genuinely has signal.
+        // Capped rather than disabled so the drive is still clearly
+        // audible -- matches the same "cap this one causal knob, don't ban
+        // the section" approach as the mod-matrix depth cap above.
+        constexpr float maxSafeChaosAmpAmount = 0.6f;
+        if (auto* param = apvts.getParameter (params::id::chaos::ampAmount))
+        {
+            const auto amount = param->convertFrom0to1 (param->getValue());
+            if (amount > maxSafeChaosAmpAmount)
+                param->setValueNotifyingHost (param->convertTo0to1 (maxSafeChaosAmpAmount));
+        }
+    }
+
     const bool arpUnlocked = (lockedMask & (1u << (int) params::LockGroup::arp)) == 0;
     if (arpUnlocked && realValue (params::id::arp::enable) >= 0.5f)
     {
         // Cause 3a: a step that never fires can silence the arp forever.
-        // 0.6 keeps "some steps rest" as an audible, characterful trig
-        // pattern (the default is 1.0 = always fires) while making a
-        // multi-second dry spell astronomically unlikely once combined with
-        // the division floor below.
-        constexpr float minAudibleArpChance = 0.6f;
+        // Raised 0.6 -> 0.85 (1.0.25, randomizeAllChainedRealLibraryTest):
+        // 0.6 (40% skip odds/step) was tuned against a single-note,
+        // note-60-only sweep and looked astronomically safe on paper, but
+        // testing across hundreds of chained rolls and the full note range
+        // turned up real cases -- a chord's guaranteed first step (see
+        // Arpeggiator's firstStepPending) fires audibly, then a short
+        // ampRelease lets it decay away before the next non-skipped step,
+        // which a run of several 40%-odds skips in a row can push past.
+        // 0.85 (15% skip odds/step) keeps "some steps rest" clearly
+        // characterful while cutting the odds of a several-steps-long dry
+        // spell by roughly two more orders of magnitude.
+        constexpr float minAudibleArpChance = 0.85f;
         if (auto* param = apvts.getParameter (params::id::arp::chance))
         {
             const auto chance = param->convertFrom0to1 (param->getValue());
@@ -1094,6 +1417,25 @@ void SPASynthProcessor::randomizeAll()
         }
     }
 
+    // Cause 10 (1.0.25) -- CONSIDERED, NOT APPLIED. Mechanical
+    // section-by-section bisection of the hermetic residuals that survived
+    // every other 1.0.25 fix (randomizeQuietCauseBisectionTest) found
+    // ampEnv.sustain at a moderate, non-extreme roll as a repeat co-culprit
+    // alongside a sparse arp or a subtractive filter. Before adding a floor
+    // for it, re-measured the ONSET (first ~500ms) of each of those 13
+    // residuals: most had a clearly audible pluck/attack -- a characterful
+    // patch, not a real "RANDOMIZE ALL gave nothing" complaint. Changed
+    // randomizeNeverSilentChainedTest's classifier to judge the WHOLE note
+    // (silent only if BOTH onset and held tail are quiet) instead of just
+    // the held tail, per that finding -- and an anti-vacuous check (a
+    // sustain-floor prototype, gated exactly like this comment describes,
+    // temporarily forced off) showed all 216 chained renders already pass
+    // the -40dBFS/-30dBFS gate on the new classifier WITHOUT any sustain
+    // floor. So no floor was needed or added; ampEnv.sustain is left fully
+    // randomizable. If a genuinely onset-quiet residual turns up later, the
+    // conditional design above (floor only when arp is on or a subtractive
+    // filter is engaged, never a blanket floor) is the one to reach for.
+
     sendChangeMessage();
 }
 
@@ -1124,9 +1466,23 @@ void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
     sendChangeMessage();
 
     // Weak-ref treatment mirrors loadSampleFromFile — see the comment there.
+    // activeBackgroundThreads bookkeeping: see ~SPASynthProcessor().
     juce::WeakReference<SPASynthProcessor> weak (this);
+    ++activeBackgroundThreads;
     juce::Thread::launch ([weak, slot, file, serial]
     {
+        // 1.0.25: skip the load entirely if superseded before it started —
+        // see setBuiltInWavetable's identical check for the full rationale.
+        if (weak == nullptr || serial != weak->slotTables[(size_t) slot].requestSerial.load())
+        {
+            if (weak != nullptr)
+            {
+                weak->slotTables[(size_t) slot].pendingLoads.fetch_sub (1);
+                --weak->activeBackgroundThreads;
+            }
+            return;
+        }
+
         auto result = dsp::loadWavetableFromFile (file);
 
         juce::MessageManager::callAsync ([weak, slot, serial, loaded = std::move (result),
@@ -1140,6 +1496,9 @@ void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
                 return;   // superseded by a newer request — drop this stale result
             weak->installTable (slot, std::move (loaded.table), path, loaded.error);
         });
+
+        if (weak != nullptr)
+            --weak->activeBackgroundThreads;
     });
 }
 
@@ -1178,8 +1537,33 @@ void SPASynthProcessor::setBuiltInWavetable (int slot, int tableChoice)
     sendChangeMessage();
 
     juce::WeakReference<SPASynthProcessor> weak (this);
+    ++activeBackgroundThreads;
     juce::Thread::launch ([weak, slot, choice, serial]
     {
+        // 1.0.25: skip the build ENTIRELY if a newer request for this slot
+        // already landed before this thread got scheduled -- found while
+        // chasing randomizeNeverSilentChainedTest residuals under chained
+        // RANDOMIZE ALL: rapid re-rolls of a slot's Table choice each
+        // launched their own thread, all queued behind the FFT-serializing
+        // mutex below, so a slot could sit `isWavetableLoading() == true`
+        // (playing its previous table/Basic Shapes, not silence -- see
+        // installTable, which only ever writes `live` on a successful
+        // build) for as long as it took every superseded request ahead of
+        // it to grind through a real build it would just discard. This
+        // check is safe from a background thread: requestSerial is atomic,
+        // and `weak` nulling out on the message thread is the same
+        // established pattern already used for the activeBackgroundThreads
+        // decrement below.
+        if (weak == nullptr || serial != weak->slotTables[(size_t) slot].requestSerial.load())
+        {
+            if (weak != nullptr)
+            {
+                weak->slotTables[(size_t) slot].pendingLoads.fetch_sub (1);
+                --weak->activeBackgroundThreads;
+            }
+            return;
+        }
+
         // Serialize actual table generation: WavetableFactory::build() goes
         // through juce::dsp::FFT (Wavetable::fromSpectra), and on some
         // platforms/backends an FFT engine has shared/cached setup state
@@ -1212,6 +1596,9 @@ void SPASynthProcessor::setBuiltInWavetable (int slot, int tableChoice)
                 return;   // superseded by a newer request on this slot -- drop it
             weak->installTable (slot, std::move (table), {}, {});
         });
+
+        if (weak != nullptr)
+            --weak->activeBackgroundThreads;
     });
 }
 

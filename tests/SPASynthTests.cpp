@@ -7866,6 +7866,276 @@ namespace
                 "current preset name resets to \"Init\"");
     }
 
+    // Mike (product owner): "voice mode (unison, mono, etc.), as well as
+    // glide and WILD settings should be saved in presets - right now it's
+    // not." Also "Global level too" (master level). Round-trips voice mode/
+    // unison/glide/master (real APVTS params) and WILD (an apvts.state
+    // PROPERTY, not a param -- see getRandomWildness()) through the real
+    // PresetManager, with a live editor open so the top-bar controls'
+    // resync (or staleness) is caught too, not just the model-layer value.
+    static void presetVoiceGlideMasterWildRoundTripTest()
+    {
+        std::cout << "presetVoiceGlideMasterWildRoundTripTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        juce::Slider* wildSlider = nullptr;
+        std::function<void (juce::Component&)> findWild = [&] (juce::Component& c)
+        {
+            if (wildSlider == nullptr)
+                if (auto* s = dynamic_cast<juce::Slider*> (&c))
+                    if (s->getComponentID() == "wild")
+                        wildSlider = s;
+            for (auto* child : c.getChildren())
+                findWild (*child);
+        };
+        findWild (*editor);
+        expect (wildSlider != nullptr, "WILD knob found in the editor tree");
+
+        // Distinct, non-default values for everything Mike reported missing.
+        setParam (proc, id::voiceMode, (float) (int) spa::params::VoiceMode::unison);
+        setParam (proc, id::glideMode, 1.0f);   // Always
+        setParam (proc, id::glideTime, 640.0f);
+        setParam (proc, id::unisonVoices, 5.0f);
+        setParam (proc, id::unisonDetune, 28.0f);
+        setParam (proc, id::unisonWidth, 0.85f);
+        setParam (proc, id::masterGain, -10.0f);
+        proc.setRandomWildness (0.8f);
+
+        expect (proc.getPresetManager().saveUserPreset ("VGMWildTest"),
+                "preset with unison/glide/master/WILD saves");
+
+        // Change every one of them to something else before loading back, so
+        // a value that merely survived unchanged can't be mistaken for a
+        // successful restore.
+        setParam (proc, id::voiceMode, (float) (int) spa::params::VoiceMode::poly);
+        setParam (proc, id::glideMode, 0.0f);   // Off
+        setParam (proc, id::glideTime, 90.0f);
+        setParam (proc, id::unisonVoices, 3.0f);
+        setParam (proc, id::unisonDetune, 4.0f);
+        setParam (proc, id::unisonWidth, 0.1f);
+        setParam (proc, id::masterGain, -1.0f);
+        proc.setRandomWildness (0.1f);
+        if (wildSlider != nullptr)
+            wildSlider->setValue (0.1, juce::dontSendNotification);
+
+        int presetIndex = -1;
+        for (size_t i = 0; i < proc.getPresetManager().getPresets().size(); ++i)
+            if (proc.getPresetManager().getPresets()[i].name == "VGMWildTest")
+                presetIndex = (int) i;
+        expect (presetIndex >= 0, "saved preset is found by the browser scan");
+
+        if (presetIndex >= 0)
+            expect (proc.getPresetManager().loadPreset (presetIndex), "preset loads");
+
+        // PresetManager::sendChangeMessage() (fired by loadPreset()) is
+        // async -- ContentComponent::changeListenerCallback (which resyncs
+        // the WILD knob in refreshAll()) only runs once that AsyncUpdater is
+        // serviced, same as any other ChangeBroadcaster listener in this UI.
+        proc.getPresetManager().dispatchPendingMessages();
+
+        auto& apvts = proc.getAPVTS();
+        const auto readInt = [&] (const juce::String& pid)
+        {
+            auto* p = apvts.getParameter (pid);
+            return (int) std::round (p->convertFrom0to1 (p->getValue()));
+        };
+        const auto readFloat = [&] (const juce::String& pid)
+        {
+            auto* p = apvts.getParameter (pid);
+            return p->convertFrom0to1 (p->getValue());
+        };
+
+        expect (readInt (id::voiceMode) == (int) spa::params::VoiceMode::unison,
+                "voiceMode restored to Unison");
+        expect (readInt (id::glideMode) == 1, "glideMode restored to Always");
+        expect (std::abs (readFloat (id::glideTime) - 640.0f) < 1.0f, "glideTime restored");
+        expect (readInt (id::unisonVoices) == 5, "unisonVoices restored");
+        expect (std::abs (readFloat (id::unisonDetune) - 28.0f) < 0.1f, "unisonDetune restored");
+        expect (std::abs (readFloat (id::unisonWidth) - 0.85f) < 0.01f, "unisonWidth restored");
+        expect (std::abs (readFloat (id::masterGain) - (-10.0f)) < 0.01f, "masterGain (Global level) restored");
+        expect (std::abs (proc.getRandomWildness() - 0.8f) < 0.01f,
+                "WILD restored at the model layer");
+        if (wildSlider != nullptr)
+            expect (std::abs (wildSlider->getValue() - 0.8) < 0.01,
+                    "WILD knob resynced to the loaded value, not left stale ("
+                        + juce::String (wildSlider->getValue()) + " vs 0.8)");
+
+        // Real evidence (read from Mike's actual presets) was that NO
+        // preset file carried randomWildness at all -- always because WILD
+        // was never touched before saving, not because of a save-side
+        // defect. buildStateTree() now stamps the CURRENT wildness onto the
+        // tree unconditionally, so every future save carries it explicitly
+        // even at the untouched default -- verify the raw XML actually has
+        // the attribute (not just that the default happens to read back
+        // right via getProperty()'s fallback).
+        {
+            spa::SPASynthProcessor freshProc;
+            freshProc.prepareToPlay (48000.0, 512);   // randomWildness never touched
+            expect (freshProc.getPresetManager().saveUserPreset ("VGMWildDefaultTest"),
+                    "default-WILD preset saves");
+            const juce::File* savedFile = nullptr;
+            for (const auto& p : freshProc.getPresetManager().getPresets())
+                if (p.name == "VGMWildDefaultTest")
+                    savedFile = &p.file;
+            expect (savedFile != nullptr, "default-WILD preset file found");
+            if (savedFile != nullptr)
+                expect (savedFile->loadFileAsString().contains ("randomWildness"),
+                        "randomWildness is explicitly written even at the untouched default");
+        }
+    }
+
+    // Task 1b: an older preset saved before voiceMode/glideMode existed (or
+    // any other incomplete state) must come up at the REGISTRY DEFAULT for
+    // the missing parameters, not keep whatever the previously-loaded patch
+    // had. Hand-builds an incomplete preset file (the same XML shape
+    // PresetManager itself writes) with the voiceMode and glideMode PARAM
+    // entries removed, mimicking a real pre-existing-parameter preset.
+    static void presetMissingParamsDefaultOnLoadTest()
+    {
+        std::cout << "presetMissingParamsDefaultOnLoadTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        // Load a Unison + glide-on patch first, so the "missing" preset load
+        // below has something non-default to wrongly inherit if the bug is
+        // still present.
+        setParam (proc, id::voiceMode, (float) (int) spa::params::VoiceMode::unison);
+        setParam (proc, id::glideMode, 1.0f);   // Always
+        expect (proc.getPresetManager().saveUserPreset ("VGMFullPreset"), "full preset saves");
+
+        // Build an incomplete preset by hand: a full, valid state tree with
+        // the voiceMode and glideMode PARAM children stripped out, exactly
+        // as an older .spasynth saved before those parameters existed would
+        // look after JUCE's own XML round trip (<PARAM id="..." value="..."/>).
+        auto state = proc.buildStateTree (false);
+        const juce::Identifier paramType ("PARAM");
+        for (int i = state.getNumChildren(); --i >= 0;)
+        {
+            auto child = state.getChild (i);
+            if (child.hasType (paramType))
+            {
+                const auto pid = child.getProperty ("id").toString();
+                if (pid == juce::String (id::voiceMode) || pid == juce::String (id::glideMode))
+                    state.removeChild (i, nullptr);
+            }
+        }
+
+        juce::XmlElement root ("SPASynthPreset");
+        root.setAttribute ("name", "VGMIncompletePreset");
+        root.setAttribute ("version", 1);
+        root.addChildElement (state.createXml().release());
+
+        const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getNonexistentChildFile ("spasynth-incomplete-preset", "");
+        tempDir.createDirectory();
+        const auto file = tempDir.getChildFile ("VGMIncompletePreset.spasynth");
+        expect (root.writeTo (file), "hand-built incomplete preset writes");
+
+        expect (proc.getPresetManager().loadPresetFile (file), "incomplete preset loads");
+
+        auto& apvts = proc.getAPVTS();
+        auto* voiceModeParam = apvts.getParameter (id::voiceMode);
+        auto* glideModeParam = apvts.getParameter (id::glideMode);
+        const auto voiceModeAfter = (int) std::round (voiceModeParam->convertFrom0to1 (voiceModeParam->getValue()));
+        const auto glideModeAfter = (int) std::round (glideModeParam->convertFrom0to1 (glideModeParam->getValue()));
+        const auto* voiceModeDef = spa::params::find (id::voiceMode);
+        const auto* glideModeDef = spa::params::find (id::glideMode);
+
+        expect (voiceModeDef != nullptr && glideModeDef != nullptr, "registry defs found");
+        if (voiceModeDef != nullptr)
+            expect (voiceModeAfter == (int) voiceModeDef->defaultValue,
+                    "voiceMode missing from the preset resets to the registry default ("
+                        + juce::String (voiceModeAfter) + " vs " + juce::String ((int) voiceModeDef->defaultValue) + ")"
+                        + " -- NOT the previous patch's Unison");
+        if (glideModeDef != nullptr)
+            expect (glideModeAfter == (int) glideModeDef->defaultValue,
+                    "glideMode missing from the preset resets to the registry default ("
+                        + juce::String (glideModeAfter) + " vs " + juce::String ((int) glideModeDef->defaultValue) + ")"
+                        + " -- NOT the previous patch's Always");
+
+        tempDir.deleteRecursively();
+    }
+
+    // Task 2's UI-property audit: uiScale/uiKeyboardOctave/uiKeyboardVisible
+    // are machine/window preferences, not part of a sound -- a preset load
+    // must leave them exactly as they were, while a real host session
+    // restore (setStateInformation) must still apply them.
+    static void presetLoadPreservesUiPrefsTest()
+    {
+        std::cout << "presetLoadPreservesUiPrefsTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        auto& apvts = proc.getAPVTS();
+        apvts.state.setProperty ("uiScale", 1.35, nullptr);
+        apvts.state.setProperty ("uiKeyboardOctave", 5, nullptr);
+        apvts.state.setProperty ("uiKeyboardVisible", true, nullptr);
+
+        // A preset saved from a DIFFERENT window size/octave (simulates a
+        // preset made on someone else's machine/session).
+        setParam (proc, id::filter1Cutoff, 3000.0f);
+        proc.getAPVTS().state.setProperty ("uiScale", 0.6, nullptr);
+        proc.getAPVTS().state.setProperty ("uiKeyboardOctave", 1, nullptr);
+        proc.getAPVTS().state.setProperty ("uiKeyboardVisible", false, nullptr);
+        expect (proc.getPresetManager().saveUserPreset ("VGMUiPrefsPreset"), "UI-prefs preset saves");
+
+        // Restore this session's own window/keyboard prefs, as if the user
+        // had them set before browsing to a different preset.
+        apvts.state.setProperty ("uiScale", 1.35, nullptr);
+        apvts.state.setProperty ("uiKeyboardOctave", 5, nullptr);
+        apvts.state.setProperty ("uiKeyboardVisible", true, nullptr);
+
+        expect (proc.getPresetManager().loadPreset (
+                    [&]
+                    {
+                        for (size_t i = 0; i < proc.getPresetManager().getPresets().size(); ++i)
+                            if (proc.getPresetManager().getPresets()[i].name == "VGMUiPrefsPreset")
+                                return (int) i;
+                        return -1;
+                    }()),
+                "UI-prefs preset loads");
+
+        expect (std::abs ((double) apvts.state.getProperty ("uiScale", -1.0) - 1.35) < 1.0e-6,
+                "uiScale unchanged by a preset load");
+        expect ((int) apvts.state.getProperty ("uiKeyboardOctave", -1) == 5,
+                "uiKeyboardOctave unchanged by a preset load");
+        expect ((bool) apvts.state.getProperty ("uiKeyboardVisible", false) == true,
+                "uiKeyboardVisible unchanged by a preset load");
+
+        // A real host session restore (setStateInformation), by contrast,
+        // DOES apply whatever UI properties the incoming chunk carries.
+        auto sessionState = proc.buildStateTree (true);
+        sessionState.setProperty ("uiScale", 0.77, nullptr);
+        sessionState.setProperty ("uiKeyboardOctave", 2, nullptr);
+        sessionState.setProperty ("uiKeyboardVisible", false, nullptr);
+        if (auto xml = sessionState.createXml())
+        {
+            juce::MemoryBlock block;
+            juce::AudioProcessor::copyXmlToBinary (*xml, block);
+            proc.setStateInformation (block.getData(), (int) block.getSize());
+        }
+
+        expect (std::abs ((double) apvts.state.getProperty ("uiScale", -1.0) - 0.77) < 1.0e-6,
+                "uiScale DOES apply on a host session restore");
+        expect ((int) apvts.state.getProperty ("uiKeyboardOctave", -1) == 2,
+                "uiKeyboardOctave DOES apply on a host session restore");
+        expect ((bool) apvts.state.getProperty ("uiKeyboardVisible", true) == false,
+                "uiKeyboardVisible DOES apply on a host session restore");
+    }
+
     static void factoryPresetGenerationTest()
     {
         std::cout << "factoryPresetGenerationTest\n";
@@ -15698,12 +15968,29 @@ namespace
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
         }
 
-        // The added width is drawerWidth*scale (scale is 1.0 at base size).
+        // The added width is drawerWidth*scale. Scale is 1.0 at base size,
+        // but SPASynthEditor::parentHierarchyChanged() one-shot-fits the
+        // window to whatever display it actually lands on at construction
+        // (see displayForFit/scaleThatFits), so on a screen too small for
+        // the base 1380x900 (e.g. the 3024x1964 -- ~1512x982 logical points
+        // -- built-in Retina panel, whose usable height minus chrome is
+        // under 900) that fit already shrank heightBefore below baseHeight
+        // BEFORE the drawer ever opens. browserToggled() derives its own
+        // scale from getHeight()/baseHeight (the drawer never changes
+        // height), so the actual added WINDOW width is
+        // presetBrowserWidth*scale, not the raw constant -- measure the
+        // same ratio here rather than assuming base size fits. Content-layout
+        // bounds (oscA/fxTabs/drawer, below) are laid out in fixed base
+        // units and are NOT rescaled the same way (the editor scales the
+        // whole content via one AffineTransform), so they keep using the
+        // raw, unscaled `expectedAdded`.
         const auto expectedAdded = spa::ui::metrics::presetBrowserWidth;
-        expect (editor->getWidth() == widthBefore + expectedAdded,
-                "editor widened by exactly the drawer's width, immediately ("
+        const double windowScale = (double) heightBefore / (double) spa::ui::metrics::baseHeight;
+        const auto expectedAddedWindow = juce::roundToInt ((double) expectedAdded * windowScale);
+        expect (editor->getWidth() == widthBefore + expectedAddedWindow,
+                "editor widened by exactly the drawer's (scaled) width, immediately ("
                     + juce::String (editor->getWidth()) + " vs expected "
-                    + juce::String (widthBefore + expectedAdded) + ")");
+                    + juce::String (widthBefore + expectedAddedWindow) + ")");
         expect (editor->getHeight() == heightBefore, "editor height unchanged when the drawer opens");
         {
             const auto oscAMid = oscA->getBoundsInParent();
@@ -15719,7 +16006,7 @@ namespace
             const auto midBounds = browser->getBounds();
             expect (midBounds.getRight() > -expectedAdded && midBounds.getX() < 0,
                     "drawer is partway through easing in at ~60ms (x=" + juce::String (midBounds.getX()) + ")");
-            expect (editor->getWidth() == widthBefore + expectedAdded,
+            expect (editor->getWidth() == widthBefore + expectedAddedWindow,
                     "window stays at its final width throughout the drawer's ease-in");
         }
 
@@ -15801,7 +16088,7 @@ namespace
             while (editor->getWidth() == widthBefore && juce::Time::getMillisecondCounter() < deadline)
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
         }
-        expect (editor->getWidth() == widthBefore + expectedAdded,
+        expect (editor->getWidth() == widthBefore + expectedAddedWindow,
                 "re-entrancy: widened immediately on the re-open");
 
         pumpFor (30);   // well short of either ease finishing
@@ -22701,6 +22988,9 @@ int main (int argc, char* argv[])
     RUN (chainedRandomizeBackgroundThreadLeakTest);
     RUN (destructorBackgroundWaitTimingTest);
     RUN (randomizeQuietCauseBisectionTest);
+    RUN (presetVoiceGlideMasterWildRoundTripTest);
+    RUN (presetMissingParamsDefaultOnLoadTest);
+    RUN (presetLoadPreservesUiPrefsTest);
 
    #undef RUN
 

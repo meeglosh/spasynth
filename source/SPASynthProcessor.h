@@ -201,7 +201,15 @@ public:
     // Shared by host chunks and the preset system; MIDI mappings ride along
     // only in host sessions (presets must never clobber hardware setups).
     juce::ValueTree buildStateTree (bool includeMidiMap = true);
-    void restoreStateTree (const juce::ValueTree&);
+    // Any parameter absent from `incoming` always comes up at its registry
+    // default rather than keeping whatever the previous state had -- true
+    // for presets, reset-to-default and host sessions alike.
+    // isPresetLoad: true for preset load/reset-to-default (via PresetManager),
+    // false (default) for a real host session restore. When true, machine/
+    // window UI properties (uiScale, uiKeyboardOctave, uiKeyboardVisible)
+    // are left exactly as they were -- a preset is a sound, not a window
+    // layout -- whereas a host session restore does apply them.
+    void restoreStateTree (const juce::ValueTree& incoming, bool isPresetLoad = false);
 
     // Rescans the configured library and (re)generates factory presets for
     // any packs that don't have them yet.

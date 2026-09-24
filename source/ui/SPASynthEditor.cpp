@@ -1891,6 +1891,14 @@ void ContentComponent::refreshAll()
     // fight the wordmark's ink underneath while armed.
     midiLearnBadge.setColour (juce::Label::backgroundColourId, t.header.darker (0.25f));
 
+    // WILD rides an apvts.state PROPERTY, not a parameter, so nothing in the
+    // attachment machinery re-syncs it automatically the way glideModeBox/
+    // glideAttachment/masterSlider (real APVTS params) do on a preset load,
+    // reset or host session restore -- without this the knob kept showing
+    // whatever it displayed before the load even though the underlying
+    // value had already changed (getRandomWildness() was correct, the UI
+    // just never asked it again).
+    wildnessSlider.setValue (processor.getRandomWildness(), juce::dontSendNotification);
     wildnessLabel.setColour (juce::Label::textColourId, t.textSecondary);
     glideLabel.setColour (juce::Label::textColourId, t.textSecondary);
     octaveLabel.setColour (juce::Label::textColourId, t.textSecondary);

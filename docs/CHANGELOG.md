@@ -39,6 +39,12 @@
   came from feedback.
 - Fixed a possible crash when closing SPASynth right after clicking
   RANDOMIZE ALL several times in quick succession.
+- Presets now save and restore the WILD setting. Before, it was only
+  stored if you had moved the knob since opening SPASynth, and the knob
+  could keep showing the old value after a preset loaded. This came from
+  feedback.
+- Loading a preset no longer changes your window size or the on-screen
+  keyboard's octave. A preset is a sound, not a window layout.
 
 ## 1.0.24
 

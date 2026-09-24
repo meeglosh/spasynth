@@ -20,6 +20,45 @@ namespace
 
     const juce::Identifier wildnessProperty { "randomWildness" };
     const juce::Identifier lockMaskProperty { "randomLockMask" };
+
+    // Machine/window UI properties that must NOT change when a preset loads
+    // (a preset is a sound, not a window layout) but DO apply on a real host
+    // session restore. Listed once so buildStateTree/restoreStateTree agree.
+    const juce::Identifier uiScaleProperty { "uiScale" };
+    const juce::Identifier uiKeyboardOctaveProperty { "uiKeyboardOctave" };
+    const juce::Identifier uiKeyboardVisibleProperty { "uiKeyboardVisible" };
+
+    // AudioProcessorValueTreeState's own PARAM/id/value identifiers -- not
+    // exposed publicly, but stable (visible in every saved .spasynth file:
+    // <PARAM id="..." value="..."/>). Used to fill in any parameter the
+    // incoming state is missing with its registry default, so a param that
+    // predates a preset (or is simply absent from a host chunk) resets
+    // rather than keeping whatever the previous state had.
+    const juce::Identifier paramValueType { "PARAM" };
+    const juce::Identifier paramIdProperty { "id" };
+    const juce::Identifier paramValueProperty { "value" };
+
+    void fillMissingParamsWithDefaults (juce::ValueTree& state)
+    {
+        juce::StringArray present;
+        for (int i = 0; i < state.getNumChildren(); ++i)
+        {
+            const auto child = state.getChild (i);
+            if (child.hasType (paramValueType))
+                present.add (child.getProperty (paramIdProperty).toString());
+        }
+
+        for (const auto& def : spa::params::all())
+        {
+            if (present.contains (def.id))
+                continue;
+
+            juce::ValueTree missing (paramValueType);
+            missing.setProperty (paramIdProperty, def.id, nullptr);
+            missing.setProperty (paramValueProperty, (double) def.defaultValue, nullptr);
+            state.appendChild (missing, nullptr);
+        }
+    }
 }
 
 SPASynthProcessor::SPASynthProcessor()
@@ -267,7 +306,7 @@ SPASynthProcessor::SPASynthProcessor()
 
     presetManager = std::make_unique<library::PresetManager> (
         [this] { return buildStateTree (false); },   // presets carry no MIDI map
-        [this] (const juce::ValueTree& state) { restoreStateTree (state); },
+        [this] (const juce::ValueTree& state) { restoreStateTree (state, true); },   // preset/reset load
         library::defaultPresetsRoot());
 
     // Auto-discover the library and make sure factory presets exist — no
@@ -2373,6 +2412,15 @@ void SPASynthProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer,
 juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)
 {
     const auto libraryRoot = library::findLibraryRoot();
+
+    // Stamp the CURRENT wildness onto the live tree before copying, so it is
+    // always present in the saved state (session or preset) rather than only
+    // when the WILD knob happens to have been touched since launch -- the
+    // property previously stayed absent from a session's/preset's tree until
+    // setRandomWildness() was first called, which is why real preset files
+    // never carried it.
+    apvts.state.setProperty (wildnessProperty, (double) getRandomWildness(), nullptr);
+
     auto state = apvts.copyState();
 
     if (includeMidiMap)
@@ -2397,7 +2445,7 @@ juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)
     return state;
 }
 
-void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
+void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool isPresetLoad)
 {
     if (! incoming.hasType (apvts.state.getType()))
         return;
@@ -2423,6 +2471,38 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
         midiLearn->restoreFromValueTree (midiMap);
     }
 
+    // A parameter missing from `incoming` (an older preset saved before that
+    // parameter existed, or any other incomplete state) must come up at its
+    // registry default. Traced against JUCE's own ParameterAdapter: on
+    // replaceState(), a param with no matching child in the new tree gets a
+    // fresh PARAM node appended via state.appendChild(), which synchronously
+    // fires APVTS's own valueTreeChildAdded -> setNewState() listener on
+    // that still-empty node BEFORE the node has a "value" property --
+    // setNewState() then reads getProperty("value", getDenormalisedDefault-
+    // Value()), falling back to the REGISTRY DEFAULT. So JUCE already
+    // resets a missing param to its default on its own (confirmed with an
+    // anti-vacuous test: disabling the fill below still passed
+    // presetMissingParamsDefaultOnLoadTest). This fill is kept anyway as an
+    // explicit, order-independent guarantee -- it makes the "missing param
+    // -> registry default" contract visible at the call site instead of
+    // resting on an internal JUCE listener-ordering detail, and applies
+    // uniformly to presets, reset-to-default and host session restores.
+    fillMissingParamsWithDefaults (state);
+
+    // Machine/window UI properties (uiScale, uiKeyboardOctave,
+    // uiKeyboardVisible) must NOT change when a preset loads -- a preset is
+    // a sound, not a window layout -- but DO apply on a real host session
+    // restore. Capture whatever the live tree currently holds so they can be
+    // restamped after replaceState() below; `has*`/`saved*` distinguish "was
+    // never set" from "was set to some value" so a preset load never
+    // fabricates a property a fresh instance never had.
+    const bool hadUiScale = isPresetLoad && apvts.state.hasProperty (uiScaleProperty);
+    const auto savedUiScale = hadUiScale ? apvts.state.getProperty (uiScaleProperty) : juce::var();
+    const bool hadUiKeyboardOctave = isPresetLoad && apvts.state.hasProperty (uiKeyboardOctaveProperty);
+    const auto savedUiKeyboardOctave = hadUiKeyboardOctave ? apvts.state.getProperty (uiKeyboardOctaveProperty) : juce::var();
+    const bool hadUiKeyboardVisible = isPresetLoad && apvts.state.hasProperty (uiKeyboardVisibleProperty);
+    const auto savedUiKeyboardVisible = hadUiKeyboardVisible ? apvts.state.getProperty (uiKeyboardVisibleProperty) : juce::var();
+
     juce::String convIrPathLocal;
     {
         // AudioProcessor::setStateInformation (the AU wrapper's entry point) is
@@ -2438,6 +2518,27 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming)
         const juce::ScopedLock sl (getCallbackLock());
 
         apvts.replaceState (state);
+
+        // Restamp the machine/window UI properties preset loads must leave
+        // untouched, restoring exactly the pre-load state (present-with-value,
+        // or absent) rather than whatever the incoming preset carried.
+        if (isPresetLoad)
+        {
+            if (hadUiScale)
+                apvts.state.setProperty (uiScaleProperty, savedUiScale, nullptr);
+            else
+                apvts.state.removeProperty (uiScaleProperty, nullptr);
+
+            if (hadUiKeyboardOctave)
+                apvts.state.setProperty (uiKeyboardOctaveProperty, savedUiKeyboardOctave, nullptr);
+            else
+                apvts.state.removeProperty (uiKeyboardOctaveProperty, nullptr);
+
+            if (hadUiKeyboardVisible)
+                apvts.state.setProperty (uiKeyboardVisibleProperty, savedUiKeyboardVisible, nullptr);
+            else
+                apvts.state.removeProperty (uiKeyboardVisibleProperty, nullptr);
+        }
 
         // Tester-reported burst on preset clicks: replaceState() above just
         // swapped every coefficient under live, non-zero voice/FX state (FDN

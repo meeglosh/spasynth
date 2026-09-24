@@ -146,6 +146,10 @@ private:
     Knob keytrack, envAmount, mix;
     std::unique_ptr<Toggle> enable;
     std::unique_ptr<Choice> routing;     // filter 2 only
+    // One toggle per oscillator slot, shown on BOTH filter tabs (they bind
+    // to the SAME three params -- the routing choice isn't per-filter).
+    std::array<std::unique_ptr<Toggle>, params::numOscSlots> oscRoute;
+    juce::Rectangle<int> oscRouteCaptionRect;   // set in resized(), drawn in paint()
     std::unique_ptr<TabEngagementTracker> powerTracker;
 };
 

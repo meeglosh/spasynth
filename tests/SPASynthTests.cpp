@@ -12701,6 +12701,194 @@ namespace
                 + " vs off " + juce::String (off) + ")");
     }
 
+    // v1.0.25: per-oscillator filter routing (id::osc::filterRoute). Default
+    // on for every slot, so with nothing touched the signal path must be
+    // exactly what it was before this feature existed. Render twice -- once
+    // leaving the three params at their untouched default, once setting them
+    // explicitly to 1.0f (the same value) -- and require bit-for-bit equal
+    // output. Combined with the DSP: bypassL/R stay exactly 0.0f whenever
+    // every slot is routed, and float x + 0.0f is exact in IEEE754, so the
+    // filtered-bus arithmetic is untouched in that case.
+    static void filterRouteBitIdenticalTest()
+    {
+        std::cout << "filterRouteBitIdenticalTest\n";
+
+        namespace id = spa::params::id;
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto render = [&] (bool touchExplicitly)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);
+            setParam (proc, id::oscSlot (1, id::osc::enable), 1.0f);
+            setParam (proc, id::oscSlot (2, id::osc::enable), 1.0f);
+            setParam (proc, id::filter1Enable, 1.0f);
+            setParam (proc, id::filter1Type, 1.0f);
+            setParam (proc, id::filter1Cutoff, 800.0f);
+            setParam (proc, id::filter1Mix, 1.0f);
+            setParam (proc, id::filter2Enable, 1.0f);
+            setParam (proc, id::filter2Type, 1.0f);
+            setParam (proc, id::filter2Cutoff, 4000.0f);
+            setParam (proc, id::filter2Mix, 1.0f);
+            if (touchExplicitly)
+                for (int s = 0; s < spa::params::numOscSlots; ++s)
+                    setParam (proc, id::oscSlot (s, id::osc::filterRoute), 1.0f);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> out (2, 20 * blockSize);
+            for (int b = 0; b < 20; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                out.copyFrom (0, b * blockSize, buffer, 0, 0, blockSize);
+                out.copyFrom (1, b * blockSize, buffer, 1, 0, blockSize);
+            }
+            return out;
+        };
+
+        const auto untouched = render (false);
+        const auto explicitOn = render (true);
+        bool identical = true;
+        for (int ch = 0; ch < 2 && identical; ++ch)
+            for (int i = 0; i < untouched.getNumSamples() && identical; ++i)
+                if (! juce::exactlyEqual (untouched.getSample (ch, i), explicitOn.getSample (ch, i)))
+                    identical = false;
+        expect (identical, "default (all routed) output is bit-identical whether the "
+                            "filterRoute params are left untouched or set explicitly on");
+    }
+
+    // Oscillator off -> that slot's contribution skips the filter section
+    // entirely; on -> it's shaped as normal. Checked in both filter-routing
+    // modes (series/parallel), since the bypass sits around BOTH filters
+    // regardless of how they're chained.
+    static void filterRouteBypassTest()
+    {
+        std::cout << "filterRouteBypassTest\n";
+
+        namespace id = spa::params::id;
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto brightness = [&] (bool routed, bool parallel)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);   // saw-ish, bright
+            setParam (proc, id::oscSlot (1, id::osc::enable), 0.0f);
+            setParam (proc, id::oscSlot (2, id::osc::enable), 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::filterRoute), routed ? 1.0f : 0.0f);
+            setParam (proc, id::filter1Enable, 1.0f);
+            setParam (proc, id::filter1Type, 1.0f);        // LP 24
+            setParam (proc, id::filter1Cutoff, 200.0f);
+            setParam (proc, id::filter1Mix, 1.0f);
+            setParam (proc, id::filter2Enable, 1.0f);
+            setParam (proc, id::filter2Type, 1.0f);         // LP 24
+            setParam (proc, id::filter2Cutoff, 200.0f);
+            setParam (proc, id::filter2Mix, 1.0f);
+            setParam (proc, id::filterRouting, parallel ? 1.0f : 0.0f);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            for (int b = 0; b < 20; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+            }
+            float hf = 0.0f;
+            for (int i = 1; i < blockSize; ++i)
+                hf += std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1));
+            return hf / (float) blockSize;
+        };
+
+        for (const bool parallel : { false, true })
+        {
+            const auto onRoute = brightness (true, parallel);
+            const auto offRoute = brightness (false, parallel);
+            expect (offRoute > onRoute * 1.5f,
+                    juce::String ("filterRoute OFF keeps the highs a 200 Hz LP would remove (")
+                    + (parallel ? "parallel" : "series") + ", on " + juce::String (onRoute)
+                    + " vs off " + juce::String (offRoute) + ")");
+        }
+    }
+
+    static void filterRouteExcludedFromRandomizeTest()
+    {
+        std::cout << "filterRouteExcludedFromRandomizeTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto& apvts = proc.getAPVTS();
+
+        std::array<float, spa::params::numOscSlots> before {};
+        for (int s = 0; s < spa::params::numOscSlots; ++s)
+            before[(size_t) s] = apvts.getParameter (
+                id::oscSlot (s, id::osc::filterRoute))->getValue();
+
+        bool unchanged = true;
+        for (int roll = 0; roll < 30; ++roll)
+        {
+            proc.randomizeAll();
+            for (int s = 0; s < spa::params::numOscSlots; ++s)
+                unchanged = unchanged && juce::approximatelyEqual (
+                    apvts.getParameter (id::oscSlot (s, id::osc::filterRoute))->getValue(),
+                    before[(size_t) s]);
+        }
+        expect (unchanged, "filterRoute toggles are excluded from RANDOMIZE ALL");
+    }
+
+    static void filterRoutePresetPersistTest()
+    {
+        std::cout << "filterRoutePresetPersistTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        // Non-default combination: A off, B on, C off.
+        setParam (proc, id::oscSlot (0, id::osc::filterRoute), 0.0f);
+        setParam (proc, id::oscSlot (1, id::osc::filterRoute), 1.0f);
+        setParam (proc, id::oscSlot (2, id::osc::filterRoute), 0.0f);
+
+        expect (proc.getPresetManager().saveUserPreset ("FilterRouteTest"),
+                "preset with non-default filterRoute combination saves");
+
+        // Flip everything before loading back so a value that merely
+        // survived unchanged can't be mistaken for a successful restore.
+        setParam (proc, id::oscSlot (0, id::osc::filterRoute), 1.0f);
+        setParam (proc, id::oscSlot (1, id::osc::filterRoute), 0.0f);
+        setParam (proc, id::oscSlot (2, id::osc::filterRoute), 1.0f);
+
+        int presetIndex = -1;
+        for (size_t i = 0; i < proc.getPresetManager().getPresets().size(); ++i)
+            if (proc.getPresetManager().getPresets()[i].name == "FilterRouteTest")
+                presetIndex = (int) i;
+        expect (presetIndex >= 0, "saved preset is found by the browser scan");
+        if (presetIndex >= 0)
+            expect (proc.getPresetManager().loadPreset (presetIndex), "preset loads");
+
+        auto& apvts = proc.getAPVTS();
+        const auto readBool = [&] (const juce::String& pid)
+        {
+            return apvts.getParameter (pid)->getValue() >= 0.5f;
+        };
+        expect (readBool (id::oscSlot (0, id::osc::filterRoute)) == false,
+                "osc A filterRoute restored off");
+        expect (readBool (id::oscSlot (1, id::osc::filterRoute)) == true,
+                "osc B filterRoute restored on");
+        expect (readBool (id::oscSlot (2, id::osc::filterRoute)) == false,
+                "osc C filterRoute restored off");
+    }
+
     // Fundamental frequency estimate via positive-going zero crossings.
     static float zeroCrossingHz (const juce::AudioBuffer<float>& capture,
                                  int start, int len, double sampleRate)
@@ -23990,6 +24178,10 @@ int main (int argc, char* argv[])
     RUN (filterExtrasTest);
     RUN (dualFilterTest);
     RUN (filter1EnableTest);
+    RUN (filterRouteBitIdenticalTest);
+    RUN (filterRouteBypassTest);
+    RUN (filterRouteExcludedFromRandomizeTest);
+    RUN (filterRoutePresetPersistTest);
     RUN (glideTest);
     RUN (libraryScanTest);
     RUN (libraryDiscoveryTest);

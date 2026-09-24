@@ -111,6 +111,7 @@ SPASynthProcessor::SPASynthProcessor()
         rs.sub         = apvts.getRawParameterValue (pid (params::id::osc::sub));
         rs.fmRatio     = apvts.getRawParameterValue (pid (params::id::osc::fmRatio));
         rs.noiseColor  = apvts.getRawParameterValue (pid (params::id::osc::noiseColor));
+        rs.filterRoute = apvts.getRawParameterValue (pid (params::id::osc::filterRoute));
 
         // Drives the lazy Pluck-buffer allocation below (parameterChanged()).
         apvts.addParameterListener (pid (params::id::osc::mode), this);
@@ -1986,6 +1987,7 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         slot.subLevel    = rs.sub->load();
         slot.fmRatio     = rs.fmRatio->load();
         slot.noiseColor  = (int) rs.noiseColor->load();
+        slot.filterRoute = rs.filterRoute->load() >= 0.5f;
 
         // SYNC has no effect while LOOP is off -- keep the raw param value
         // (rs.syncToBpm) but gate what actually reaches the engine so nothing

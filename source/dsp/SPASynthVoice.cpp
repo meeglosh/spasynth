@@ -807,7 +807,14 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
 
         for (int i = 0; i < chunkLen; ++i)
         {
+            // sumL/sumR feed the filter section; bypassL/bypassR are slots
+            // whose filterRoute is off -- they skip both filters entirely
+            // (series or parallel) and rejoin after, still dry. When every
+            // slot is routed (the pre-1.0.25 default), bypassL/R stay
+            // exactly 0.0f and the later += is a no-op, so the filtered path
+            // is bit-identical to before this feature existed.
             float sumL = 0.0f, sumR = 0.0f;
+            float bypassL = 0.0f, bypassR = 0.0f;
 
             for (int s = 0; s < params::numOscSlots; ++s)
             {
@@ -878,8 +885,16 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                     }
                 }
 
-                sumL += l * slotGains[(size_t) s];
-                sumR += r * slotGains[(size_t) s];
+                if (stat.filterRoute)
+                {
+                    sumL += l * slotGains[(size_t) s];
+                    sumR += r * slotGains[(size_t) s];
+                }
+                else
+                {
+                    bypassL += l * slotGains[(size_t) s];
+                    bypassR += r * slotGains[(size_t) s];
+                }
             }
 
             // Paraphonic voices follow the processor's shared amp envelope; all
@@ -926,6 +941,13 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                                       * filter2MixValue;
                 }
             }
+
+            // Rejoin any slots routed around the filter section -- dry, after
+            // both filters, before chaos/gain. 0.0f when every slot is routed
+            // (see the comment where bypassL/R are declared above).
+            outL += bypassL;
+            if (right != nullptr)
+                outR += bypassR;
 
             // Chaos saturation: warm tanh, level-compensated.
             if (satDrive > 0.001f)

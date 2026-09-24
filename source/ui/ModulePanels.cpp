@@ -659,6 +659,19 @@ FilterPanel::FilterPanel (SPASynthProcessor& p, int filterIndex)
         routing = std::make_unique<Choice> (p.getAPVTS(), id::filterRouting);
         addAndMakeVisible (*routing);
     }
+
+    // Per-oscillator filter routing -- same three params on both tabs.
+    // Labelled with the oscillator's own letter (matches the OSC A/B/C
+    // strip titles) so there's no need to explain which knob means what.
+    for (int s = 0; s < params::numOscSlots; ++s)
+    {
+        auto t = std::make_unique<Toggle> (p.getAPVTS(),
+            id::oscSlot (s, id::osc::filterRoute),
+            id::oscSlotLetter (s));
+        t->button.setTooltip ("Send this oscillator through the filters.");
+        addAndMakeVisible (*t);
+        oscRoute[(size_t) s] = std::move (t);
+    }
 }
 
 void FilterPanel::paint (juce::Graphics& g)
@@ -672,6 +685,10 @@ void FilterPanel::paint (juce::Graphics& g)
                          index == 1 ? "Filter 1" : "Filter 2", {},
                          draw::moduleHeaderColour (currentTheme(), powerTracker->isEngaged ("on")),
                          false);
+
+    g.setFont (metrics::smallFont());
+    g.setColour (currentTheme().textSecondary);
+    g.drawText ("OSC", oscRouteCaptionRect, juce::Justification::centredLeft);
 }
 
 void FilterPanel::resized()
@@ -687,6 +704,22 @@ void FilterPanel::resized()
         {
             enableRow.removeFromLeft (4);
             routing->setBounds (enableRow.reduced (0, 1));
+        }
+        area.removeFromTop (2);
+    }
+
+    {
+        // Which oscillators reach the filter section at all -- same three
+        // params on both tabs (see the constructor comment).
+        auto routeRow = area.removeFromTop (18);
+        oscRouteCaptionRect = routeRow.removeFromLeft (30);
+        routeRow.removeFromLeft (2);
+        const auto toggleW = routeRow.getWidth() / params::numOscSlots;
+        for (int s = 0; s < params::numOscSlots; ++s)
+        {
+            auto cell = s == params::numOscSlots - 1 ? routeRow
+                                                      : routeRow.removeFromLeft (toggleW);
+            oscRoute[(size_t) s]->setBounds (cell.reduced (2, 0));
         }
         area.removeFromTop (2);
     }

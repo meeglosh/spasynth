@@ -490,6 +490,7 @@ private:
         std::atomic<float>* sub = nullptr;
         std::atomic<float>* fmRatio = nullptr;
         std::atomic<float>* noiseColor = nullptr;
+        std::atomic<float>* filterRoute = nullptr;
     };
 
     struct RawLFO

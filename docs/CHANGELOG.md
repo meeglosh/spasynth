@@ -53,6 +53,11 @@
   keeps its dry/wet mix; if you saved your own reverb settings, the wet
   level may sit a little different, mainly at longer decay times or a
   bigger room size.
+- Each oscillator can now skip the filters. New A/B/C toggles on the
+  Filter 1 and Filter 2 tabs let you keep, say, a sub or noise layer
+  unfiltered while the rest of the patch is shaped as usual. Every
+  oscillator defaults to going through the filters as before, so existing
+  presets and sessions sound the same. This came from feedback.
 
 ## 1.0.24
 

@@ -303,6 +303,12 @@ static void addOscSlotParams (std::vector<ParamDef>& p, int slot)
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true },
                    { "White", "Pink", "Brown" } });
+
+    // Filter-section routing (see id::osc::filterRoute). Default on so every
+    // existing preset/session is bit-identical; excluded from RANDOMIZE ALL.
+    p.push_back ({ pid (id::osc::filterRoute), letter + "Filter Route", section,
+                   ParamKind::boolParam, {}, 1.0f, "",
+                   false, { .enabled = false } });
 }
 
 // Modulatable engine params, appended AFTER all pre-existing destinations so

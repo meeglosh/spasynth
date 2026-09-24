@@ -68,6 +68,12 @@ struct SharedState
         float subLevel = 0.0f;
         float fmRatio = 2.0f;
         int noiseColor = 0;
+
+        // Whether this slot's signal passes through the filter section at
+        // all (both filters, whatever the series/parallel routing) or joins
+        // the mix dry after it. Default true so a fresh voice matches the
+        // pre-1.0.25 signal path exactly when every slot is routed.
+        bool filterRoute = true;
     };
 
     struct Route

@@ -257,6 +257,15 @@ namespace id
         inline constexpr const char* fmIndex      = "fmIndex";
         inline constexpr const char* noiseColor   = "noiseColor";
         inline constexpr const char* pluckDamp    = "pluckDamp";
+
+        // Send this oscillator through the filter section (both filters,
+        // whatever the series/parallel routing) or skip it entirely -- an
+        // oscillator with this off joins the mix dry, after the filters.
+        // Default on so every existing preset/session is bit-identical (all
+        // three routed = today's signal path exactly). Not a mod
+        // destination; excluded from RANDOMIZE ALL (a routing choice, not
+        // something to roll randomly -- same reasoning as timeSig above).
+        inline constexpr const char* filterRoute  = "filterRoute";
     }
 
     juce::String oscSlot (int slotIndex, const char* key);

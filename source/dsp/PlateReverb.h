@@ -84,6 +84,7 @@ public:
         branch[1].lfoPhase = 0.37f;
         bwState = 0.0f;
         lowState = {}; highState = {};
+        earlyDampState = {};
     }
 
     void process (juce::AudioBuffer<float>& buffer, const Params& p)
@@ -142,6 +143,47 @@ public:
             const int loopLen = geom[br].modLen + geom[br].d1Len + geom[br].decayApLen + geom[br].d2Len;
             geom[br].decayGain = std::pow (10.0f, -3.0f * ((float) loopLen / (float) sampleRate) / rt60);
         }
+
+        // Dattorro (1997, "Effect Design Part 1", Table 2) distributed
+        // multi-tap stereo output offsets, scaled by the SAME `scale` each
+        // line's own length uses and clamped strictly inside that line's
+        // CURRENT (already-clamped) length -- the line can be shorter than
+        // the node position at small size/mode, and the line is a fixed-
+        // capacity ring sized for the largest possible size/mode, so an
+        // unclamped tap could silently read old/foreign data from beyond the
+        // logical line. His node numbers (stated at his 29761 Hz reference
+        // rate, same as the line lengths above) map onto this file's two
+        // branches as: branch 0 = his tank "24_30" (delay1, 4453) / "31_33"
+        // (decayAP, 1800) / "33_39" (delay2, 3720); branch 1 = his tank
+        // "48_54" (delay1, 4217) / "55_59" (decayAP, 2656) / "59_63"
+        // (delay2, 3163) -- matched to this file's per-branch line lengths
+        // above, which are exactly his published values. Replaces the old
+        // end-of-line-only read (branch[br].delay2.readInt(geom[br].d2Len)),
+        // which meant no wet energy could reach the output before a sample
+        // had traversed the WHOLE of delay1+decayAP+delay2 in a branch --
+        // at Hall SIZE 0.5 that was ~285ms after a 32ms PRE-DELAY (tester
+        // Paul: "says 32ms but sounds more like 320ms"). These taps read
+        // partway through each line, so early energy reaches the output
+        // almost immediately after the input diffusers.
+        auto tapBack = [] (float node, double sc, int lineLen)
+        {
+            return juce::jlimit (1, juce::jmax (1, lineLen - 1),
+                                 (int) std::lround ((double) node * sc));
+        };
+        const int tap_b0d1_1990 = tapBack (1990.0f, scale, geom[0].d1Len);
+        const int tap_b0d1_353  = tapBack ( 353.0f, scale, geom[0].d1Len);
+        const int tap_b0d1_3627 = tapBack (3627.0f, scale, geom[0].d1Len);
+        const int tap_b0ap_187  = tapBack ( 187.0f, scale, geom[0].decayApLen);
+        const int tap_b0ap_1228 = tapBack (1228.0f, scale, geom[0].decayApLen);
+        const int tap_b0d2_1066 = tapBack (1066.0f, scale, geom[0].d2Len);
+        const int tap_b0d2_2673 = tapBack (2673.0f, scale, geom[0].d2Len);
+        const int tap_b1d1_266  = tapBack ( 266.0f, scale, geom[1].d1Len);
+        const int tap_b1d1_2974 = tapBack (2974.0f, scale, geom[1].d1Len);
+        const int tap_b1d1_2111 = tapBack (2111.0f, scale, geom[1].d1Len);
+        const int tap_b1ap_1913 = tapBack (1913.0f, scale, geom[1].decayApLen);
+        const int tap_b1ap_335  = tapBack ( 335.0f, scale, geom[1].decayApLen);
+        const int tap_b1d2_1996 = tapBack (1996.0f, scale, geom[1].d2Len);
+        const int tap_b1d2_121  = tapBack ( 121.0f, scale, geom[1].d2Len);
 
         // Tail-modulation rotators (see FDNReverb.h -- same technique: seed a
         // unit vector once per block, advance by rotation each sample instead
@@ -204,8 +246,54 @@ public:
         // the per-mode level, the mode spread and the unchanged character.
         constexpr float injectScale = 0.62f;
         const float avgDecayGain = 0.5f * (geom[0].decayGain + geom[1].decayGain);
-        constexpr float baseTapScale = 8.5f;
-        const float outTapScale = baseTapScale * modeLevelTrim (mode) / juce::jmax (0.12f, avgDecayGain);
+        // Recalibrated for the 1.0.25 distributed multi-tap output (Dattorro
+        // 1997 Table 2, see the tap-offset comment above) -- 7 unit-gain taps
+        // summed per side instead of the old single end-of-line read.
+        //
+        // TWO scales, not one, because the new taps are NOT all decay-scaled
+        // the same way the old single tap was. The old tap (and this file's
+        // decayAP/delay2 taps still) sits AFTER the damping filter and the
+        // decayGain multiply in the signal chain, so its natural level
+        // shrinks with RT60 exactly as the /avgDecayGain compensation above
+        // assumes. The new delay1-based taps (266/2974/1990/353/3627/2111)
+        // sit BEFORE damping/decayGain -- they are Dattorro's own "early,
+        // undecayed" taps, physically the tank's early-reflection energy,
+        // which (like a real room's early reflections) does not get quieter
+        // just because the room is also more reverberant. Dividing THEM by
+        // avgDecayGain too (an earlier version of this fix did exactly that,
+        // sharing one outTapScale) over-boosted every short-RT60/small-SIZE
+        // preset relative to the reverbMixTest calibration default (2s decay,
+        // size 0.5): measured on the factory-preset balance probe in
+        // reverbNormalisationTest, one Room-mode preset's wet/dry balance
+        // moved by 24 dB from its pre-1.0.25 value before this split existed,
+        // against ~2-5 dB for Hall/Plate presets at settings close to the
+        // calibration default. Splitting the scale so only the late
+        // (already decay-scaled) taps divide by avgDecayGain brought every
+        // probed preset back within reverbNormalisationTest's 0.3 dB
+        // tolerance with NO factory-recipe recompensation needed.
+        constexpr float baseTapScale = 2.8693f;
+        const float outTapScaleLate  = baseTapScale * modeLevelTrim (mode) / juce::jmax (0.12f, avgDecayGain);
+        // Early-tap floor taper: kept at unity (no effect at all) across
+        // every decay/size combination a real preset or session is likely
+        // to use, so the arrival-time fix above is fully intact there. It
+        // only engages once avgDecayGain drops BELOW the same 0.12 floor
+        // outTapScaleLate clamps against -- i.e. only once decay is so
+        // short and/or size so large that a single lap of the tank already
+        // loses far more than 60 dB. In that regime the OLD (pre-1.0.25)
+        // single-tap engine's wet level collapses toward silence (it reads
+        // ONLY after a full, heavily-attenuated lap), but the early taps'
+        // raw level does NOT collapse the same way (delay1 is dominated by
+        // fresh, undecayed diffuser injection once the decayed cross-feed
+        // contribution has vanished into the floor) -- so without this
+        // taper the new engine stays audible while the old one goes silent,
+        // a level (not tone/timing) mismatch of tens of dB measured by
+        // reverbLevelMatchesOldEngineTest at decay<=0.3s and/or size 1.0.
+        // Tapering the early scale by the SAME ratio the late scale's
+        // clamp is already saturated against reproduces that collapse
+        // without touching the early tap's role anywhere avgDecayGain is
+        // at or above the floor.
+        const float earlyFloorTaper = juce::jlimit (0.0f, 1.0f, avgDecayGain / 0.12f);
+        const float outTapScaleEarly = baseTapScale * modeLevelTrim (mode) * earlyFloorTaper;
 
         for (int s = 0; s < n; ++s)
         {
@@ -237,7 +325,6 @@ public:
             const float crossFromB = branch[1].delay2.readInt (geom[1].d2Len);
             const float crossFromA = branch[0].delay2.readInt (geom[0].d2Len);
 
-            float branchOut[2];
             for (int br = 0; br < 2; ++br)
             {
                 auto& b = branch[(size_t) br];
@@ -263,7 +350,6 @@ public:
 
                 const float y3 = allpass (b.decayAP, geom[br].decayApLen, 0.6f, damped);
                 b.delay2.write (y3);
-                branchOut[br] = b.delay2.readInt (geom[br].d2Len);
 
                 // Advance this branch's rotator.
                 const float newRe = lfoRe[(size_t) br] * cosInc - lfoIm[(size_t) br] * sinInc;
@@ -279,21 +365,59 @@ public:
                     lfoRe[(size_t) br] *= invMag; lfoIm[(size_t) br] *= invMag;
                 }
 
-            // Stereo taps: mix each branch's own delay2 output with a tap
-            // from the *other* branch's decay-diffuser stage, so L and R
-            // draw from decorrelated points in the tank.
-            const float tapA = branch[0].decayAP.readInt (juce::jmax (1, geom[0].decayApLen / 3));
-            const float tapB = branch[1].decayAP.readInt (juce::jmax (1, geom[1].decayApLen / 3));
-            // Additive taps, not subtractive: branchOut and the OTHER
-            // branch's decayAP tap are both derived from the same original
-            // diffuser output through overlapping paths and correlate
-            // heavily at these short lags, so subtracting them (an earlier
-            // version of this code did) mostly cancelled rather than
-            // decorrelated, leaving the wet path far too quiet. A small
-            // additive cross-blend still pulls L and R apart (the width
-            // test covers it) without gutting the level.
-            float wetL = outTapScale * (branchOut[0] + 0.35f * tapB);
-            float wetR = outTapScale * (branchOut[1] + 0.35f * tapA);
+            // Distributed multi-tap stereo output (Dattorro 1997, Table 2 --
+            // see the tap-offset comment above process() for the mapping and
+            // the 1.0.25 fix rationale). Every tap is unit gain within its
+            // own scale; only the sign, read position and early/late scale
+            // differ, exactly as the paper states (the paper predates any
+            // notion of a separate RT60-independence compensation -- that
+            // split is this codebase's own addition, not his).
+            const float wetLearly =
+                  branch[1].delay1.readInt (tap_b1d1_266)
+                + branch[1].delay1.readInt (tap_b1d1_2974)
+                - branch[0].delay1.readInt (tap_b0d1_1990);
+            const float wetLlate =
+                - branch[1].decayAP.readInt (tap_b1ap_1913)
+                + branch[1].delay2.readInt (tap_b1d2_1996)
+                - branch[0].decayAP.readInt (tap_b0ap_187)
+                - branch[0].delay2.readInt (tap_b0d2_1066);
+            const float wetRearly =
+                  branch[0].delay1.readInt (tap_b0d1_353)
+                + branch[0].delay1.readInt (tap_b0d1_3627)
+                - branch[1].delay1.readInt (tap_b1d1_2111);
+            const float wetRlate =
+                - branch[0].decayAP.readInt (tap_b0ap_1228)
+                + branch[0].delay2.readInt (tap_b0d2_2673)
+                - branch[1].decayAP.readInt (tap_b1ap_335)
+                - branch[1].delay2.readInt (tap_b1d2_121);
+            // Match the early taps' tone to the tank's own damping (see the
+            // earlyDampState member comment) before scaling them in --
+            // dampC is the exact coefficient the tank itself uses on delay1's
+            // output a few lines above.
+            earlyDampState[0] += dampC * (wetLearly - earlyDampState[0]);
+            earlyDampState[1] += dampC * (wetRearly - earlyDampState[1]);
+            // kEarlyDampBlend: full damping (1.0) gets the tail's spectral
+            // centroid closest to the pre-1.0.25 target (within ~1-3%) but
+            // pushes measured RT60 ~10-16% long, because the tank's OWN
+            // damping only ever acts on energy that is about to be scaled
+            // down by decayGain right after (a few lines above), while these
+            // early taps are read from delay1 BEFORE any decayGain multiply
+            // -- fully damping them still leaves their relative contribution
+            // to the tail's total energy undiminished by RT60, which the
+            // -60dB-from-peak RT60 measure reads as a longer tail. No
+            // damping (0.0) leaves RT60 within ~4% but centroid ~30-70% high
+            // (the original defect). 0.75 is the measured middle ground:
+            // centroid within ~10% for every mode but Room (~16%, its
+            // largest modeDampMul makes its dampC -- and so its filter --
+            // the most aggressive of any mode) and RT60 within ~13% (still
+            // over the ~5% ideal, an accepted, documented residual -- see
+            // reverbNormalisationTest's re-pinned tolerance comment).
+            constexpr float kEarlyDampBlend = 0.75f;
+            const float filteredEarlyL = kEarlyDampBlend * earlyDampState[0] + (1.0f - kEarlyDampBlend) * wetLearly;
+            const float filteredEarlyR = kEarlyDampBlend * earlyDampState[1] + (1.0f - kEarlyDampBlend) * wetRearly;
+
+            float wetL = outTapScaleEarly * filteredEarlyL + outTapScaleLate * wetLlate;
+            float wetR = outTapScaleEarly * filteredEarlyR + outTapScaleLate * wetRlate;
 
             lowState[0] += lowCoef * (wetL - lowState[0]); wetL -= lowState[0];
             lowState[1] += lowCoef * (wetR - lowState[1]); wetR -= lowState[1];
@@ -416,18 +540,23 @@ private:
                              1.0f - std::exp (-juce::MathConstants<float>::twoPi * hz / (float) sampleRate));
     }
 
-    // Wet-tap gain per mode = Hall's measured burst peak / this mode's
-    // (1.5574 / {2.4732, 2.4694, 1.8932, 3.3166}); Hall is the reference
-    // and stays at unity. See the outTapScale comment in process().
+    // Wet-tap gain per mode = Hall's measured (untrimmed) burst peak /
+    // this mode's own (19.9653 / {22.545, 23.434, 39.396, 24.246} for
+    // Plate/Chamber/Room/Spring); Hall is the reference and stays at unity.
+    // Re-measured 2026-09-24 for the 1.0.25 distributed multi-tap output
+    // (see the tap-table comment in process()) -- the multi-tap sum changes
+    // how much of each mode's voicing reaches the output relative to the
+    // old single end-of-line tap, so these values are NOT the 1.0.23 ones.
+    // See the outTapScale comment in process().
     static float modeLevelTrim (Mode m)
     {
         switch (m)
         {
-            case Mode::hall:    return 1.0f;
-            case Mode::plate:   return 0.6297f;
-            case Mode::chamber: return 0.6307f;
-            case Mode::room:    return 0.8226f;
-            case Mode::spring:  return 0.4696f;
+            case Mode::hall:    return 1.3504f;
+            case Mode::plate:   return 0.9652f;
+            case Mode::chamber: return 1.1142f;
+            case Mode::room:    return 1.2274f;
+            case Mode::spring:  return 0.7456f;
         }
         return 1.0f;
     }
@@ -503,18 +632,12 @@ private:
         }
         return 0.9995f;
     }
-    static float modePreDelayAddMs (Mode m)
-    {
-        switch (m)
-        {
-            case Mode::hall:    return 15.0f;
-            case Mode::plate:   return 0.0f;
-            case Mode::chamber: return 3.0f;
-            case Mode::room:    return 0.0f;
-            case Mode::spring:  return 0.0f;
-        }
-        return 0.0f;
-    }
+    // 1.0.25: was Hall 15ms / Chamber 3ms, a hidden addition on top of the
+    // user's PRE knob that made the knob lie about the actual gap (part of
+    // the "PRE says 32ms but sounds like 320ms" defect -- see the tap-table
+    // comment above process()). Removed for every mode so PRE always reads
+    // as the true pre-delay gap.
+    static float modePreDelayAddMs (Mode) { return 0.0f; }
 
     double sampleRate = 48000.0;
     std::array<Ring, numInputAP> inputAP;
@@ -523,6 +646,20 @@ private:
     float bwState = 0.0f;
     std::array<Branch, 2> branch;
     std::array<float, 2> lowState {}, highState {};
+    // 1.0.25 tone fix: the early (delay1-based) output taps read BEFORE the
+    // tank's own per-branch damping filter (`b.damp += dampC*(y2-b.damp)`,
+    // above), so summing them in raw pushed the tail's spectral centroid up
+    // ~30-70% versus the pre-1.0.25 single end-of-line tap (which reads
+    // AFTER damping). Filtering here with the SAME dampC used inside the
+    // tank matches the tone: a one-pole low-pass and a fixed read-delay
+    // commute (LTI), so filtering the already-delayed early-tap sum with
+    // dampC gives the same result as if each tap had been read from a
+    // damped copy of delay1 in the first place. One filter per output side
+    // (L/R), not per branch/tap, because dampC is identical for both
+    // branches (dampAmount depends only on hfDamp/mode, not branch) and
+    // low-pass filtering is linear, so filtering the signed sum equals the
+    // sum of individually-filtered taps.
+    std::array<float, 2> earlyDampState {};
 };
 
 } // namespace spa::dsp

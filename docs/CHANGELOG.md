@@ -45,6 +45,14 @@
   feedback.
 - Loading a preset no longer changes your window size or the on-screen
   keyboard's octave. A preset is a sound, not a window layout.
+- Reverb now starts right after the PRE time you set, instead of arriving
+  noticeably later than the knob says. This came from tester feedback, and
+  every reverb also blooms sooner and more naturally as a result, including
+  in your existing presets and sessions. Decay time and each mode's tone
+  stay close to what they were. We rebalanced every factory preset so it
+  keeps its dry/wet mix; if you saved your own reverb settings, the wet
+  level may sit a little different, mainly at longer decay times or a
+  bigger room size.
 
 ## 1.0.24
 

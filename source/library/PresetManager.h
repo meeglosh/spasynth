@@ -139,7 +139,35 @@ public:
     // character, with size/decay/damping tuned per mode, and mix kept in
     // the linear-law range (12-20% light, up to ~30% for the drone/wash
     // variants).
-    static constexpr int factoryRecipeVersion = 8;
+    // v9 (1.0.25) = PlateReverb.h's wet output switched from a single end-
+    // of-line-only tap to Dattorro's own distributed multi-tap stereo output
+    // (fixes reverb arriving noticeably later than the PRE-DELAY knob says).
+    // Unlike v8's per-MODE trim, the new taps' level is NOT a uniform per-
+    // mode multiplier on the old wet level: part of the sum (the delay1-
+    // based "early" taps) is deliberately NOT scaled down by a preset's own
+    // decayGain/RT60 the way the rest of the wet path always has been, so
+    // how much a given preset's balance moved depends on ITS OWN size/decay
+    // settings, not just its mode (a short-decay, small-size Room preset
+    // moved far more than a near-default one). So every reverbMix value
+    // below that was previously v8-compensated was re-solved PER PRESET
+    // (not per mode): mix' = R / (R + Wnew), where R = 10^(target_dB/20) is
+    // the preset's pre-1.0.25 (v8) wet-to-dry balance at its own settings
+    // (dry RMS is untouched by this change) and Wnew = 10^(measured new
+    // wet/dry-at-mix-1_dB/20) is that SAME preset's own new-engine wet/dry
+    // ratio -- so every preset keeps exactly its v8 balance, not an
+    // averaged/approximate one (reverbNormalisationTest's balance probe
+    // pins the result to within 0.3 dB per preset, same as v8). RE-SOLVED
+    // 2026-09-24 against PlateReverb.h's early-tap tone fix (kEarlyDampBlend)
+    // and the level recalibration that followed it -- the mix' values are
+    // NOT the ones the tap-offset fix originally shipped with, since both
+    // changed Wnew again for every preset. Confirmed this recompensation is
+    // still required (not something the engine-level fixes alone made
+    // redundant): a synthetic mode x decay x size sweep
+    // (reverbLevelMatchesOldEngineTest) shows the level shift is a real,
+    // preset-dependent 1-4 dB even after the engine-level recalibration, so
+    // going back to a per-mode-only (v8-style) trim would NOT keep these
+    // presets' balance within tolerance.
+    static constexpr int factoryRecipeVersion = 9;
 
     static constexpr int numKeysVariants = 6;
     static constexpr int numTextureVariants = 5;

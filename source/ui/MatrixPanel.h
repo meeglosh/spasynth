@@ -281,19 +281,41 @@ public:
         assignDestBtn.onDoubleClick = [this] { applyMode (nextStateOnDoubleClick ({ assignMode, assignKind }, AssignKind::dest)); };
         addAndMakeVisible (assignDestBtn);
 
-        // Repaint the matrix whenever anything an inert-destination rule
-        // gates might have changed (currently just chaos SYNC), so a dimmed
-        // row un-dims live without needing ASSIGN mode or a manual refresh.
+        // Repaint the matrix whenever anything the dim wash (paintInertRows)
+        // reads might have changed: an inert-destination rule (currently
+        // just chaos SYNC) OR any route's own source/dest choice --
+        // rowMissingEitherHalf reads those live too. Tester report (Paul):
+        // picking both halves of a row from its dropdowns left it looking
+        // greyed out until hovering over it -- content (RowsHost) is what
+        // paints the wash in paintOverChildren, but nothing ever called
+        // content.repaint() when a route's own source/dest changed, only
+        // when chaos::syncToBpm did; a combo repainting ITSELF (to show its
+        // new selected text) doesn't repaint the wash layered on top of it.
+        // Listening on the APVTS param directly (every route, both halves)
+        // rather than only each combo's onChange/GestureGate means preset
+        // load, host automation, undo and ASSIGN-mode writes -- none of
+        // which go through a combo's own user-gesture path -- repaint too.
         // AudioProcessorValueTreeState::Listener callbacks can fire from the
         // audio thread (host automation), so this defers the actual repaint
         // via AsyncUpdater -- same idiom as ChaosPanel/DependentEnable.
         inertWatcher.target = &content;
+        inertWatcher.repaintCounterForTest = &contentRepaintCountForTest;
         apvts.addParameterListener (params::id::chaos::syncToBpm, &inertWatcher);
+        for (int r = 0; r < params::numModRoutes; ++r)
+        {
+            apvts.addParameterListener (params::id::routeParam (r, params::id::route::source), &inertWatcher);
+            apvts.addParameterListener (params::id::routeParam (r, params::id::route::dest), &inertWatcher);
+        }
     }
 
     ~MatrixPanel() override
     {
         apvts.removeParameterListener (params::id::chaos::syncToBpm, &inertWatcher);
+        for (int r = 0; r < params::numModRoutes; ++r)
+        {
+            apvts.removeParameterListener (params::id::routeParam (r, params::id::route::source), &inertWatcher);
+            apvts.removeParameterListener (params::id::routeParam (r, params::id::route::dest), &inertWatcher);
+        }
     }
 
     juce::Button& assignSourceButton() { return assignSourceBtn; }
@@ -432,6 +454,16 @@ public:
         const int destIndex = row.dest.getSelectedItemIndex() - 1;
         return isModDestIndexInert (apvts, destIndex) || rowMissingEitherHalf (row);
     }
+
+    // Test hook: how many times the deferred dim-wash repaint (InertGateWatcher's
+    // handleAsyncUpdate, the thing that actually calls content.repaint()) has
+    // fired since construction. isRouteDimmedForTest alone can't catch a
+    // stale-paint regression -- it re-reads the combos' live selection every
+    // time it's called, so it always reports the CORRECT answer regardless of
+    // whether the on-screen wash was ever told to redraw. This counter
+    // answers the separate question a test actually needs: was the component
+    // that paints the wash ever asked to repaint after the change.
+    int getContentRepaintCountForTest() const { return contentRepaintCountForTest; }
 
     void paint (juce::Graphics& g) override
     {
@@ -730,15 +762,27 @@ private:
 
     // Message-thread-deferred repaint trigger for the inert-dim wash -- see
     // the constructor comment on why this can't touch `target` directly from
-    // parameterChanged().
+    // parameterChanged(). `repaintCounterForTest`, when set, is bumped every
+    // time the deferred repaint actually fires, so a test can observe "was
+    // the wash-painting component ever told to repaint" without relying on
+    // isRouteDimmedForTest's live-state read (which can't distinguish a
+    // correct live value from a stale one still on screen -- see
+    // modMatrixDimWashRepaintTest).
     struct InertGateWatcher : public juce::AudioProcessorValueTreeState::Listener,
                               private juce::AsyncUpdater
     {
         juce::Component* target = nullptr;
+        int* repaintCounterForTest = nullptr;
 
     private:
         void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
-        void handleAsyncUpdate() override { if (target != nullptr) target->repaint(); }
+        void handleAsyncUpdate() override
+        {
+            if (target != nullptr)
+                target->repaint();
+            if (repaintCounterForTest != nullptr)
+                ++(*repaintCounterForTest);
+        }
     };
 
     // Nested (not a lambda/std::function member) so paint() has zero extra
@@ -765,6 +809,7 @@ private:
     AssignKind assignKind = AssignKind::dest;
     std::set<int> revealedRoutes;
     InertGateWatcher inertWatcher;
+    int contentRepaintCountForTest = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)
 };

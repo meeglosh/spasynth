@@ -13650,6 +13650,107 @@ namespace
         }
     }
 
+    // Tester report (Paul): "Assign manually from dropdown list a modulator
+    // and modulation source. Note that the modulator is greyed out until you
+    // hover over it, at which point it lights up." Root cause: MatrixPanel's
+    // dim wash (paintInertRows, painted over the rows by RowsHost::
+    // paintOverChildren) is only ever repainted by explicitly calling
+    // content.repaint() -- and before this fix, the ONLY thing that did that
+    // was InertGateWatcher listening to chaos::syncToBpm. Picking a route's
+    // source/dest from its dropdown writes the underlying parameter (via
+    // ComboBoxAttachment) and the combo repaints ITSELF (to show the new
+    // selected text), but nothing ever told `content` to repaint, so the
+    // stale dim wash from before the pick stayed on screen until something
+    // UNRELATED forced a wider repaint -- e.g. the hover highlight Paul
+    // describes, which repaints the row's combo again and, incidentally,
+    // drags the ancestor repaint of `content`'s paintOverChildren along with
+    // it.
+    //
+    // isRouteDimmedForTest can't catch this on its own: it re-reads the
+    // combos' live selection every call, so it always reports the CORRECT
+    // (undimmed) answer regardless of whether the on-screen wash was ever
+    // actually told to redraw -- that's exactly why this test also checks
+    // getContentRepaintCountForTest(), a counter that only advances when the
+    // component that PAINTS the wash (RowsHost `content`) is genuinely asked
+    // to repaint. A stale-paint regression (content.repaint() never called)
+    // shows up here as the counter NOT advancing even though
+    // isRouteDimmedForTest would already read correctly -- modelling "only
+    // the region JUCE was told to repaint gets redrawn" without needing to
+    // depend on real OS/peer paint timing (which the existing
+    // paintRegionRegressionTest notes JUCE doesn't expose directly either).
+    static void modMatrixDimWashRepaintTest()
+    {
+        std::cout << "modMatrixDimWashRepaintTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        const auto cutoffDestChoice = params::modDestIndex (id::filter1Cutoff) + 1;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+        {
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            for (auto* child : c.getChildren())
+                findParts (*child);
+        };
+        findParts (*editor);
+        expect (matrixPanel != nullptr, "matrix panel found (dim wash repaint test)");
+        if (matrixPanel == nullptr)
+            return;
+
+        const auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (50); };
+
+        // Row 0 starts fully empty (both None) -- dimmed, and the fixture's
+        // very first construction already counts as one legitimate repaint
+        // (InertGateWatcher fires once for each listener add's initial
+        // state in some JUCE versions, and the constructor's own layout);
+        // baseline off whatever count exists right now rather than
+        // assuming 0.
+        pump();
+        expect (matrixPanel->isRouteDimmedForTest (0), "row 0 starts dimmed (both halves None)");
+        const int baseline = matrixPanel->getContentRepaintCountForTest();
+
+        // Pick DEST from the dropdown exactly as a user would: this is the
+        // real ComboBox::setSelectedId(sendNotificationSync) path via
+        // simulateUserComboPick, going through the same GestureGate/
+        // ComboBoxAttachment/APVTS write a live click does.
+        matrixPanel->simulateUserComboPick (0, false /* dest */, cutoffDestChoice);
+        pump();
+        expect (matrixPanel->isRouteDimmedForTest (0),
+                "row 0 still dimmed after DEST only (source still None) -- live state is correct");
+        expect (matrixPanel->getContentRepaintCountForTest() > baseline,
+                "FIX: picking DEST alone still repaints the wash-painting component "
+                "(the row's dim reason changed even though it's still dimmed)");
+        const int afterDestOnly = matrixPanel->getContentRepaintCountForTest();
+
+        // Pick SOURCE too -- the route is now complete, so the row should
+        // un-dim, and the wash-painting component must be told to repaint so
+        // that shows up ON SCREEN without needing an unrelated hover.
+        matrixPanel->simulateUserComboPick (0, true /* source */, (int) params::ModSource::lfo2);
+        pump();
+        expect (! matrixPanel->isRouteDimmedForTest (0), "row 0 reads undimmed once both halves are real");
+        expect (matrixPanel->getContentRepaintCountForTest() > afterDestOnly,
+                "FIX: completing the route repaints the wash-painting component -- "
+                "REVERTS to failing (stale paint) if content.repaint() is only ever "
+                "wired to chaos::syncToBpm and not to the route's own source/dest params");
+        const int afterComplete = matrixPanel->getContentRepaintCountForTest();
+
+        // Reverse (brief step 3): clearing one half back to None must dim
+        // the row again, and must repaint just as promptly.
+        matrixPanel->simulateUserComboPick (0, true /* source */, spa::ui::kNoneRouteChoiceIndex);
+        pump();
+        expect (matrixPanel->isRouteDimmedForTest (0), "row 0 dims again once SOURCE is cleared back to None");
+        expect (matrixPanel->getContentRepaintCountForTest() > afterComplete,
+                "FIX: clearing a half repaints the wash-painting component immediately");
+    }
+
     // Dedicated coverage for Phil's two-button follow-up (see
     // MatrixPanel::AssignKind), on top of what assignModeTest's cases
     // already exercise: the pure state-machine table via the real editor's
@@ -21440,6 +21541,7 @@ int main (int argc, char* argv[])
     RUN (modTremVibNoLongerShowChorusTest);
     RUN (fxPanelDisplayMinimumHeightTest);
     RUN (fxPanelCaptionFitsColumnTest);
+    RUN (modMatrixDimWashRepaintTest);
 
    #undef RUN
 

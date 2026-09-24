@@ -24,6 +24,11 @@
   and the knobs are larger. Knob labels inside each effect tab now read
   RATE, DEPTH, MIX and so on, since the tab already names the effect;
   automation names in your DAW are unchanged.
+- Fixed a mod matrix display bug reported by one of our testers: when you
+  pick a source and destination from the menus, the row now lights up
+  straight away instead of staying greyed out until you move the mouse over
+  it. The assignment was always working; only the row's own display was
+  slow to catch up.
 
 ## 1.0.24
 

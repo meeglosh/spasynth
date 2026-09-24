@@ -31,6 +31,13 @@ public:
 protected:
     virtual void paintDisplay (juce::Graphics&, juce::Rectangle<float>) = 0;
 
+    // Subclasses that keep an idle animation running (a scrolling trace, a
+    // travelling playhead) override this so the 24Hz timer keeps repainting
+    // while it's true, paired with isShowing() so a hidden tab never costs
+    // anything. Default false preserves every existing display's behaviour
+    // (repaint only on a watched-parameter change, or while isLive()).
+    virtual bool wantsAnimation() const { return false; }
+
     bool isLive() const;   // voices currently sounding
 
     juce::AudioProcessorValueTreeState& apvts;
@@ -193,15 +200,29 @@ private:
 class FXDisplay : public DisplayComponent
 {
 public:
-    enum class Kind { distortion, chorus, delay, reverb, eq };
+    // mod = phaser/flanger (fxMod section); tremVib = tremolo+vibrato
+    // (fxTremVib section). Both used to be constructed as Kind::chorus by
+    // mistake (SPASynthEditor.cpp), so MOD and TREM/VIB drew the chorus
+    // picture instead of their own -- fixed in 1.0.25.
+    enum class Kind { distortion, chorus, delay, reverb, eq, mod, tremVib };
 
-    FXDisplay (juce::AudioProcessorValueTreeState&, Kind);
+    // telemetry: optional (nullptr keeps the pre-tempo-plumbing 120 BPM
+    // fallback for synced Delay/Mod/Trem/Vib); FXPanel passes the
+    // processor's real Telemetry so those kinds can read the live resolved
+    // tempo (Telemetry::bpm) instead of guessing.
+    FXDisplay (juce::AudioProcessorValueTreeState&, Kind, const dsp::Telemetry* telemetry = nullptr);
 
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+    bool wantsAnimation() const override;
     static juce::StringArray watchedFor (Kind);
 
     const Kind kind;
+    // The bpm last used to paint a synced Delay/Mod/Trem/Vib -- lets
+    // wantsAnimation() notice a tempo change (host tempo automation, tap
+    // tempo) and mark itself dirty even while the effect itself is
+    // disabled/static, without repainting every 24Hz tick just to poll it.
+    mutable float lastDrawnBpm = -1.0f;
 };
 
 // Stereo output peak meter for the header, fed by telemetry.

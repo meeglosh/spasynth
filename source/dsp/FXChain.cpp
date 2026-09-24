@@ -31,6 +31,7 @@ void FXChain::prepare (double newSampleRate, int maxBlockSize)
     delayBuffer.clear();
     delayWritePos = 0;
     delaySamplesSmoothed.reset (sampleRate, 0.1);
+    delayWidthSmoothed.reset (sampleRate, 0.05);
 
     reverb.prepare (sampleRate, maxBlockSize);
 
@@ -196,6 +197,7 @@ void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)
     const auto targetSamples = (float) juce::jlimit (
         32.0, (double) delayBuffer.getNumSamples() - 8.0, timeSeconds * sampleRate);
     delaySamplesSmoothed.setTargetValue (targetSamples);
+    delayWidthSmoothed.setTargetValue (juce::jlimit (0.0f, 1.0f, p.delayWidth));
 
     const auto bufLen = delayBuffer.getNumSamples();
     auto* bufL = delayBuffer.getWritePointer (0);
@@ -219,9 +221,27 @@ void FXChain::processDelay (juce::AudioBuffer<float>& buffer, const Params& p)
         const auto outL = bufL[r0] + frac * (bufL[r1] - bufL[r0]);
         const auto outR = bufR[r0] + frac * (bufR[r1] - bufR[r0]);
 
-        // Ping-pong crosses the feedback paths.
-        bufL[delayWritePos] = left[i] + (p.delayPingPong ? outR : outL) * p.delayFeedback;
-        bufR[delayWritePos] = right[i] + (p.delayPingPong ? outL : outR) * p.delayFeedback;
+        // Ping-pong crosses the feedback paths. WIDTH (only meaningful with
+        // ping-pong on) blends the INJECTION from today's behaviour (w=0:
+        // left into the left line, right into the right line) to true
+        // ping-pong (w=1: the mono sum injected into the left line only, so
+        // a centred source actually bounces instead of arriving on both
+        // sides at once). Equal-power (0.70710678 = 1/sqrt(2)) so a centred
+        // source keeps roughly the same echo energy across the width range.
+        // Width is a no-op when ping-pong is off -- inL/inR just equal
+        // left[i]/right[i], bit-identical to the pre-1.0.25 algorithm.
+        float inL = left[i];
+        float inR = right[i];
+        if (p.delayPingPong)
+        {
+            const auto w = delayWidthSmoothed.getNextValue();
+            const auto monoSum = (left[i] + right[i]) * 0.70710678f;
+            inL = (1.0f - w) * left[i] + w * monoSum;
+            inR = (1.0f - w) * right[i];
+        }
+
+        bufL[delayWritePos] = inL + (p.delayPingPong ? outR : outL) * p.delayFeedback;
+        bufR[delayWritePos] = inR + (p.delayPingPong ? outL : outR) * p.delayFeedback;
 
         left[i] += outL * p.delayMix;
         right[i] += outR * p.delayMix;

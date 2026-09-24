@@ -14919,6 +14919,224 @@ namespace
         }
     }
 
+    // Bug (1.0.25 follow-up): FXPanel::resized() gave the control grid its
+    // full ideal height unconditionally and the display whatever was left,
+    // down to nothing -- DELAY was a ~30px sliver and MOD/TREM-VIB were 0x0
+    // at base editor size, making the whole FX display redesign invisible.
+    // Fixed in two parts: (1) FXPanel::resized() reserves the display a
+    // guaranteed minimum share BEFORE the control grid; (2) SectionPanel's
+    // dense=true packing (FXPanel-only opt-in -- see its own comment) packs
+    // each control at its own natural pixel width instead of a blanket
+    // 2-cell grid, so DIST/CHORUS/DELAY/REVERB all fit their whole control
+    // set in ONE row and MOD/TREM-VIB fit in TWO (was 1/2/2/2/3/3), which is
+    // what actually gets both the display AND the knobs to a healthy size
+    // instead of trading one for the other. This proves every FXPanel's
+    // display AND knob diameter clear their targets at the actual shipped
+    // base window size, for every FXPanel tab, not just one.
+    static void fxPanelDisplayMinimumHeightTest()
+    {
+        std::cout << "fxPanelDisplayMinimumHeightTest\n";
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        juce::TabbedComponent* fxTabs = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c))
+                if (t->getTabNames().contains ("TREM/VIB"))
+                    fxTabs = t;
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+
+        expect (fxTabs != nullptr, "fxTabs found");
+        if (fxTabs == nullptr)
+            return;
+
+        // DIST/CHORUS/DELAY/REVERB fit their whole control set in ONE dense
+        // row (stripping the redundant section-word prefix off every
+        // caption -- "CHORUS RATE" -> "RATE" etc, panel title already names
+        // the effect -- freed enough width for REVERB, the densest section
+        // at 9 knobs plus a toggle and a combo, to join them; it used to be
+        // grouped with MOD/TREM-VIB here), so their display gets
+        // FXPanel::resized()'s full ~70-83px share and their knobs sit at
+        // the bare-mode cellHeight cap (43px diameter). MOD/TREM-VIB still
+        // need two rows (TREM/VIB's own two GROUPS, trem then vib, split
+        // naturally onto the two rows), so both targets are lower --
+        // restated here (not read from the source) so this test states the
+        // contract independently rather than just echoing the
+        // implementation.
+        const auto isMultiRow = [] (const juce::String& tab)
+        { return tab == "MOD" || tab == "TREM/VIB"; };
+        const auto minDisplayHeightFor = [&] (const juce::String& tab)
+        { return isMultiRow (tab) ? 48 : 70; };
+        const auto minKnobDiameterFor = [&] (const juce::String& tab)
+        { return isMultiRow (tab) ? 30 : 36; };
+
+        for (const auto& tabName : { "DIST", "CHORUS", "DELAY", "REVERB", "MOD", "TREM/VIB" })
+        {
+            const auto minDisplayHeight = minDisplayHeightFor (tabName);
+            const auto minKnobDiameter = minKnobDiameterFor (tabName);
+            const auto index = fxTabs->getTabNames().indexOf (tabName);
+            expect (index >= 0, juce::String (tabName) + " tab found");
+            if (index < 0)
+                continue;
+
+            auto* panel = fxTabs->getTabContentComponent (index);
+            expect (panel != nullptr, juce::String (tabName) + " panel content found");
+            if (panel == nullptr)
+                continue;
+
+            spa::ui::FXDisplay* display = nullptr;
+            juce::Slider* firstKnob = nullptr;
+            std::function<void (juce::Component&)> findParts = [&] (juce::Component& c)
+            {
+                if (display == nullptr)
+                    display = dynamic_cast<spa::ui::FXDisplay*> (&c);
+                if (firstKnob == nullptr)
+                    firstKnob = dynamic_cast<juce::Slider*> (&c);
+                for (auto* child : c.getChildren())
+                    findParts (*child);
+            };
+            findParts (*panel);
+
+            expect (display != nullptr, juce::String (tabName) + " FXDisplay found");
+            expect (firstKnob != nullptr, juce::String (tabName) + " a knob was found to measure");
+            if (display == nullptr || firstKnob == nullptr)
+                continue;
+
+            std::cout << "  " << tabName << ": display " << display->getWidth() << "x"
+                      << display->getHeight() << ", first knob " << firstKnob->getWidth() << "x"
+                      << firstKnob->getHeight() << "\n";
+
+            expect (display->getHeight() >= minDisplayHeight,
+                    juce::String (tabName) + " FXDisplay height (" + juce::String (display->getHeight())
+                        + ") is at least the target minimum (" + juce::String (minDisplayHeight) + ")");
+            expect (display->getWidth() > 0, juce::String (tabName) + " FXDisplay has nonzero width");
+
+            // Knob bounds are square (SectionPanel centres a min(width,
+            // height) circle in them); the SMALLER dimension is what
+            // actually caps the drawn knob's diameter.
+            const auto knobDiameter = juce::jmin (firstKnob->getWidth(), firstKnob->getHeight());
+            expect (knobDiameter >= minKnobDiameter,
+                    juce::String (tabName) + " knob diameter (" + juce::String (knobDiameter)
+                        + ") is at least the target minimum (" + juce::String (minKnobDiameter) + ")");
+        }
+    }
+
+    // Bug (review, 1.0.25 follow-up): the first attempt at fixing caption
+    // clipping (SectionPanel::denseCaptionWidth) padded only +4px, which
+    // under-shot by a wide margin -- juce::Label has a BUILT-IN
+    // BorderSize<int>{1,5,1,5} (juce_Label.h) that eats 5px off EACH side
+    // of its own bounds before laying out text, 10px total that fix never
+    // accounted for. So captions kept eliding ("DELAY T...", "CHORUS...",
+    // "REVERB ..." x9, "MOD DE..." for both Depth and Delay, "TREM RA...")
+    // even after that "fix" shipped, and NOTHING caught it: fxPanelLabel
+    // ClippingTest only checks a label's HEIGHT and its bottom position,
+    // never whether its TEXT actually fits its WIDTH. This is exactly that
+    // missing coverage -- for every FXPanel at base editor size, every
+    // caption Label's real text width (measured in its own actual font,
+    // the same way GlyphArrangement/comboTextFitsCellTest measure it) must
+    // fit inside its own border-adjusted width, and every ToggleButton's
+    // own text must fit inside its own pill-adjusted width, mirroring
+    // SPASynthLookAndFeel::drawToggleButton's exact geometry.
+    static void fxPanelCaptionFitsColumnTest()
+    {
+        std::cout << "fxPanelCaptionFitsColumnTest\n";
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        juce::TabbedComponent* fxTabs = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c))
+                if (t->getTabNames().contains ("TREM/VIB"))
+                    fxTabs = t;
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+
+        expect (fxTabs != nullptr, "fxTabs found");
+        if (fxTabs == nullptr)
+            return;
+
+        int labelsChecked = 0, togglesChecked = 0;
+        for (const auto& tabName : { "DIST", "CHORUS", "DELAY", "REVERB", "MOD", "TREM/VIB" })
+        {
+            const auto index = fxTabs->getTabNames().indexOf (tabName);
+            expect (index >= 0, juce::String (tabName) + " tab found");
+            if (index < 0)
+                continue;
+
+            auto* panel = fxTabs->getTabContentComponent (index);
+            expect (panel != nullptr, juce::String (tabName) + " panel content found");
+            if (panel == nullptr)
+                continue;
+
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (auto* lbl = dynamic_cast<juce::Label*> (&c))
+                {
+                    // Skip a ComboBox's OWN internal text Label (a direct
+                    // child of the ComboBox) -- it follows LookAndFeel_V2::
+                    // positionComboBoxText's own formula, already checked
+                    // by comboTextFitsCellTest against the LONGEST choice;
+                    // this test is about OUR OWN caption Labels underneath
+                    // each knob/combo.
+                    if (dynamic_cast<juce::ComboBox*> (lbl->getParentComponent()) == nullptr
+                        && lbl->getText().isNotEmpty())
+                    {
+                        ++labelsChecked;
+                        constexpr int labelBorderPad = 10;   // juce::Label's default L+R border (5+5)
+                        const auto available = (float) lbl->getWidth() - labelBorderPad;
+                        const auto textW = juce::GlyphArrangement::getStringWidth (lbl->getFont(),
+                                                                                   lbl->getText());
+                        if (available < textW)
+                            std::cout << "  " << tabName << " caption '" << lbl->getText()
+                                      << "' needs " << textW << "px, has " << available << "px\n";
+                        expect (available >= textW,
+                                juce::String (tabName) + " caption '" + lbl->getText()
+                                    + "' fits its own column (" + juce::String (textW, 1)
+                                    + "px text needed, " + juce::String (available, 1) + "px available)");
+                    }
+                }
+                else if (auto* tb = dynamic_cast<juce::ToggleButton*> (&c))
+                {
+                    ++togglesChecked;
+                    // Mirrors SPASynthLookAndFeel::drawToggleButton exactly:
+                    // pillH capped at 14, pillW = pillH*1.9, text starts
+                    // pillW+5 in, drawn with a plain drawText (no wrap/shrink).
+                    constexpr float pillH = 14.0f;
+                    const auto available = (float) tb->getWidth() - (pillH * 1.9f + 5.0f);
+                    const auto textW = juce::GlyphArrangement::getStringWidth (
+                        spa::ui::metrics::smallFont(), tb->getButtonText().toUpperCase());
+                    if (available < textW)
+                        std::cout << "  " << tabName << " toggle '" << tb->getButtonText()
+                                  << "' needs " << textW << "px, has " << available << "px\n";
+                    expect (available >= textW,
+                            juce::String (tabName) + " toggle '" + tb->getButtonText()
+                                + "' fits its own bounds (" + juce::String (textW, 1)
+                                + "px text needed, " + juce::String (available, 1) + "px available)");
+                }
+                for (auto* child : c.getChildren())
+                    walk (*child);
+            };
+            walk (*panel);
+        }
+        expect (labelsChecked > 0, "at least one caption label was checked across all six panels");
+        expect (togglesChecked > 0, "at least one toggle was checked across all six panels");
+    }
+
     // ORGANIC CHAOS display: paints without crashing and actually draws
     // something (not a uniform image) after a chaos-active audio run feeds
     // the telemetry trace ring.
@@ -16295,6 +16513,10 @@ namespace spa::ui
 {
     int waveDisplayPaintCountForTest();
     int chaosDisplayPaintCountForTest();
+    // 1.0.25 FX display redesign: freezes the wall-clock phase FXDisplay's
+    // animated kinds (chorus/delay/mod/tremVib) base their scroll/playhead
+    // on, so a render is deterministic. See its definition in Displays.cpp.
+    void setFxDisplayFrozenMsForTest (double ms);
 }
 
 // Bug: WaveDisplay's constructor never subscribed to osc::loopXfade (or,
@@ -18243,6 +18465,726 @@ static void chorusWidthPercentPlumbingTest()
             + juce::String (fiftyVsZero, 3) + ")");
 }
 
+// --- Delay ping-pong WIDTH (1.0.25) -----------------------------------------
+//
+// Ping-pong (fxDelay.pingpong) only ever crossed the FEEDBACK paths; the
+// injection was always left[i]->left line, right[i]->right line. For a
+// mono/centre source (left==right) that makes ping-pong a no-op -- crossing
+// two identical streams produces the same identical streams. WIDTH blends
+// the injection itself from that old behaviour (0) to a true mono-sum-into-
+// one-line bounce (1). See FXChain::processDelay.
+namespace delayWidthTestHelpers
+{
+    using FX = spa::dsp::FXChain;
+
+    // Runs `warmupSamples` of silence through a fresh FXChain so the
+    // per-sample delaySamplesSmoothed/delayWidthSmoothed ramps (linear, sr*
+    // 0.1s and sr*0.05s respectively) fully settle to their exact target
+    // -- not just close to it -- before the impulse, so echo timing is
+    // sample-exact and predictable. Then injects a single one-sample
+    // impulse and renders `renderSamples` more, returning that render.
+    inline void renderImpulseThroughDelay (const FX::Params& p, double sr, int blockSize,
+                                            float impulseL, float impulseR, int renderSamples,
+                                            std::vector<float>& outL, std::vector<float>& outR)
+    {
+        FX fx;
+        fx.prepare (sr, blockSize);
+
+        juce::AudioBuffer<float> buf (2, blockSize);
+
+        // Both smoothers ramp over at most sr*0.1s; a healthy margin over
+        // that in silent blocks settles them exactly (linear ramp, not
+        // asymptotic). Block-aligned (a whole number of blockSize blocks)
+        // so the impulse lands at the same absolute sample index here and
+        // in the sample-at-a-time reference implementation below.
+        const int minWarmupSamples = (int) (sr * 0.2) + blockSize;
+        const int warmupBlocks = (minWarmupSamples + blockSize - 1) / blockSize;
+        const int warmupSamples = warmupBlocks * blockSize;
+        int done = 0;
+        while (done < warmupSamples)
+        {
+            buf.clear();
+            fx.process (buf, p);
+            done += blockSize;
+        }
+
+        outL.clear(); outR.clear();
+        outL.reserve ((size_t) renderSamples);
+        outR.reserve ((size_t) renderSamples);
+
+        bool firstBlock = true;
+        int produced = 0;
+        while (produced < renderSamples)
+        {
+            buf.clear();
+            if (firstBlock)
+            {
+                buf.setSample (0, 0, impulseL);
+                buf.setSample (1, 0, impulseR);
+                firstBlock = false;
+            }
+            fx.process (buf, p);
+            for (int s = 0; s < blockSize && produced < renderSamples; ++s, ++produced)
+            {
+                outL.push_back (buf.getSample (0, s));
+                outR.push_back (buf.getSample (1, s));
+            }
+        }
+    }
+
+    // Reference reimplementation of the PRE-1.0.25 processDelay loop
+    // (crossed feedback only, no width blend at all) -- used to pin that
+    // WIDTH 0 %, ping-pong on, is bit-exact to what shipped before this
+    // feature existed. Deliberately duplicated rather than calling
+    // production code, so a regression in the real processDelay's width==0
+    // path cannot silently drag this reference along with it.
+    inline void renderImpulseThroughOldPingPongDelay (const FX::Params& p, double sr,
+                                                        int blockSize, float impulseL,
+                                                        float impulseR, int renderSamples,
+                                                        std::vector<float>& outL,
+                                                        std::vector<float>& outR)
+    {
+        juce::AudioBuffer<float> delayBuf (2, (int) (sr * 4.0) + 8);
+        delayBuf.clear();
+        auto* bufL = delayBuf.getWritePointer (0);
+        auto* bufR = delayBuf.getWritePointer (1);
+        const auto bufLen = delayBuf.getNumSamples();
+        int writePos = 0;
+
+        juce::SmoothedValue<float> delaySamplesSmoothed;
+        delaySamplesSmoothed.reset (sr, 0.1);
+        const auto timeSeconds = p.delaySync
+                               ? spa::params::lfoDivisionBeats (p.delayDivision) * 60.0 / p.bpm
+                               : (double) p.delayTimeMs * 0.001;
+        const auto targetSamples = (float) juce::jlimit (
+            32.0, (double) bufLen - 8.0, timeSeconds * sr);
+        delaySamplesSmoothed.setTargetValue (targetSamples);
+
+        // Must match renderImpulseThroughDelay's block-aligned warmup exactly
+        // (both count silent samples the same way) so the impulse lands at
+        // the identical absolute sample index in both renders.
+        const int minWarmupSamples = (int) (sr * 0.2) + blockSize;
+        const int warmupBlocks = (minWarmupSamples + blockSize - 1) / blockSize;
+        const int warmupSamples = warmupBlocks * blockSize;
+        const int totalSamples = warmupSamples + renderSamples;
+        outL.clear(); outR.clear();
+        outL.reserve ((size_t) renderSamples);
+        outR.reserve ((size_t) renderSamples);
+
+        for (int i = 0; i < totalSamples; ++i)
+        {
+            const float left = (i == warmupSamples) ? impulseL : 0.0f;
+            const float right = (i == warmupSamples) ? impulseR : 0.0f;
+
+            const auto delaySamples = delaySamplesSmoothed.getNextValue();
+            auto readPos = (double) writePos - (double) delaySamples;
+            while (readPos < 0.0) readPos += (double) bufLen;
+            auto r0 = (int) readPos;
+            const auto frac = (float) (readPos - (double) r0);
+            while (r0 >= bufLen) r0 -= bufLen;
+            const auto r1 = (r0 + 1) % bufLen;
+
+            const auto outLv = bufL[r0] + frac * (bufL[r1] - bufL[r0]);
+            const auto outRv = bufR[r0] + frac * (bufR[r1] - bufR[r0]);
+
+            bufL[writePos] = left + (p.delayPingPong ? outRv : outLv) * p.delayFeedback;
+            bufR[writePos] = right + (p.delayPingPong ? outLv : outRv) * p.delayFeedback;
+
+            const auto sampleOutL = left + outLv * p.delayMix;
+            const auto sampleOutR = right + outRv * p.delayMix;
+
+            if (i >= warmupSamples)
+            {
+                outL.push_back (sampleOutL);
+                outR.push_back (sampleOutR);
+            }
+
+            writePos = (writePos + 1) % bufLen;
+        }
+    }
+
+    inline FX::Params delayBaseParams()
+    {
+        FX::Params p;
+        p.delayEnable = true;
+        p.delaySync = false;
+        p.delayTimeMs = 50.0f;      // 2400 samples at 48k
+        p.delayFeedback = 0.5f;
+        p.delayMix = 1.0f;
+        p.delayPingPong = true;
+        p.delayWidth = 1.0f;
+        return p;
+    }
+}
+
+// STEP 0 measurement (see the task brief): mono impulse, ping-pong on,
+// width 1 -> echoes alternate hard L/R; width 0 -> today's pre-1.0.25
+// ping-pong, which is a no-op on a centred/mono source (both channels equal
+// at every echo, because crossing two identical feedback streams changes
+// nothing).
+static void delayPingPongWidthTest()
+{
+    std::cout << "delayPingPongWidthTest\n";
+    using namespace delayWidthTestHelpers;
+
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int delaySamples = 2400;   // 50ms at 48k
+    constexpr int renderSamples = delaySamples * 4 + 200;
+
+    auto echoPeaks = [&] (const std::vector<float>& l, const std::vector<float>& r, int echoIndex)
+    {
+        // Reads within a narrow window around the exact predicted echo
+        // sample (see the derivation in the task's worked-through math:
+        // echo k lands at i = k * delaySamples, sample-exact once the
+        // smoothers are fully settled).
+        const int centre = echoIndex * delaySamples;
+        const int lo = juce::jmax (0, centre - 4);
+        const int hi = juce::jmin ((int) l.size(), centre + 5);
+        juce::AudioBuffer<float> tmp (2, hi - lo);
+        for (int i = lo; i < hi; ++i)
+        {
+            tmp.setSample (0, i - lo, l[(size_t) i]);
+            tmp.setSample (1, i - lo, r[(size_t) i]);
+        }
+        return std::make_pair (tmp.getMagnitude (0, 0, hi - lo), tmp.getMagnitude (1, 0, hi - lo));
+    };
+
+    // --- width 1: hard alternating bounce ---
+    {
+        auto p = delayBaseParams();
+        p.delayWidth = 1.0f;
+        std::vector<float> l, r;
+        renderImpulseThroughDelay (p, sr, blockSize, 1.0f, 1.0f, renderSamples, l, r);
+
+        const auto [e1l, e1r] = echoPeaks (l, r, 1);
+        const auto [e2l, e2r] = echoPeaks (l, r, 2);
+
+        // Both alternating sides have measurable energy (echo 1 on the left,
+        // echo 2 on the right) -- the OTHER channel at each echo is
+        // predicted to be exactly 0 (a fully isolated mono-sum bounce at
+        // width 1), so this only checks the loud side of each.
+        expect (e1l > 1.0e-4f && e2r > 1.0e-4f, "width=1: both echoes have measurable energy "
+                "(echo1 L=" + juce::String (e1l, 6) + " R=" + juce::String (e1r, 6)
+                + ", echo2 L=" + juce::String (e2l, 6) + " R=" + juce::String (e2r, 6) + ")");
+        expect (e1l > e1r * 10.0f, "width=1 echo 1 is predominantly LEFT (L="
+                + juce::String (e1l, 6) + " R=" + juce::String (e1r, 6) + ")");
+        expect (e2r > e2l * 10.0f, "width=1 echo 2 is predominantly RIGHT, i.e. it bounced ("
+                "L=" + juce::String (e2l, 6) + " R=" + juce::String (e2r, 6) + ")");
+    }
+
+    // --- width 0: matches today's (pre-1.0.25) pingpong-on-mono behaviour --
+    // no bounce, both channels track together at every echo.
+    {
+        auto p = delayBaseParams();
+        p.delayWidth = 0.0f;
+        std::vector<float> l, r;
+        renderImpulseThroughDelay (p, sr, blockSize, 1.0f, 1.0f, renderSamples, l, r);
+
+        const auto [e1l, e1r] = echoPeaks (l, r, 1);
+        expect (e1l > 1.0e-4f && e1r > 1.0e-4f, "width=0: echo 1 has measurable energy on "
+                "both channels (L=" + juce::String (e1l, 6) + " R=" + juce::String (e1r, 6) + ")");
+        expect (std::abs (e1l - e1r) < 1.0e-5f, "width=0 on a mono source: L and R echo peaks "
+                "are equal, i.e. ping-pong is still a no-op here, as before this feature "
+                "(L=" + juce::String (e1l, 6) + " R=" + juce::String (e1r, 6) + ")");
+    }
+}
+
+// Ping-pong OFF: WIDTH must have zero effect -- sample-exact identical
+// output whether WIDTH is 0 or 1.
+static void delayWidthNoOpWhenPingPongOffTest()
+{
+    std::cout << "delayWidthNoOpWhenPingPongOffTest\n";
+    using namespace delayWidthTestHelpers;
+
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int renderSamples = 2400 * 3;
+
+    auto render = [&] (float width)
+    {
+        auto p = delayBaseParams();
+        p.delayPingPong = false;
+        p.delayWidth = width;
+        std::vector<float> l, r;
+        // Hard-left impulse (not mono) so a width bug that leaked through
+        // the disabled gate would be visible even without ping-pong summing.
+        renderImpulseThroughDelay (p, sr, blockSize, 1.0f, 0.0f, renderSamples, l, r);
+        return std::make_pair (l, r);
+    };
+
+    const auto [l0, r0] = render (0.0f);
+    const auto [l1, r1] = render (1.0f);
+
+    // Bit-exact compare via memcmp rather than == on floats (sample-exact
+    // reproducibility is exactly the property under test, so this is
+    // deliberate, not a tolerance-loosening shortcut).
+    bool identical = l0.size() == l1.size() && r0.size() == r1.size()
+                   && std::memcmp (l0.data(), l1.data(), l0.size() * sizeof (float)) == 0
+                   && std::memcmp (r0.data(), r1.data(), r0.size() * sizeof (float)) == 0;
+
+    expect (identical, "ping-pong OFF: WIDTH 0 and WIDTH 1 render sample-exact identical output");
+}
+
+// WIDTH 0 with ping-pong ON must be bit-exact to the pre-1.0.25 algorithm
+// (crossed feedback only, direct left/right injection, no width blend at
+// all) -- reimplemented independently above as
+// renderImpulseThroughOldPingPongDelay.
+static void delayWidthZeroMatchesPreChangeAlgorithmTest()
+{
+    std::cout << "delayWidthZeroMatchesPreChangeAlgorithmTest\n";
+    using namespace delayWidthTestHelpers;
+
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr int renderSamples = 2400 * 3;
+
+    auto p = delayBaseParams();
+    p.delayWidth = 0.0f;
+
+    std::vector<float> newL, newR, oldL, oldR;
+    renderImpulseThroughDelay (p, sr, blockSize, 1.0f, 0.35f, renderSamples, newL, newR);
+    renderImpulseThroughOldPingPongDelay (p, sr, blockSize, 1.0f, 0.35f, renderSamples, oldL, oldR);
+
+    bool identical = newL.size() == oldL.size() && newR.size() == oldR.size()
+                   && std::memcmp (newL.data(), oldL.data(), newL.size() * sizeof (float)) == 0
+                   && std::memcmp (newR.data(), oldR.data(), newR.size() * sizeof (float)) == 0;
+
+    expect (identical, "WIDTH 0 %, ping-pong on: bit-exact to the independently reimplemented "
+            "pre-1.0.25 algorithm");
+}
+
+// ============================================================================
+// 1.0.25 FX display redesign (source/ui/Displays.cpp, FXDisplay).
+// ============================================================================
+namespace fxDisplayTestHelpers
+{
+    // Renders the FXDisplay for kind directly (bypassing the FX tab strip
+    // and its layout, which at the base editor size gives MOD/TREM-VIB's
+    // two-row control grids priority over their display -- see the 1.0.25
+    // report). On the desktop and visible so isShowing() is true, matching
+    // what the animated kinds need to compute a phase; frozen via
+    // setFxDisplayFrozenMsForTest for a deterministic render.
+    static juce::Image renderFxDisplay (spa::SPASynthProcessor& proc, spa::ui::FXDisplay::Kind kind,
+                                 int w = 400, int h = 90)
+    {
+        spa::ui::FXDisplay display (proc.getAPVTS(), kind);
+        display.setSize (w, h);
+        display.addToDesktop (0);
+        display.setVisible (true);
+        juce::Image img (juce::Image::ARGB, w, h, true);
+        juce::Graphics g (img);
+        display.paintEntireComponent (g, false);
+        display.removeFromDesktop();
+        return img;
+    }
+
+    static bool imagesDiffer (const juce::Image& a, const juce::Image& b)
+    {
+        if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+            return true;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt (x, y).getARGB() != b.getPixelAt (x, y).getARGB())
+                    return true;
+        return false;
+    }
+
+    static juce::StringArray paramsForSection (spa::params::Section section)
+    {
+        juce::StringArray ids;
+        for (const auto& def : spa::params::all())
+            if (def.section == section)
+                ids.add (def.id);
+        return ids;
+    }
+
+    // One subscribed-parameter case: paramID gets set to altValue (on top of
+    // the kind's baseline setup), and the render must differ from the
+    // baseline render. extra runs on BOTH the baseline and altered processor
+    // before the param under test is touched -- used for the sync/division
+    // pairs (delay/mod/trem/vib), where a division only matters once its
+    // section's sync is on, and a free rate only matters once it's off.
+    static void expectParamChangesImage (spa::ui::FXDisplay::Kind kind,
+                                  const std::function<void (spa::SPASynthProcessor&)>& baseline,
+                                  const juce::String& paramID, float altValue,
+                                  const std::function<void (spa::SPASynthProcessor&)>& extra = {})
+    {
+        spa::SPASynthProcessor procA;
+        procA.prepareToPlay (48000.0, 512);
+        baseline (procA);
+        if (extra) extra (procA);
+        const auto before = renderFxDisplay (procA, kind);
+
+        spa::SPASynthProcessor procB;
+        procB.prepareToPlay (48000.0, 512);
+        baseline (procB);
+        if (extra) extra (procB);
+        setParam (procB, paramID, altValue);
+        const auto after = renderFxDisplay (procB, kind);
+
+        expect (imagesDiffer (before, after),
+                juce::String ("FXDisplay/") + paramID
+                    + ": changing it while the display is showing visibly changes the render");
+    }
+}
+
+// Bug: FXDisplay::Kind::chorus only read chorusDepth and chorusMix -- RATE,
+// WIDTH, MODE and FEEDBACK moved knobs the product owner turned without the
+// picture reacting at all ("why does the chorus display only change for
+// depth and not the other parameters?"). The DELAY display was worse: it
+// never used the actual delay TIME/DIVISION (fixed spacing regardless), and
+// MOD/TREM-VIB were built as Kind::chorus by MISTAKE in SPASynthEditor.cpp,
+// so those two tabs drew the chorus picture instead of their own. Fixed by
+// giving each kind its own full read of its section's params and its own
+// paint. This test generalises the bug class: for every subscribed param of
+// every redesigned kind, changing it alone must visibly change the render.
+static void fxDisplayParamsReachDisplayTest()
+{
+    std::cout << "fxDisplayParamsReachDisplayTest\n";
+    namespace params = spa::params;
+    namespace id = spa::params::id;
+    using Kind = spa::ui::FXDisplay::Kind;
+    using namespace fxDisplayTestHelpers;
+
+    // A non-round freeze: 1000ms coincided exactly with a whole number of
+    // cycles at several of the round Hz values these sync/division cases
+    // produce (e.g. 2Hz and 4Hz both land back at phase 0 at t=1000ms/
+    // 500ms), which made the LFO-driven MOD/TREM/VIB traces render
+    // identically despite a real underlying parameter change -- a coincidence
+    // of the test's clock choice, not a bug in the display.
+    spa::ui::setFxDisplayFrozenMsForTest (733.0);
+
+    // --- CHORUS ---
+    {
+        auto baseline = [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::chorusEnable, 1.0f);
+            setParam (p, id::fx::chorusRate, 0.8f);
+            setParam (p, id::fx::chorusDepth, 0.3f);
+            setParam (p, id::fx::chorusWidth, 50.0f);
+            setParam (p, id::fx::chorusFeedback, 0.0f);
+            setParam (p, id::fx::chorusMode, 1.0f);
+            setParam (p, id::fx::chorusMix, 0.5f);
+        };
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusEnable, 0.0f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusRate, 3.5f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusDepth, 0.9f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusFeedback, 0.7f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusWidth, 100.0f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusMode, 0.0f);
+        expectParamChangesImage (Kind::chorus, baseline, id::fx::chorusMix, 0.9f);
+
+        const auto watched = paramsForSection (params::Section::fxChorus);
+        const juce::StringArray knownToDisplay { id::fx::chorusEnable, id::fx::chorusRate,
+            id::fx::chorusDepth, id::fx::chorusFeedback, id::fx::chorusWidth,
+            id::fx::chorusMode, id::fx::chorusMix };
+        for (const auto& p : watched)
+            expect (knownToDisplay.contains (p),
+                    "CHORUS panel param " + p + " is read by the chorus display");
+    }
+
+    // --- DELAY ---
+    {
+        auto baseline = [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delaySync, 0.0f);
+            setParam (p, id::fx::delayTime, 300.0f);
+            setParam (p, id::fx::delayFeedback, 0.4f);
+            setParam (p, id::fx::delayPingPong, 0.0f);
+            setParam (p, id::fx::delayWidth, 50.0f);
+            setParam (p, id::fx::delayMix, 0.5f);
+        };
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayEnable, 0.0f);
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayTime, 900.0f);
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayFeedback, 0.8f);
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayMix, 0.9f);
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayPingPong, 1.0f);
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delaySync, 1.0f);
+        // DIVISION only matters once SYNC is on; WIDTH only matters once
+        // PING PONG is on (both the DSP's own rule -- see FXChain::
+        // processDelay -- and the display's, deliberately).
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayDivision, 9.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::delaySync, 1.0f); });
+        expectParamChangesImage (Kind::delay, baseline, id::fx::delayWidth, 100.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::delayPingPong, 1.0f); });
+
+        const auto watched = paramsForSection (params::Section::fxDelay);
+        const juce::StringArray knownToDisplay { id::fx::delayEnable, id::fx::delaySync,
+            id::fx::delayTime, id::fx::delayDivision, id::fx::delayFeedback,
+            id::fx::delayPingPong, id::fx::delayWidth, id::fx::delayMix };
+        for (const auto& p : watched)
+            expect (knownToDisplay.contains (p),
+                    "DELAY panel param " + p + " is read by the delay display");
+    }
+
+    // --- MOD ---
+    {
+        auto baseline = [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::modEnable, 1.0f);
+            setParam (p, id::fx::modType, 0.0f);
+            setParam (p, id::fx::modRate, 0.5f);
+            setParam (p, id::fx::modSync, 0.0f);
+            setParam (p, id::fx::modDivision, 6.0f);
+            setParam (p, id::fx::modDepth, 0.5f);
+            setParam (p, id::fx::modFeedback, 0.3f);
+            setParam (p, id::fx::modStages, 2.0f);
+            setParam (p, id::fx::modCentre, 800.0f);
+            setParam (p, id::fx::modManual, 3.0f);
+            setParam (p, id::fx::modWidth, 0.5f);
+            setParam (p, id::fx::modMix, 0.5f);
+        };
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modEnable, 0.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modType, 1.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modRate, 4.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modDepth, 0.95f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modFeedback, 0.8f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modStages, 4.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modCentre, 3000.0f);
+        // MOD DELAY (modManual) only feeds the flanger's comb spacing --
+        // the phaser ignores it -- so this case needs the flanger engaged.
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modManual, 15.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::modType, 1.0f); });
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modWidth, 1.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modMix, 0.95f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modSync, 1.0f);
+        expectParamChangesImage (Kind::mod, baseline, id::fx::modDivision, 9.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::modSync, 1.0f); });
+
+        const auto watched = paramsForSection (params::Section::fxMod);
+        const juce::StringArray knownToDisplay { id::fx::modEnable, id::fx::modType,
+            id::fx::modRate, id::fx::modSync, id::fx::modDivision, id::fx::modDepth,
+            id::fx::modFeedback, id::fx::modStages, id::fx::modCentre, id::fx::modManual,
+            id::fx::modWidth, id::fx::modMix };
+        for (const auto& p : watched)
+            expect (knownToDisplay.contains (p),
+                    "MOD panel param " + p + " is read by the mod display");
+    }
+
+    // --- TREM/VIB ---
+    {
+        auto baseline = [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::tremEnable, 1.0f);
+            setParam (p, id::fx::tremRate, 5.0f);
+            setParam (p, id::fx::tremSync, 0.0f);
+            setParam (p, id::fx::tremDivision, 6.0f);
+            setParam (p, id::fx::tremDepth, 0.5f);
+            setParam (p, id::fx::tremShape, 0.0f);
+            setParam (p, id::fx::tremStereo, 0.0f);
+            setParam (p, id::fx::tremMix, 1.0f);
+            setParam (p, id::fx::vibEnable, 1.0f);
+            setParam (p, id::fx::vibRate, 5.0f);
+            setParam (p, id::fx::vibSync, 0.0f);
+            setParam (p, id::fx::vibDivision, 6.0f);
+            setParam (p, id::fx::vibDepth, 0.4f);
+            setParam (p, id::fx::vibMix, 1.0f);
+        };
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremEnable, 0.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremRate, 15.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremDepth, 0.95f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremShape, 2.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremStereo, 1.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremMix, 0.2f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremSync, 1.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::tremDivision, 9.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::tremSync, 1.0f); });
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibEnable, 0.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibRate, 12.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibDepth, 0.95f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibMix, 0.2f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibSync, 1.0f);
+        expectParamChangesImage (Kind::tremVib, baseline, id::fx::vibDivision, 9.0f,
+                                 [] (spa::SPASynthProcessor& p) { setParam (p, id::fx::vibSync, 1.0f); });
+
+        const auto watched = paramsForSection (params::Section::fxTremVib);
+        const juce::StringArray knownToDisplay { id::fx::tremEnable, id::fx::tremRate,
+            id::fx::tremSync, id::fx::tremDivision, id::fx::tremDepth, id::fx::tremShape,
+            id::fx::tremStereo, id::fx::tremMix, id::fx::vibEnable, id::fx::vibRate,
+            id::fx::vibSync, id::fx::vibDivision, id::fx::vibDepth, id::fx::vibMix };
+        for (const auto& p : watched)
+            expect (knownToDisplay.contains (p),
+                    "TREM/VIB panel param " + p + " is read by the trem/vib display");
+    }
+
+    spa::ui::setFxDisplayFrozenMsForTest (-1.0);   // release the freeze for later tests
+}
+
+// Bug (product owner): "The visual should shift to left/right taps when in
+// ping pong mode." With ping-pong on and width 100%, echo 1 (odd) must land
+// entirely in the upper (L) half and echo 2 (even) entirely in the lower (R)
+// half -- see FXChain::processDelay's comment on why echo 1 is left, echo 2
+// right. With ping-pong off, taps must straddle the centre (no lane split).
+static void delayDisplayPingPongLayoutTest()
+{
+    std::cout << "delayDisplayPingPongLayoutTest\n";
+    namespace id = spa::params::id;
+    using Kind = spa::ui::FXDisplay::Kind;
+    using namespace fxDisplayTestHelpers;
+
+    spa::ui::setFxDisplayFrozenMsForTest (500.0);
+
+    constexpr int w = 400, h = 90;
+
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::fx::delayEnable, 1.0f);
+        setParam (proc, id::fx::delaySync, 0.0f);
+        setParam (proc, id::fx::delayTime, 250.0f);
+        setParam (proc, id::fx::delayFeedback, 0.6f);
+        setParam (proc, id::fx::delayMix, 0.9f);
+        setParam (proc, id::fx::delayPingPong, 1.0f);
+        setParam (proc, id::fx::delayWidth, 100.0f);
+
+        const auto img = renderFxDisplay (proc, Kind::delay, w, h);
+        const auto bg = img.getPixelAt (0, h / 2);   // background/outline row, not accent-coloured
+
+        bool upperLit = false, lowerLit = false;
+        for (int y = 4; y < h / 2 - 6; ++y)
+            for (int x = 0; x < w; ++x)
+                if (img.getPixelAt (x, y).getARGB() != bg.getARGB())
+                    upperLit = true;
+        for (int y = h / 2 + 6; y < h - 4; ++y)
+            for (int x = 0; x < w; ++x)
+                if (img.getPixelAt (x, y).getARGB() != bg.getARGB())
+                    lowerLit = true;
+
+        expect (upperLit, "ping-pong on, width 100%: something is drawn in the upper (L) half");
+        expect (lowerLit, "ping-pong on, width 100%: something is drawn in the lower (R) half");
+    }
+
+    // Ping-pong OFF: taps must straddle the centre line, not sit in one lane.
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::fx::delayEnable, 1.0f);
+        setParam (proc, id::fx::delaySync, 0.0f);
+        setParam (proc, id::fx::delayTime, 250.0f);
+        setParam (proc, id::fx::delayFeedback, 0.6f);
+        setParam (proc, id::fx::delayMix, 0.9f);
+        setParam (proc, id::fx::delayPingPong, 0.0f);
+
+        const auto img = renderFxDisplay (proc, Kind::delay, w, h);
+        // Find any column where BOTH halves are lit -- a tap bar straddling
+        // the centre -- rather than assuming a tap's x position (the one-
+        // sided decay envelope curve/fill alone lights only the upper half
+        // over most of its span, so this must find the SAME column lit on
+        // both sides, not "above lit somewhere, below lit somewhere else").
+        bool above = false, below = false;
+        for (int x = 0; x < w && ! (above && below); ++x)
+        {
+            bool a = false, b = false;
+            for (int y = 4; y < h / 2 - 1; ++y)
+                if (img.getPixelAt (x, y).getAlpha() > 60) { a = true; break; }
+            for (int y = h / 2 + 2; y < h - 4; ++y)
+                if (img.getPixelAt (x, y).getAlpha() > 60) { b = true; break; }
+            if (a && b) { above = true; below = true; }
+        }
+        expect (above && below, "ping-pong off: a tap straddles the centre line rather than "
+                "sitting in one lane (above=" + juce::String ((int) above)
+                + " below=" + juce::String ((int) below) + ")");
+    }
+
+    // WIDTH crossfades the lane separation itself (0% = stacked at centre,
+    // 100% = fully separated) -- not just "something above, something
+    // below", which alternating taps already produce at width 0. The lit
+    // region's topmost pixel must sit further from the centre row at width
+    // 100% than at width 0%.
+    {
+        // A deliberately LOW mix/feedback keeps the first tap's bar short
+        // (well clear of the top edge at either width), so the measured
+        // offset is the lane shift itself, not clipping against the top of
+        // the display -- a first attempt at this check used the same 0.9
+        // mix/0.6 feedback as the other two cases in this test and the
+        // first tap was already tall enough that width 0% and width 100%
+        // both clipped to the same topmost visible row, masking the bug
+        // this is meant to catch.
+        // Rendered WITHOUT adding to the desktop (isShowing() false), so the
+        // travelling playhead -- drawn full-height regardless of WIDTH --
+        // isn't in the image to confound "topmost lit pixel": a first
+        // attempt found the playhead line at the same y in both renders and
+        // reported no difference, masking the bug this is meant to catch.
+        const auto topmostLitY = [&] (float widthPct)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setParam (proc, id::fx::delayEnable, 1.0f);
+            setParam (proc, id::fx::delaySync, 0.0f);
+            setParam (proc, id::fx::delayTime, 250.0f);
+            setParam (proc, id::fx::delayFeedback, 0.3f);
+            setParam (proc, id::fx::delayMix, 0.25f);
+            setParam (proc, id::fx::delayPingPong, 1.0f);
+            setParam (proc, id::fx::delayWidth, widthPct);
+
+            spa::ui::FXDisplay display (proc.getAPVTS(), Kind::delay);
+            display.setSize (w, h);
+            juce::Image img (juce::Image::ARGB, w, h, true);
+            juce::Graphics g (img);
+            display.paintEntireComponent (g, false);
+
+            // x starts past the dry impulse marker at x~0 and stops short of
+            // the time-readout label's column (top-right corner, width/
+            // ping-pong independent); y starts below the label's own row --
+            // both are drawn regardless of WIDTH and were the first two
+            // things this scan tripped over before they were excluded.
+            for (int y = 14; y < h / 2; ++y)
+                for (int x = 8; x < w - 55; ++x)
+                    if (img.getPixelAt (x, y).getAlpha() > 100)
+                        return y;
+            return h / 2;   // nothing found -- treat as "at the centre"
+        };
+
+        const auto topAt0 = topmostLitY (0.0f);
+        const auto topAt100 = topmostLitY (100.0f);
+        expect (topAt100 < topAt0, "WIDTH crossfades the ping-pong lane separation: the L lane's "
+                "topmost pixel is further from centre at width 100% (y=" + juce::String (topAt100)
+                + ") than at width 0% (y=" + juce::String (topAt0) + ")");
+    }
+
+    spa::ui::setFxDisplayFrozenMsForTest (-1.0);
+}
+
+// Bug: SPASynthEditor.cpp constructed BOTH the MOD tab and the TREM/VIB tab
+// with FXDisplay::Kind::chorus, so they drew the CHORUS picture -- moving
+// chorusDepth changed what the MOD and TREM/VIB tabs showed, while their own
+// knobs did nothing. Fixed with dedicated Kind::mod / Kind::tremVib. This
+// proves the fix stuck: chorusDepth must no longer move either display.
+static void modTremVibNoLongerShowChorusTest()
+{
+    std::cout << "modTremVibNoLongerShowChorusTest\n";
+    namespace id = spa::params::id;
+    using Kind = spa::ui::FXDisplay::Kind;
+    using namespace fxDisplayTestHelpers;
+
+    spa::ui::setFxDisplayFrozenMsForTest (750.0);
+
+    auto renderWithChorusDepth = [] (Kind kind, float chorusDepth)
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::fx::modEnable, 1.0f);
+        setParam (proc, id::fx::tremEnable, 1.0f);
+        setParam (proc, id::fx::vibEnable, 1.0f);
+        setParam (proc, id::fx::chorusEnable, 1.0f);
+        setParam (proc, id::fx::chorusDepth, chorusDepth);
+        return renderFxDisplay (proc, kind);
+    };
+
+    const auto modLow = renderWithChorusDepth (Kind::mod, 0.05f);
+    const auto modHigh = renderWithChorusDepth (Kind::mod, 0.95f);
+    expect (! imagesDiffer (modLow, modHigh),
+            "MOD display no longer reacts to fxChorus.depth (it isn't its own parameter)");
+
+    const auto tvLow = renderWithChorusDepth (Kind::tremVib, 0.05f);
+    const auto tvHigh = renderWithChorusDepth (Kind::tremVib, 0.95f);
+    expect (! imagesDiffer (tvLow, tvHigh),
+            "TREM/VIB display no longer reacts to fxChorus.depth (it isn't its own parameter)");
+
+    spa::ui::setFxDisplayFrozenMsForTest (-1.0);
+}
 
 // UnisonOscillator BLEND: the detuned-voice level relative to the centre.
 // The spread is symmetric in [-1, 1], so it lands exactly on 0 only for an
@@ -19634,6 +20576,238 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Isolation renders of the 1.0.25 FX display redesign, one PNG per
+    // variant, each cropped to just the FXDisplay component (not the whole
+    // panel) so the visuals are easy to compare side by side.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-fx")
+    {
+        namespace id = spa::params::id;
+
+        spa::ui::setFxDisplayFrozenMsForTest (1200.0);   // deterministic phase
+
+        // Built directly (bypassing FXPanel/the tab strip): the base editor
+        // size gives the MOD and TREM/VIB panels' two-row control grids
+        // priority over their display per FXPanel::resized()'s stated
+        // policy ("captions never clip, the scope shrinks, even to
+        // nothing") -- both are 0x0 in the real layout at base window size,
+        // pre-existing and outside this fix's file ownership (ModulePanels.
+        // cpp layout). Constructing the FXDisplay standalone at a fixed
+        // size isolates the paint logic itself for review, independent of
+        // that layout question -- flagged in the report.
+        const auto renderVariant = [] (spa::ui::FXDisplay::Kind kind, const juce::String& fileName,
+                                       std::function<void (spa::SPASynthProcessor&)> setup)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+            setup (proc);
+
+            spa::ui::FXDisplay display (proc.getAPVTS(), kind);
+            display.setSize (420, 90);
+            display.addToDesktop (0);
+            display.setVisible (true);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+            // FXDisplay itself paints no background (displayWell is a bare
+            // centre-line reference only -- see SPASynthLookAndFeel.cpp --
+            // curves render straight on the faceplate surface behind them).
+            // createComponentSnapshot alone would leave the PNG transparent
+            // there, which most viewers show as white and makes the design
+            // impossible to judge; fill with the real faceplate background
+            // first so this crop looks like it will in the actual panel.
+            juce::Image image (juce::Image::ARGB, display.getWidth(), display.getHeight(), true);
+            {
+                juce::Graphics g (image);
+                g.fillAll (spa::ui::currentTheme().background);
+                display.paintEntireComponent (g, false);
+            }
+            const juce::File outDir (juce::String (juce::CharPointer_UTF8 (
+                "/private/tmp/claude-501/-Users-mikejerugim-spasynth/"
+                "b6c6a5ac-f6c3-4835-95b3-5afd54e96332/scratchpad/fx-renders")));
+            outDir.createDirectory();
+            const auto outFile = outDir.getChildFile (fileName);
+            outFile.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (outFile);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot-fx: " << outFile.getFullPathName() << "\n";
+            display.removeFromDesktop();
+        };
+
+        renderVariant (spa::ui::FXDisplay::Kind::chorus, "fx-chorus-slow.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::chorusEnable, 1.0f);
+            setParam (p, id::fx::chorusRate, 0.1f);
+            setParam (p, id::fx::chorusDepth, 0.4f);
+            setParam (p, id::fx::chorusWidth, 20.0f);
+            setParam (p, id::fx::chorusFeedback, 0.0f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::chorus, "fx-chorus-fast.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::chorusEnable, 1.0f);
+            setParam (p, id::fx::chorusRate, 4.5f);
+            setParam (p, id::fx::chorusDepth, 0.9f);
+            setParam (p, id::fx::chorusWidth, 100.0f);
+            setParam (p, id::fx::chorusFeedback, 0.7f);
+            setParam (p, id::fx::chorusMode, 0.0f);   // Vintage (triangle)
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::delay, "fx-delay-short.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delaySync, 0.0f);
+            setParam (p, id::fx::delayTime, 90.0f);
+            setParam (p, id::fx::delayFeedback, 0.5f);
+            setParam (p, id::fx::delayMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::delay, "fx-delay-long.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delaySync, 0.0f);
+            setParam (p, id::fx::delayTime, 1400.0f);
+            setParam (p, id::fx::delayFeedback, 0.6f);
+            setParam (p, id::fx::delayMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::delay, "fx-delay-pingpong-w0.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delayPingPong, 1.0f);
+            setParam (p, id::fx::delayWidth, 0.0f);
+            setParam (p, id::fx::delayFeedback, 0.55f);
+            setParam (p, id::fx::delayMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::delay, "fx-delay-pingpong-w50.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delayPingPong, 1.0f);
+            setParam (p, id::fx::delayWidth, 50.0f);
+            setParam (p, id::fx::delayFeedback, 0.55f);
+            setParam (p, id::fx::delayMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::delay, "fx-delay-pingpong-w100.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::delayEnable, 1.0f);
+            setParam (p, id::fx::delayPingPong, 1.0f);
+            setParam (p, id::fx::delayWidth, 100.0f);
+            setParam (p, id::fx::delayFeedback, 0.55f);
+            setParam (p, id::fx::delayMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::mod, "fx-mod-phaser.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::modEnable, 1.0f);
+            setParam (p, id::fx::modType, 0.0f);
+            setParam (p, id::fx::modDepth, 0.8f);
+            setParam (p, id::fx::modFeedback, 0.5f);
+            setParam (p, id::fx::modStages, 3.0f);   // "8"
+            setParam (p, id::fx::modMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::mod, "fx-mod-flanger.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::modEnable, 1.0f);
+            setParam (p, id::fx::modType, 1.0f);
+            setParam (p, id::fx::modDepth, 0.8f);
+            setParam (p, id::fx::modFeedback, 0.6f);
+            setParam (p, id::fx::modManual, 3.0f);
+            setParam (p, id::fx::modMix, 0.8f);
+        });
+        renderVariant (spa::ui::FXDisplay::Kind::tremVib, "fx-tremvib.png", [] (spa::SPASynthProcessor& p)
+        {
+            setParam (p, id::fx::tremEnable, 1.0f);
+            setParam (p, id::fx::tremDepth, 0.8f);
+            setParam (p, id::fx::tremStereo, 0.6f);
+            setParam (p, id::fx::vibEnable, 1.0f);
+            setParam (p, id::fx::vibDepth, 0.7f);
+        });
+
+        // In-situ crops of ALL SIX FXPanels (header + display + knobs, real
+        // faceplate background), fronted in the actual editor layout at the
+        // real base window size -- the FXPanel::resized() layout fix's own
+        // visual check, judged exactly as it will appear on screen (not the
+        // displays built standalone above, which bypass that layout).
+        {
+            struct PanelVariant { const char* tab; const char* file; std::function<void (spa::SPASynthProcessor&)> setup; };
+            const std::vector<PanelVariant> panelVariants {
+                { "DIST", "fx-dist-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::distEnable, 1.0f); setParam (p, id::fx::distDrive, 0.6f); } },
+                { "CHORUS", "fx-chorus-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::chorusEnable, 1.0f); setParam (p, id::fx::chorusRate, 2.0f);
+                      setParam (p, id::fx::chorusDepth, 0.7f); } },
+                { "DELAY", "fx-delay-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::delayEnable, 1.0f); setParam (p, id::fx::delaySync, 0.0f);
+                      setParam (p, id::fx::delayTime, 350.0f); setParam (p, id::fx::delayFeedback, 0.5f);
+                      setParam (p, id::fx::delayPingPong, 1.0f); setParam (p, id::fx::delayWidth, 80.0f);
+                      setParam (p, id::fx::delayMix, 0.7f); } },
+                { "REVERB", "fx-reverb-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::reverbEnable, 1.0f); setParam (p, id::fx::reverbMix, 0.6f); } },
+                { "MOD", "fx-mod-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::modEnable, 1.0f); setParam (p, id::fx::modType, 0.0f);
+                      setParam (p, id::fx::modDepth, 0.8f); } },
+                { "TREM/VIB", "fx-tremvib-panel-in-situ.png", [] (spa::SPASynthProcessor& p)
+                    { setParam (p, id::fx::tremEnable, 1.0f); setParam (p, id::fx::tremDepth, 0.7f);
+                      setParam (p, id::fx::vibEnable, 1.0f); setParam (p, id::fx::vibDepth, 0.6f); } },
+            };
+
+            for (const auto& variant : panelVariants)
+            {
+                spa::SPASynthProcessor proc;
+                proc.prepareToPlay (48000.0, 512);
+                variant.setup (proc);
+
+                std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+                editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+                editor->addToDesktop (0);
+                editor->setVisible (true);
+
+                const juce::String tabName (variant.tab);
+                juce::TabbedComponent* fxTabsFound = nullptr;
+                std::function<void (juce::Component&)> front = [&] (juce::Component& c)
+                {
+                    if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
+                        if (tabs->getTabNames().contains (tabName))
+                        {
+                            tabs->setCurrentTabIndex (tabs->getTabNames().indexOf (tabName));
+                            fxTabsFound = tabs;
+                        }
+                    for (auto* child : c.getChildren())
+                        front (*child);
+                };
+                front (*editor);
+                editor->resized();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+                spa::ui::FXPanel* panel = fxTabsFound != nullptr
+                    ? dynamic_cast<spa::ui::FXPanel*> (fxTabsFound->getTabContentComponent (
+                          fxTabsFound->getTabNames().indexOf (tabName)))
+                    : nullptr;
+                if (panel != nullptr)
+                {
+                    juce::Image image (juce::Image::ARGB, panel->getWidth(), panel->getHeight(), true);
+                    {
+                        juce::Graphics g (image);
+                        g.fillAll (spa::ui::currentTheme().background);
+                        panel->paintEntireComponent (g, false);
+                    }
+                    const juce::File outDir (juce::String (juce::CharPointer_UTF8 (
+                        "/private/tmp/claude-501/-Users-mikejerugim-spasynth/"
+                        "b6c6a5ac-f6c3-4835-95b3-5afd54e96332/scratchpad/fx-renders")));
+                    outDir.createDirectory();
+                    const auto outFile = outDir.getChildFile (variant.file);
+                    outFile.deleteFile();
+                    juce::PNGImageFormat png;
+                    juce::FileOutputStream stream (outFile);
+                    if (stream.openedOk())
+                        png.writeImageToStream (image, stream);
+                    std::cout << "snapshot-fx: " << outFile.getFullPathName()
+                              << " (" << panel->getWidth() << "x" << panel->getHeight() << ")\n";
+                }
+                else
+                    std::cout << "snapshot-fx: " << tabName << " FXPanel not found\n";
+                editor->removeFromDesktop();
+            }
+        }
+
+        return 0;
+    }
+
     // Temporary visual-review render for the MIDI Learn badge / brand-band
     // wordmark overlap fix -- arms a learn, feeds notes with no CC (same
     // recipe as midiLearnBadgeFitsTest) so the two-line "no CC" hint is
@@ -20258,6 +21432,14 @@ int main (int argc, char* argv[])
     RUN (lastContentFolderPerKindTest);
     RUN (presetDeleteTest);
     RUN (presetBrowserDeleteTest);
+    RUN (delayPingPongWidthTest);
+    RUN (delayWidthNoOpWhenPingPongOffTest);
+    RUN (delayWidthZeroMatchesPreChangeAlgorithmTest);
+    RUN (fxDisplayParamsReachDisplayTest);
+    RUN (delayDisplayPingPongLayoutTest);
+    RUN (modTremVibNoLongerShowChorusTest);
+    RUN (fxPanelDisplayMinimumHeightTest);
+    RUN (fxPanelCaptionFitsColumnTest);
 
    #undef RUN
 

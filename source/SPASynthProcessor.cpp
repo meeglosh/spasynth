@@ -166,6 +166,7 @@ SPASynthProcessor::SPASynthProcessor()
         rf.delayDivision  = apvts.getRawParameterValue (fx::delayDivision);
         rf.delayFeedback  = apvts.getRawParameterValue (fx::delayFeedback);
         rf.delayPingPong  = apvts.getRawParameterValue (fx::delayPingPong);
+        rf.delayWidth     = apvts.getRawParameterValue (fx::delayWidth);
         rf.delayMix       = apvts.getRawParameterValue (fx::delayMix);
         rf.reverbEnable   = apvts.getRawParameterValue (fx::reverbEnable);
         rf.reverbMode     = apvts.getRawParameterValue (fx::reverbMode);
@@ -1427,6 +1428,8 @@ void SPASynthProcessor::updateFXParams()
     p.delayDivision  = (int) rf.delayDivision->load();
     p.delayFeedback  = rf.delayFeedback->load();
     p.delayPingPong  = rf.delayPingPong->load() >= 0.5f;
+    // Same percent -> 0..1 conversion as chorusWidth (registry carries %, DSP wants 0..1).
+    p.delayWidth     = rf.delayWidth->load() * 0.01f;
     p.delayMix       = rf.delayMix->load();
     p.reverbEnable   = rf.reverbEnable->load() >= 0.5f;
     p.reverbMode     = (int) rf.reverbMode->load();
@@ -1786,6 +1789,10 @@ void SPASynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
     currentBpm.store (blockBpm, std::memory_order_relaxed);
+    // Mirrored into Telemetry (the audio->UI channel DisplayComponent
+    // subclasses already read) so FXDisplay's synced Delay/Mod/Trem/Vib
+    // drawings can use the real resolved tempo instead of a fixed fallback.
+    telemetry.bpm.store ((float) blockBpm, std::memory_order_relaxed);
     blockGotHostPpq = gotHostPpq;
 
     // Time signature: the host's own value wins when it reports one; otherwise

@@ -706,6 +706,13 @@ static std::vector<ParamDef> buildCoreDefs()
                             .biasStrength = 0.3f } });
     p.push_back ({ fx::delayPingPong, "Ping Pong", Section::fxDelay,
                    ParamKind::boolParam, {}, 0.0f, "", false, { .enabled = true } });
+    // Only acts when PING PONG is on (see FXChain::processDelay). At 0 the
+    // injection matches the pre-1.0.25 ping-pong (crossed feedback only, no
+    // mono sum), so existing presets/sessions with ping-pong on would bounce
+    // wider once this defaults to 100% -- documented in the 1.0.25 changelog.
+    p.push_back ({ fx::delayWidth, "Delay Width", Section::fxDelay,
+                   ParamKind::floatParam, { 0.0f, 100.0f }, 100.0f, "%",
+                   false, { .enabled = true, .biasCentre = 0.6f, .biasStrength = 0.3f } });
     p.push_back ({ fx::delayMix, "Delay Mix", Section::fxDelay,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.35f, "",
                    false, { .enabled = true, .maxNorm = 0.8f, .biasCentre = 0.35f,

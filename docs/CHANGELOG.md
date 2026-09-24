@@ -1,5 +1,30 @@
 # SPASynth changelog
 
+## 1.0.25
+
+- Delay ping-pong now actually bounces. Previously, ping-pong only crossed
+  the feedback paths, so a centred or mono sound (the same on both sides)
+  echoed identically whether ping-pong was on or off. A new WIDTH knob
+  controls how much the delay's input itself gets bounced between left
+  and right: at 100% a centred sound bounces fully from one side to the
+  other; lower settings narrow the bounce back toward the old behavior.
+  WIDTH only does anything with ping-pong on, and is dimmed otherwise.
+  If you have a preset or saved session with ping-pong on, its delay will
+  now bounce noticeably wider than before, since WIDTH defaults to 100%.
+- Redesigned the Chorus, Delay, Mod and Trem/Vib displays so every knob
+  actually shows up in the picture, not just one or two of them. Chorus now
+  reacts to rate, width, mode and feedback as well as depth and mix; Delay
+  draws real echo timing (down to milliseconds or the beat division you
+  chose) and splits into separate left/right traces when ping-pong is on;
+  Mod shows the phaser notches or flanger comb sweeping in time with your
+  settings; and Trem/Vib finally shows its own tremolo and vibrato shapes.
+  Previously the Mod and Trem/Vib tabs were showing the Chorus picture by
+  mistake, so their own knobs did nothing visible; that's fixed too.
+- The effect tabs are laid out more tightly, so the displays get more room
+  and the knobs are larger. Knob labels inside each effect tab now read
+  RATE, DEPTH, MIX and so on, since the tab already names the effect;
+  automation names in your DAW are unchanged.
+
 ## 1.0.24
 
 - You can now delete your own presets: right-click a preset in the

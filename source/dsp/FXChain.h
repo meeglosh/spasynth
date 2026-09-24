@@ -81,6 +81,7 @@ public:
         int delayDivision = 6;
         float delayFeedback = 0.35f;
         bool delayPingPong = false;
+        float delayWidth = 1.0f;   // 0..1, only acts when delayPingPong is on
         float delayMix = 0.35f;
 
         bool reverbEnable = false;
@@ -280,6 +281,7 @@ private:
     juce::AudioBuffer<float> delayBuffer;
     int delayWritePos = 0;
     juce::SmoothedValue<float> delaySamplesSmoothed;
+    juce::SmoothedValue<float> delayWidthSmoothed;
 
     PlateReverb reverb;
 

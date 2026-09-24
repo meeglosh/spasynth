@@ -288,9 +288,13 @@ public:
     // same rule as TabEngagementTracker/fxTabEngagement in SPASynthEditor.
     // Empty means this FX tab has no toggle of its own (none currently do,
     // but the header colour rule only applies when one is supplied).
+    // telemetry: forwarded straight to FXDisplay so the synced Delay/Mod/
+    // Trem/Vib kinds can read the real resolved tempo; nullptr keeps the
+    // 120 BPM fallback (see FXDisplay's own comment).
     FXPanel (juce::AudioProcessorValueTreeState&, FXDisplay::Kind,
              params::Section, const juce::String& title,
-             const juce::StringArray& enableParamIds = {});
+             const juce::StringArray& enableParamIds = {},
+             const dsp::Telemetry* telemetry = nullptr);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -306,6 +310,8 @@ private:
     // Delay tab only: time vs. division dimming, mirroring the LFO rule.
     // Null for every other section.
     std::unique_ptr<DependentEnable> delayTimeEnable, delayDivisionEnable;
+    // WIDTH only means anything with ping-pong on (1.0.25).
+    std::unique_ptr<DependentEnable> delayWidthEnable;
 
     // Drives the header title colour (muted when off, accent when on); null
     // when no enableParamIds were supplied.

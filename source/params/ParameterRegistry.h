@@ -360,6 +360,7 @@ namespace id
         inline constexpr const char* delayDivision = "fxDelay.division";
         inline constexpr const char* delayFeedback = "fxDelay.feedback";
         inline constexpr const char* delayPingPong = "fxDelay.pingpong";
+        inline constexpr const char* delayWidth    = "fxDelay.width";
         inline constexpr const char* delayMix      = "fxDelay.mix";
 
         inline constexpr const char* reverbEnable   = "fxReverb.enable";

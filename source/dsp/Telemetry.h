@@ -22,6 +22,17 @@ struct Telemetry
 
     std::atomic<int> activeVoices { 0 };
 
+    // Resolved live tempo (host playhead / standalone internal BPM / MIDI
+    // clock -- whichever processBlock actually used this block), published
+    // once per block from the exact same value the FX chain's synced modules
+    // (delay/mod/trem/vib) read. UI displays that draw synced timing (e.g.
+    // FXDisplay) read this instead of guessing a fixed BPM. Mirrors
+    // SPASynthProcessor::currentBpm (kept as a separate atomic rather than
+    // reused directly so DisplayComponent's existing telemetry-pointer
+    // plumbing works without a processor reference); 120 is only ever a
+    // pre-first-block default, never touched again after processBlock runs.
+    std::atomic<float> bpm { 120.0f };
+
     // Effective per-slot playback position, 0..1 (wavetable morph position,
     // sample playhead, or grain-cloud centre, by mode).
     std::array<std::atomic<float>, params::maxOscSlots> slotPosition {};

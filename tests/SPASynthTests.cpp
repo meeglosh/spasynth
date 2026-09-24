@@ -36,6 +36,11 @@ namespace
     // from main() below via --real-library or SPASYNTH_REAL_LIBRARY_TEST=1.
     bool g_realLibraryTestOptIn = false;
 
+    // Opt-in gate for reverbPreDelayReportTest, a MEASUREMENT report (not a
+    // pass/fail pin) run against the real FXChain/PlateReverb. Set from
+    // main() below via --reverb-predelay-report.
+    bool g_reverbPreDelayReportOptIn = false;
+
     void expect (bool condition, const juce::String& description)
     {
         std::cout << (condition ? "  ok    " : "  FAIL  ") << description << "\n";
@@ -21319,6 +21324,208 @@ static void reverbNormalisationTest()
     }
 }
 
+// --- Reverb pre-delay measurement report (opt-in, --reverb-predelay-report) -
+//
+// MEASUREMENT ONLY, no product code touched. Tester report (Paul): "Reverb
+// pre-delay seems too strong, says 32ms but sounds more like 320ms?"
+//
+// PlateReverb.h's pre-delay line (preSamps = (p.preDelayMs + modePreDelayAddMs)
+// * 0.001 * sampleRate, ~line 121) is correct on inspection. Hypothesis: the
+// AUDIBLE gap is PRE plus the tank's own intrinsic build-up latency. The
+// signal path from the mono sum to the wet output tap is: pre-delay (a real
+// delay) -> input bandwidth filter -> four series input allpasses (each one
+// leaks a scaled copy of its input INSTANTLY, no delay, per the standard
+// allpass structure `y = -g*in + vN; write(in + g*y)`) -> per-branch
+// modulated allpass (same instant-leak property) -> delay1 (a REAL, pure
+// delay -- no instant leak) -> damping filter -> decay gain -> decay
+// allpass (instant leak again) -> delay2 (a second REAL, pure delay) -> the
+// output tap. So delay1Len and delay2Len, both scaled by
+// `scale = (sampleRate/29761) * sizeScale` where
+// `sizeScale = 0.3 + 1.7*SIZE*modeSizeMul(mode)`, are the dominant SIZE- and
+// MODE-dependent latency the PRE knob's own line has no way to see or
+// compensate for. This test measures that latency directly through the real
+// FXChain/PlateReverb rather than trusting the hand-derived estimate.
+//
+// Method: single-sample impulse (amplitude 1.0 on BOTH channels at sample 0,
+// so the mono sum PlateReverb actually reverberates is exactly 1.0 -- stated
+// per the "always say which burst" measurement lesson, since this is neither
+// of reverbMixTest's/reverbMixTaperTest's noise bursts), reverb 100% wet
+// (mix=1), every other param at its registry/FX::Params default (decay 2.0s,
+// damping 0.5, modDepth 0.2, lowCut 20Hz, highCut 12000Hz, width 1.0). The
+// wet mono envelope is tracked in 1ms peak-hold windows over a 3s render (long
+// enough to find the peak at every size, short of the RT60 tail, which isn't
+// what's being measured). Reports, relative to the envelope's own eventual
+// peak: first time above -60dB, first above -30dB, the peak time itself, and
+// first time above -12dB (all as forward "first crossing" times, i.e. how
+// long PAST the impulse before the tank becomes audible at each level, not a
+// decay measurement).
+namespace
+{
+    struct ReverbBuildup { double t60Ms = -1.0, t30Ms = -1.0, t12Ms = -1.0, tPeakMs = -1.0; double peakVal = 0.0; };
+
+    ReverbBuildup measureReverbBuildup (int mode, float size, float preMs, double sr)
+    {
+        using FX = spa::dsp::FXChain;
+        constexpr int block = 256;
+        FX fx;
+        fx.prepare (sr, block);
+        FX::Params p;
+        p.reverbEnable = true;
+        p.reverbMode = mode;
+        p.reverbPreDelay = preMs;
+        p.reverbSize = size;
+        p.reverbMix = 1.0f;
+        // decay/damping/modDepth/lowCut/highCut/width left at FX::Params'
+        // own defaults, which match the ParameterRegistry defaults exactly
+        // (verified against ParameterRegistry.cpp above).
+
+        const double renderSeconds = 3.0;
+        const int totalSamples = (int) (renderSeconds * sr);
+        const int windowSamples = juce::jmax (1, (int) std::round (0.001 * sr)); // ~1ms peak-hold window
+        std::vector<float> envelope;
+        envelope.reserve ((size_t) (totalSamples / windowSamples) + 2);
+
+        juce::AudioBuffer<float> buf (2, block);
+        float windowPeak = 0.0f;
+        int windowCount = 0;
+        bool firstBlock = true;
+        for (int done = 0; done < totalSamples; done += block)
+        {
+            buf.clear();
+            if (firstBlock) { buf.setSample (0, 0, 1.0f); buf.setSample (1, 0, 1.0f); firstBlock = false; }
+            fx.process (buf, p);
+            for (int s = 0; s < block; ++s)
+            {
+                const float mono = 0.5f * (buf.getSample (0, s) + buf.getSample (1, s));
+                windowPeak = juce::jmax (windowPeak, std::abs (mono));
+                if (++windowCount >= windowSamples)
+                {
+                    envelope.push_back (windowPeak);
+                    windowPeak = 0.0f;
+                    windowCount = 0;
+                }
+            }
+        }
+        if (windowCount > 0)
+            envelope.push_back (windowPeak);
+
+        ReverbBuildup out;
+        size_t peakIdx = 0; float peakVal = 0.0f;
+        for (size_t i = 0; i < envelope.size(); ++i)
+            if (envelope[i] > peakVal) { peakVal = envelope[i]; peakIdx = i; }
+        out.peakVal = (double) peakVal;
+        if (peakVal <= 0.0f)
+            return out; // leave times at -1 (never crossed)
+        out.tPeakMs = (double) peakIdx * (double) windowSamples / sr * 1000.0;
+
+        auto thresholdTimeMs = [&] (double db) -> double
+        {
+            const float thr = peakVal * (float) std::pow (10.0, db / 20.0);
+            for (size_t i = 0; i < envelope.size(); ++i)
+                if (envelope[i] >= thr)
+                    return (double) i * (double) windowSamples / sr * 1000.0;
+            return -1.0;
+        };
+        out.t60Ms = thresholdTimeMs (-60.0);
+        out.t30Ms = thresholdTimeMs (-30.0);
+        out.t12Ms = thresholdTimeMs (-12.0);
+        return out;
+    }
+}
+
+static void reverbPreDelayReportTest()
+{
+    std::cout << "reverbPreDelayReportTest\n";
+    namespace id = spa::params::id;
+
+    if (! g_reverbPreDelayReportOptIn)
+    {
+        std::cout << "  SKIPPED (opt-in: --reverb-predelay-report)\n";
+        return;
+    }
+
+    // Registry PRE knob range/default, read directly rather than assumed.
+    const spa::params::ParamDef* preDef = nullptr;
+    for (const auto& def : spa::params::all())
+        if (def.id == id::fx::reverbPreDelay) { preDef = &def; break; }
+    expect (preDef != nullptr, "fx::reverbPreDelay found in the registry");
+    if (preDef != nullptr)
+        std::cout << "  PRE knob: range [" << preDef->range.start << ", " << preDef->range.end
+                   << "] " << preDef->unit << ", default " << preDef->defaultValue
+                   << " " << preDef->unit << " -- 32ms is inside the range, near the low end "
+                      "(the knob itself has no reason to be misread).\n";
+
+    const struct { int idx; const char* name; } modes[] = {
+        { 0, "Hall" }, { 1, "Plate" }, { 2, "Chamber" }, { 3, "Room" }, { 4, "Spring" }
+    };
+    const float sizes[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
+    const float pres[] = { 0.0f, 32.0f };
+    constexpr double sr48 = 48000.0;
+
+    std::cout << "  -- 48kHz grid: mode, size, PRE(ms) -> -60dB/-30dB/peak/-12dB build-up times (ms), peak level --\n";
+    for (const auto& m : modes)
+    {
+        for (float size : sizes)
+        {
+            for (float pre : pres)
+            {
+                const auto r = measureReverbBuildup (m.idx, size, pre, sr48);
+                std::cout << "  " << juce::String (m.name).paddedRight (' ', 8)
+                           << "size=" << juce::String (size, 2)
+                           << " pre=" << juce::String (pre, 0).paddedLeft (' ', 2) << "ms  "
+                           << "t-60dB=" << juce::String (r.t60Ms, 1).paddedLeft (' ', 7) << "ms  "
+                           << "t-30dB=" << juce::String (r.t30Ms, 1).paddedLeft (' ', 7) << "ms  "
+                           << "t-12dB=" << juce::String (r.t12Ms, 1).paddedLeft (' ', 7) << "ms  "
+                           << "tPeak=" << juce::String (r.tPeakMs, 1).paddedLeft (' ', 7) << "ms  "
+                           << "peak=" << juce::String (r.peakVal, 3) << "\n";
+                expect (r.peakVal > 0.0, juce::String (m.name) + " size " + juce::String (size, 2)
+                        + " pre " + juce::String (pre, 0) + "ms produces a measurable wet impulse response");
+            }
+        }
+    }
+
+    // Sanity check on the pre-delay line itself: at SIZE 0 (smallest tank,
+    // least confound from feedback build-up), going from PRE 0 to PRE 32ms
+    // should shift the -60dB arrival by close to 32ms. This is the ONE
+    // correctness pin in this report -- everything else above is measurement
+    // for a human to read, not a pass/fail bound, because the "should be"
+    // build-up time is a product/taste question, not a bug in itself.
+    {
+        const auto hallPre0 = measureReverbBuildup (0, 0.0f, 0.0f, sr48);
+        const auto hallPre32 = measureReverbBuildup (0, 0.0f, 32.0f, sr48);
+        const double delta = hallPre32.t60Ms - hallPre0.t60Ms;
+        std::cout << "  Hall size=0 PRE 0->32ms shifts -60dB arrival by " << juce::String (delta, 1)
+                   << "ms (expect close to 32ms; confirms the PRE line itself is not the defect)\n";
+        expect (delta > 20.0 && delta < 45.0,
+                "PRE knob's own contribution to arrival time is close to its stated value at SIZE 0");
+    }
+
+    // Spot-check at 96kHz native, and note on 2x oversampling: FXChain/
+    // PlateReverb::process() only ever receives the PREPARED sample rate (see
+    // the 1.0.23 onePoleCoef fix, which made the tone stage use that member
+    // instead of a hardcoded 48000) -- it has no other knowledge of whether
+    // that rate is a host's native 96kHz or a 48kHz host being run through 2x
+    // oversampling. So this same figure IS the "under 2x oversampling" figure
+    // too; there is no separate code path to measure.
+    std::cout << "  -- 96kHz spot-check (also stands for 48kHz host + 2x oversampling, "
+                  "engine rate 96kHz -- PlateReverb::process() only sees `sampleRate`) --\n";
+    for (const auto& m : modes)
+    {
+        for (float size : { 0.0f, 0.5f, 1.0f })
+        {
+            const auto r = measureReverbBuildup (m.idx, size, 32.0f, 96000.0);
+            std::cout << "  " << juce::String (m.name).paddedRight (' ', 8)
+                       << "size=" << juce::String (size, 2) << " pre=32ms  "
+                       << "t-60dB=" << juce::String (r.t60Ms, 1).paddedLeft (' ', 7) << "ms  "
+                       << "t-30dB=" << juce::String (r.t30Ms, 1).paddedLeft (' ', 7) << "ms  "
+                       << "t-12dB=" << juce::String (r.t12Ms, 1).paddedLeft (' ', 7) << "ms  "
+                       << "tPeak=" << juce::String (r.tPeakMs, 1).paddedLeft (' ', 7) << "ms\n";
+            expect (r.peakVal > 0.0, juce::String (m.name) + " size " + juce::String (size, 2)
+                    + " @96kHz produces a measurable wet impulse response");
+        }
+    }
+}
+
 // --- Organic Chaos waveform visualization (slotChaosPitch/Phase) ------------
 // Tester feedback: "the oscillator waveform meters should react a little
 // more to the chaos inputs". Only position drift reached the WaveDisplay
@@ -22794,6 +23001,10 @@ int main (int argc, char* argv[])
         && juce::String (std::getenv ("SPASYNTH_REAL_LIBRARY_TEST")) == "1")
         g_realLibraryTestOptIn = true;
 
+    for (int i = 1; i < argc; ++i)
+        if (juce::String (argv[i]) == "--reverb-predelay-report")
+            g_reverbPreDelayReportOptIn = true;
+
     // Name-filterable test registry. RUN(fn) both names and calls a test in
     // one line -- exactly as error-prone (or not) as the plain call it
     // replaces, since the name is derived from the token itself, not typed
@@ -22991,6 +23202,7 @@ int main (int argc, char* argv[])
     RUN (presetVoiceGlideMasterWildRoundTripTest);
     RUN (presetMissingParamsDefaultOnLoadTest);
     RUN (presetLoadPreservesUiPrefsTest);
+    RUN (reverbPreDelayReportTest);
 
    #undef RUN
 

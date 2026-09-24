@@ -77,6 +77,31 @@ New Folder inside your User presets folder and give it a name. Each
 folder you create shows up as its own category in the preset browser,
 right alongside your other presets.
 
+BROWSING BY SOUND TYPE
+-----------------------
+The preset browser's TYPE menu lets you narrow the list to a sound type
+(Bass, Pad, Lead, and so on) alongside the pack/bank menu. To put one of
+your own presets into a type, start its name with the matching tag below,
+followed by a space, underscore or dash (for example "BASS Growl" or
+"PAD_Warm"):
+
+  ACID      Acid            KEY, KEYS   Keys            SC        Soundscape
+  AMB       Ambience        LEAD        Lead             SEQ       Seq
+  BASS      Bass            MAL         Mallet           STR       String
+  BELL      Bell            MDL         Modulated Bass   SW        Sweep
+  BR        Brass           MID         Midrange         SYN       Synth
+  CH        Chord           OR          Organ            VOX       Choir
+  DOWNER    Downlift        OS          OneShot Bass     WBL       Wobble
+  DRUM      Drum            PAD         Pad              WW        Woodwind
+  EFX       Audio Effect    PERC        Perc
+  FX        SFX             PLUCK       Pluck
+  HIT       Hit/Stab        RHYTHMIC    Rhythmic
+  HV        Hoover          SAW         Sawtooth
+  INIT      Template
+
+Our factory presets are already sorted: their Keys/Texture/Pulse names
+show up under Keys/Soundscape/Rhythmic automatically.
+
 SUPPORT
 -------
   https://www.silverplatteraudio.com

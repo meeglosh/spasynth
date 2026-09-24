@@ -35,17 +35,38 @@ public:
     // --- pure filtering (testable without a UI) ------------------------------
     struct Filter
     {
-        juce::String search;        // case-insensitive substring of name/pack
-        juce::String type;          // "", "Keys", "Texture", "Pulse", "User"
+        juce::String search;        // case-insensitive substring of name/pack/sound type
+        juce::String type;          // "", "Keys", "Texture", "Pulse", "User" -- the
+                                     // existing quick-filter chips (pack/bank flavour)
         juce::String category;      // "" = all packs
         bool favoritesOnly = false;
+        // Kept LAST (not alongside the other String fields above) so every
+        // existing positional Filter{...} test/call site -- written before
+        // this field existed -- keeps compiling and keeps its meaning.
+        juce::String soundType;     // "" = all sound types -- see soundTypeOf(); a
+                                     // SECOND, independent axis from `type` above
     };
 
     static juce::String typeOf (const library::PresetManager::PresetInfo&);
+
+    // Sound-type category (Bass/Pad/Lead/...) derived from the first whole
+    // word of the preset's name against a small prefix table (see the .cpp),
+    // with a fallback for un-prefixed factory presets ("<Pack> Keys/Texture/
+    // Pulse" -> Keys/Soundscape/Rhythmic). "" if nothing matches (unmatched
+    // presets have no sound type and only show under "All types").
+    static juce::String soundTypeOf (const library::PresetManager::PresetInfo&);
+
     static juce::String favoriteKey (const library::PresetManager::PresetInfo&);
     static std::vector<int> filterIndices (
         const std::vector<library::PresetManager::PresetInfo>&,
         const Filter&, const juce::StringArray& favoriteKeys);
+
+    // The sound types actually present among presets matching every filter
+    // field EXCEPT soundType (its own value, if any, is ignored) -- what the
+    // TYPE dropdown should offer, alphabetical, never including "".
+    static juce::StringArray availableSoundTypes (
+        const std::vector<library::PresetManager::PresetInfo>&,
+        const Filter& filterExcludingSoundType, const juce::StringArray& favoriteKeys);
 
     // The parent stores the drawer's on-screen bounds every resized(); the
     // open/close animation slides between these and off-screen left.
@@ -107,6 +128,7 @@ private:
     juce::TextEditor searchBox;
     std::array<juce::TextButton, 5> typeChips;
     juce::ComboBox categoryBox;
+    juce::ComboBox soundTypeBox;   // the new TYPE (sound-category) filter
     juce::TextButton favoritesChip { juce::String::fromUTF8 ("\xe2\x98\x85") };  // ★
     juce::ListBox list { {}, this };
     juce::Label countLabel;

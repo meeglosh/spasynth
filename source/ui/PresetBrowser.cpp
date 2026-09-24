@@ -13,6 +13,101 @@ namespace
     constexpr const char* chipTypes[]  = { "",    "Keys", "Texture", "Pulse", "User" };
     constexpr int chipRadioGroup = 0x5751;
 
+    // --- sound-type (TYPE dropdown) prefix table --------------------------
+    // One line per displayed sound type -> the whole-word name prefix(es)
+    // that select it (case-insensitive). Product-owner table, kept as ONE
+    // small data table so a future addition/rename is a one-line edit.
+    // Order here has no effect on anything user-visible (the dropdown lists
+    // only the types actually present, alphabetically); it's kept roughly
+    // alphabetical by display name for readability.
+    struct SoundTypeEntry
+    {
+        const char* display;
+        std::initializer_list<const char*> prefixes;
+    };
+
+    const SoundTypeEntry soundTypeTable[] = {
+        { "Acid",            { "ACID" } },
+        { "Ambience",        { "AMB" } },
+        { "Audio Effect",    { "EFX" } },
+        { "Bass",            { "BASS" } },
+        { "Bell",            { "BELL" } },
+        { "Brass",           { "BR" } },
+        { "Choir",           { "VOX" } },
+        { "Chord",           { "CH" } },
+        { "Downlift",        { "DOWNER" } },
+        { "Drum",            { "DRUM" } },
+        { "Hit/Stab",        { "HIT" } },
+        { "Hoover",          { "HV" } },
+        { "Keys",            { "KEY", "KEYS" } },
+        { "Lead",            { "LEAD" } },
+        { "Mallet",          { "MAL" } },
+        { "Midrange",        { "MID" } },
+        { "Modulated Bass",  { "MDL" } },
+        { "OneShot Bass",    { "OS" } },
+        { "Organ",           { "OR" } },
+        { "Pad",             { "PAD" } },
+        { "Perc",            { "PERC" } },
+        { "Pluck",           { "PLUCK" } },
+        { "Rhythmic",        { "RHYTHMIC" } },
+        { "Sawtooth",        { "SAW" } },
+        { "Seq",             { "SEQ" } },
+        { "SFX",             { "FX" } },
+        { "Soundscape",      { "SC" } },
+        { "String",          { "STR" } },
+        { "Sweep",           { "SW" } },
+        { "Synth",           { "SYN" } },
+        { "Template",        { "INIT" } },
+        { "Wobble",          { "WBL" } },
+        { "Woodwind",        { "WW" } },
+    };
+
+    // First whole word of a preset name: everything up to the first space,
+    // underscore or dash, or the whole name if none of those appear. This is
+    // what whole-word prefix matching is measured against -- "SWEEP" and
+    // "EFX" have no separator, so their first word is the full name, which
+    // is not equal to the shorter prefixes "SW"/"FX" and correctly fails to
+    // match them.
+    juce::String firstWord (const juce::String& name)
+    {
+        const auto end = name.indexOfAnyOf (" _-", 0, false);
+        return end < 0 ? name : name.substring (0, end);
+    }
+
+    // Looks the first word up against every table entry's prefix list,
+    // case-insensitive, whole-word only (equalsIgnoreCase, not a substring
+    // test). "" if nothing matches.
+    juce::String prefixSoundType (const juce::String& name)
+    {
+        const auto word = firstWord (name);
+        if (word.isEmpty())
+            return {};
+
+        for (const auto& entry : soundTypeTable)
+            for (const auto* prefix : entry.prefixes)
+                if (word.equalsIgnoreCase (prefix))
+                    return entry.display;
+
+        return {};
+    }
+
+    // Fallback for un-prefixed FACTORY presets only (Mike: current factory
+    // presets have no prefix; their names end in the recipe's own trailing
+    // word -- see PresetManager.cpp's Keys/Texture/Pulse generator). Never
+    // applied to user presets, and never overrides an actual prefix match
+    // (a factory preset whose pack name happens to start with a real prefix,
+    // e.g. "Bass ... Keys", is intentionally left to the prefix table).
+    juce::String factoryFallbackSoundType (const juce::String& name)
+    {
+        if (name.endsWithIgnoreCase (" Keys"))
+            return "Keys";
+        if (name.endsWithIgnoreCase (" Texture"))
+            return "Soundscape";
+        if (name.endsWithIgnoreCase (" Pulse"))
+            return "Rhythmic";
+        return {};
+    }
+
     // The browser runs 2pt larger than the module grid (its LookAndFeel-drawn
     // controls get the same boost via the "browser"/"chip" componentIDs).
     juce::Font browserFont()
@@ -42,6 +137,17 @@ juce::String PresetBrowser::typeOf (const library::PresetManager::PresetInfo& p)
     return {};
 }
 
+juce::String PresetBrowser::soundTypeOf (const library::PresetManager::PresetInfo& p)
+{
+    const auto prefixed = prefixSoundType (p.name);
+    if (prefixed.isNotEmpty())
+        return prefixed;
+
+    // Fallback only for un-prefixed FACTORY presets (isUser == false); a
+    // user preset with no matching prefix genuinely has no sound type.
+    return p.isUser ? juce::String() : factoryFallbackSoundType (p.name);
+}
+
 juce::String PresetBrowser::favoriteKey (const library::PresetManager::PresetInfo& p)
 {
     return p.category + "/" + p.name;
@@ -61,17 +167,40 @@ std::vector<int> PresetBrowser::filterIndices (
             continue;
         if (filter.category.isNotEmpty() && p.category != filter.category)
             continue;
+        if (filter.soundType.isNotEmpty() && soundTypeOf (p) != filter.soundType)
+            continue;
         if (filter.favoritesOnly && ! favoriteKeys.contains (favoriteKey (p)))
             continue;
         if (filter.search.isNotEmpty()
             && ! p.name.containsIgnoreCase (filter.search)
-            && ! p.category.containsIgnoreCase (filter.search))
+            && ! p.category.containsIgnoreCase (filter.search)
+            && ! soundTypeOf (p).containsIgnoreCase (filter.search))
             continue;
 
         out.push_back ((int) i);
     }
 
     return out;
+}
+
+juce::StringArray PresetBrowser::availableSoundTypes (
+    const std::vector<library::PresetManager::PresetInfo>& presets,
+    const Filter& filterExcludingSoundType, const juce::StringArray& favoriteKeys)
+{
+    auto base = filterExcludingSoundType;
+    base.soundType = {};   // ignore whatever the caller passed here -- this
+                            // listing must never depend on its own filter
+
+    juce::StringArray types;
+    for (auto i : filterIndices (presets, base, favoriteKeys))
+    {
+        const auto t = soundTypeOf (presets[(size_t) i]);
+        if (t.isNotEmpty())
+            types.addIfNotAlreadyThere (t);
+    }
+
+    types.sort (true);   // alphabetical, case-insensitive
+    return types;
 }
 
 PresetBrowser::PresetBrowser (SPASynthProcessor& p,
@@ -113,6 +242,13 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     categoryBox.setTextWhenNothingSelected ("All Packs");
     categoryBox.onChange = [this] { applyFilter(); };
     addAndMakeVisible (categoryBox);
+
+    soundTypeBox.setComponentID ("browser");
+    soundTypeBox.setWantsKeyboardFocus (false);            // see Controls.h's Knob
+    soundTypeBox.setMouseClickGrabsKeyboardFocus (false);  // the actual fix -- see Controls.h's Knob
+    soundTypeBox.setTextWhenNothingSelected ("All Types");
+    soundTypeBox.onChange = [this] { applyFilter(); };
+    addAndMakeVisible (soundTypeBox);
 
     favoritesChip.setComponentID ("chip");
     favoritesChip.setClickingTogglesState (true);
@@ -233,6 +369,31 @@ void PresetBrowser::applyFilter()
     if (categoryBox.getSelectedId() > 1)
         filter.category = categoryBox.getText();
     filter.favoritesOnly = favoritesChip.getToggleState();
+
+    // Rebuild the TYPE dropdown from presets matching every OTHER filter
+    // (search/chip/pack/favourites, never its own current pick), keeping the
+    // current selection if it's still offered, else falling back to "All
+    // Types". Runs before the final filtered list below so soundType can be
+    // read back off the (possibly just-rebuilt) combo.
+    const auto selectedSoundType = soundTypeBox.getSelectedId() > 1 ? soundTypeBox.getText()
+                                                                     : juce::String();
+    const auto offeredTypes = availableSoundTypes (presets, filter, favoriteKeys);
+
+    soundTypeBox.clear (juce::dontSendNotification);
+    soundTypeBox.addItem ("All Types", 1);
+    int soundTypeID = 2;
+    for (const auto& t : offeredTypes)
+    {
+        soundTypeBox.addItem (t, soundTypeID);
+        if (t == selectedSoundType)
+            soundTypeBox.setSelectedId (soundTypeID, juce::dontSendNotification);
+        ++soundTypeID;
+    }
+    if (soundTypeBox.getSelectedId() == 0)
+        soundTypeBox.setSelectedId (1, juce::dontSendNotification);
+
+    if (soundTypeBox.getSelectedId() > 1)
+        filter.soundType = soundTypeBox.getText();
 
     filtered = filterIndices (presets, filter, favoriteKeys);
 
@@ -492,6 +653,11 @@ void PresetBrowser::resized()
     bounds.removeFromTop (6);
     auto packRow = bounds.removeFromTop (24);
     favoritesChip.setBounds (packRow.removeFromRight (28));
+    packRow.removeFromRight (4);
+    // Pack/bank and sound-TYPE dropdowns split the remaining width evenly --
+    // both filter axes are equally likely to hold the longer text (a pack
+    // name vs. a sound-type name like "Modulated Bass").
+    soundTypeBox.setBounds (packRow.removeFromRight ((packRow.getWidth() - 4) / 2));
     packRow.removeFromRight (4);
     categoryBox.setBounds (packRow);
 

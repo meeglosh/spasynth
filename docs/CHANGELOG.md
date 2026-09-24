@@ -2,6 +2,13 @@
 
 ## 1.0.25
 
+- You can now browse presets by sound type. A new TYPE menu next to the
+  pack menu in the preset browser lets you narrow the list to just Bass,
+  Pad, Lead, and so on. Start a preset's own name with a type tag such as
+  BASS, PAD or LEAD and it lands in that type automatically; our factory
+  presets are already sorted this way, so Keys, Texture and Pulse presets
+  show up as Keys, Soundscape and Rhythmic respectively. This came from
+  feedback.
 - Delay ping-pong now actually bounces. Previously, ping-pong only crossed
   the feedback paths, so a centred or mono sound (the same on both sides)
   echoed identically whether ping-pong was on or off. A new WIDTH knob

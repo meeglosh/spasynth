@@ -13069,21 +13069,151 @@ namespace
 
         expect (Browser::filterIndices (presets, {}, {}).size() == 4,
                 "empty filter passes everything");
-        expect (names (Browser::filterIndices (presets, { {}, "Keys", {}, false }, {}))
+        expect (names (Browser::filterIndices (presets, { {}, "Keys", {}, false, {} }, {}))
                     == "Anvil Keys", "type chip filters by preset flavour");
-        expect (names (Browser::filterIndices (presets, { "bells", {}, {}, false }, {}))
+        expect (names (Browser::filterIndices (presets, { "bells", {}, {}, false, {} }, {}))
                     == "Bells Pulse", "search is case-insensitive");
-        expect (names (Browser::filterIndices (presets, { {}, {}, "Anvil", false }, {}))
+        expect (names (Browser::filterIndices (presets, { {}, {}, "Anvil", false, {} }, {}))
                     == "Anvil Keys,Anvil Texture", "category filters by pack");
-        expect (names (Browser::filterIndices (presets, { {}, {}, {}, true },
+        expect (names (Browser::filterIndices (presets, { {}, {}, {}, true, {} },
                                                juce::StringArray ("Bells/Bells Pulse")))
                     == "Bells Pulse", "favorites-only keeps starred keys");
-        expect (names (Browser::filterIndices (presets, { "anvil", "Texture", {}, false }, {}))
+        expect (names (Browser::filterIndices (presets, { "anvil", "Texture", {}, false, {} }, {}))
                     == "Anvil Texture", "filters combine (search + type)");
-        expect (Browser::filterIndices (presets, { "zzz", {}, {}, false }, {}).empty(),
+        expect (Browser::filterIndices (presets, { "zzz", {}, {}, false, {} }, {}).empty(),
                 "no match yields an empty list");
         expect (Browser::favoriteKey (presets[2]) == "Bells/Bells Pulse",
                 "favorite key is category/name");
+    }
+
+    // Sound-TYPE dropdown: prefix table, whole-word matching, the factory
+    // Keys/Texture/Pulse -> Keys/Soundscape/Rhythmic fallback, and the TYPE
+    // filter combining with the other filter axes -- see soundTypeOf() and
+    // PresetBrowser::Filter::soundType.
+    static void presetBrowserSoundTypeTest()
+    {
+        std::cout << "presetBrowserSoundTypeTest\n";
+
+        using Info = spa::library::PresetManager::PresetInfo;
+        using Browser = spa::ui::PresetBrowser;
+
+        const auto userInfo = [] (const juce::String& name)
+        {
+            return Info { name, "User", {}, true };
+        };
+        const auto factoryInfo = [] (const juce::String& name, const juce::String& category)
+        {
+            return Info { name, category, {}, false };
+        };
+
+        // --- separators + case -------------------------------------------------
+        expect (Browser::soundTypeOf (userInfo ("PAD Warm")) == "Pad", "space separator");
+        expect (Browser::soundTypeOf (userInfo ("PAD_Warm")) == "Pad", "underscore separator");
+        expect (Browser::soundTypeOf (userInfo ("PAD-Warm")) == "Pad", "dash separator");
+        expect (Browser::soundTypeOf (userInfo ("pad Warm")) == "Pad", "case-insensitive prefix");
+        expect (Browser::soundTypeOf (userInfo ("Bass")) == "Bass",
+                "prefix alone (end of name, no separator) still matches");
+
+        // --- whole-word negatives (the anti-vacuous cases: a naive substring
+        // match would incorrectly pass every one of these) --------------------
+        expect (Browser::soundTypeOf (userInfo ("SW Riser")) == "Sweep", "SW matches Sweep");
+        expect (Browser::soundTypeOf (userInfo ("SWEEP Riser")).isEmpty(),
+                "SWEEP is NOT matched by the SW prefix (whole-word only)");
+        expect (Browser::soundTypeOf (userInfo ("FX_Impact")) == "SFX", "FX matches SFX");
+        expect (Browser::soundTypeOf (userInfo ("EFX-Impact")) == "Audio Effect",
+                "EFX is its OWN prefix (Audio Effect), not swallowed by the FX/SFX prefix");
+        expect (Browser::soundTypeOf (userInfo ("OS-100")) == "OneShot Bass", "OS matches OneShot Bass");
+        expect (Browser::soundTypeOf (userInfo ("OSC-100")).isEmpty(),
+                "OSC is NOT matched by the OS prefix (whole-word only)");
+        expect (Browser::soundTypeOf (userInfo ("OR Pad")) == "Organ", "OR matches Organ");
+        expect (Browser::soundTypeOf (userInfo ("ORCHESTRA Swell")).isEmpty(),
+                "ORCHESTRA is NOT matched by the OR prefix (whole-word only)");
+
+        // --- KEY/KEYS/Keys merge (Mike-approved merge of the old separate
+        // Keyboard(KEY)/Keys(KEYS) entries) --------------------------------------
+        expect (Browser::soundTypeOf (userInfo ("KEY Warm")) == "Keys", "KEY -> Keys");
+        expect (Browser::soundTypeOf (userInfo ("KEYS Warm")) == "Keys", "KEYS -> Keys");
+        expect (Browser::soundTypeOf (userInfo ("Keys Warm")) == "Keys", "Keys (mixed case) -> Keys");
+
+        // --- INIT -> Template, no-prefix -> none --------------------------------
+        expect (Browser::soundTypeOf (userInfo ("INIT Preset")) == "Template", "INIT -> Template");
+        expect (Browser::soundTypeOf (userInfo ("Random Name")).isEmpty(), "no matching prefix -> none");
+
+        // --- factory Keys/Texture/Pulse fallback (unprefixed factory presets
+        // only; never a user preset, never overriding a real prefix match) -----
+        expect (Browser::soundTypeOf (factoryInfo ("Ambient Pack Keys", "Ambient Pack")) == "Keys",
+                "factory Keys fallback");
+        expect (Browser::soundTypeOf (factoryInfo ("Ambient Pack Texture", "Ambient Pack")) == "Soundscape",
+                "factory Texture -> Soundscape fallback");
+        expect (Browser::soundTypeOf (factoryInfo ("Ambient Pack Pulse", "Ambient Pack")) == "Rhythmic",
+                "factory Pulse -> Rhythmic fallback");
+        expect (Browser::soundTypeOf (userInfo ("My Song Texture")).isEmpty(),
+                "the factory fallback never applies to a USER preset");
+        expect (Browser::soundTypeOf (factoryInfo ("Bass Impacts Keys", "Bass Impacts")) == "Bass",
+                "a real prefix match (pack name starts with BASS) wins over the factory fallback");
+
+        // --- TYPE filter combines with pack/bank + search (AND) -----------------
+        const std::vector<Info> presets {
+            factoryInfo ("Bass Impacts Keys", "Bass Impacts"),          // soundType Bass (prefix)
+            factoryInfo ("Bass Impacts Pulse", "Bass Impacts"),         // soundType Bass (prefix, not Rhythmic)
+            factoryInfo ("Ambient Pack Texture", "Ambient Pack"),       // soundType Soundscape (fallback)
+            userInfo ("BASS Wobble"),                                  // soundType Bass, isUser
+            userInfo ("PAD Warm"),                                     // soundType Pad
+        };
+
+        const auto names = [&] (const std::vector<int>& idx)
+        {
+            juce::StringArray out;
+            for (auto i : idx)
+                out.add (presets[(size_t) i].name);
+            out.sort (true);
+            return out.joinIntoString (",");
+        };
+
+        Browser::Filter bassFilter;
+        bassFilter.soundType = "Bass";
+        expect (names (Browser::filterIndices (presets, bassFilter, {}))
+                    == "Bass Impacts Keys,Bass Impacts Pulse,BASS Wobble",
+                "TYPE filter alone selects every Bass-typed preset regardless of pack");
+
+        Browser::Filter bassAndPack;
+        bassAndPack.soundType = "Bass";
+        bassAndPack.category = "Bass Impacts";
+        expect (names (Browser::filterIndices (presets, bassAndPack, {}))
+                    == "Bass Impacts Keys,Bass Impacts Pulse",
+                "TYPE combines with the pack/bank filter (AND)");
+
+        Browser::Filter bassAndSearch;
+        bassAndSearch.soundType = "Bass";
+        bassAndSearch.search = "wobble";
+        expect (names (Browser::filterIndices (presets, bassAndSearch, {}))
+                    == "BASS Wobble", "TYPE combines with search (AND)");
+
+        Browser::Filter searchForTypeName;
+        searchForTypeName.search = "soundscape";
+        expect (names (Browser::filterIndices (presets, searchForTypeName, {}))
+                    == "Ambient Pack Texture",
+                "search also matches the sound-type name itself, not just preset name/pack");
+
+        // --- the dropdown lists only the types actually present under the
+        // OTHER filters, alphabetical -------------------------------------------
+        expect (Browser::availableSoundTypes (presets, {}, {}).joinIntoString (",")
+                    == "Bass,Pad,Soundscape",
+                "every type present, alphabetical, with none unmatched");
+
+        Browser::Filter bassPackOnly;
+        bassPackOnly.category = "Bass Impacts";
+        expect (Browser::availableSoundTypes (presets, bassPackOnly, {}).joinIntoString (",") == "Bass",
+                "dropdown narrows to types present under the pack filter alone");
+
+        // Anti-vacuous: the listing must ignore its OWN current soundType pick,
+        // not just every OTHER filter -- otherwise a stale/foreign soundType
+        // value passed in could silently empty the whole dropdown.
+        Browser::Filter staleSoundType;
+        staleSoundType.soundType = "Lead";   // not present anywhere in `presets`
+        expect (Browser::availableSoundTypes (presets, staleSoundType, {}).joinIntoString (",")
+                    == "Bass,Pad,Soundscape",
+                "availableSoundTypes ignores its own soundType field, per its contract");
     }
 
     // Dependent-control dimming (LFO rate vs. division, gated by sync) --
@@ -24295,6 +24425,7 @@ int main (int argc, char* argv[])
     RUN (reverbArrivalFollowsPreDelayTest);
     RUN (plateReverbIndexStressTest);
     RUN (reverbLevelMatchesOldEngineTest);
+    RUN (presetBrowserSoundTypeTest);
 
    #undef RUN
 

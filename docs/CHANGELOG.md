@@ -9,15 +9,13 @@
   presets are already sorted this way, so Keys, Texture and Pulse presets
   show up as Keys, Soundscape and Rhythmic respectively. This came from
   feedback.
-- Delay ping-pong now actually bounces. Previously, ping-pong only crossed
-  the feedback paths, so a centred or mono sound (the same on both sides)
-  echoed identically whether ping-pong was on or off. A new WIDTH knob
-  controls how much the delay's input itself gets bounced between left
-  and right: at 100% a centred sound bounces fully from one side to the
-  other; lower settings narrow the bounce back toward the old behavior.
-  WIDTH only does anything with ping-pong on, and is dimmed otherwise.
-  If you have a preset or saved session with ping-pong on, its delay will
-  now bounce noticeably wider than before, since WIDTH defaults to 100%.
+- Delay ping-pong now actually bounces. Before, a centred or mono sound
+  echoed the same whether ping-pong was on or off. A new WIDTH knob sets
+  how far the echoes bounce between left and right: 100% bounces fully
+  from side to side, lower settings narrow it. WIDTH only applies with
+  ping-pong on and is dimmed otherwise, so presets and sessions with
+  ping-pong on will now bounce noticeably wider than before. This came
+  from feedback.
 - Redesigned the Chorus, Delay, Mod and Trem/Vib displays so every knob
   actually shows up in the picture, not just one or two of them. Chorus now
   reacts to rate, width, mode and feedback as well as depth and mix; Delay

@@ -1,0 +1,31 @@
+SPASynth 1.0.25 - what's new since 1.0.24
+
+A bigger round, most of it from your feedback. Two changes affect how existing sounds play, so they are flagged first.
+
+Changes you will hear in existing sounds
+- Reverb now starts right after the PRE time instead of arriving late. The report was right: at the default Hall setting the reverb was not starting until roughly 300 ms after the note, whatever PRE said. It now blooms straight after the pre-delay. The decay is a little longer (about 10%), the tail is slightly brighter in Room, and your own saved presets may sit 1 to 4 dB wetter or drier, mostly at long decays and big sizes. Factory presets were rebalanced to keep their mix. We would really like your ears on this one.
+- Delay ping-pong now actually bounces. Before, a centred sound echoed the same with ping-pong on or off. The new WIDTH knob sets how far it bounces, and it defaults to 100%, so anything with ping-pong already on will bounce wider than before.
+
+New
+- Custom LFO shape. Pick Custom in an LFO's shape menu and draw your own: drag points, double-click empty space to add a point, double-click a point (or right-click it) to remove it, drag the small handle between two points to bend that segment, hold Shift for fine moves. Saved with presets.
+- Per-oscillator filter bypass. The OSC A/B/C toggles under the filter ON switch (same three switches on both filter tabs) let an oscillator skip both filters and play dry. All on by default.
+- Preset TYPE menu, next to the pack menu. Start a preset name with a tag such as BASS, PAD, LEAD, AMB, PLUCK (full list in the README) and it lands in that type. Factory presets are already sorted.
+- Redesigned effect displays. Chorus, Delay, Mod and Trem/Vib now respond to every knob, and the delay display shows echo timing and splits into left and right in ping-pong. The effect tabs are laid out more tightly, with larger knobs, and the knob labels inside each effect tab are shortened (RATE, MIX and so on).
+
+Fixed
+- Mod matrix rows picked from the menus now light up straight away instead of staying greyed until you hover.
+- RANDOMIZE ALL far less often lands on a patch that shows on the meters but is too quiet to hear. Random sample starts now only land on audible parts of a file.
+- A possible crash when closing SPASynth right after several quick RANDOMIZE ALL clicks.
+- WILD is now saved with presets, and loading a preset no longer changes your window size or keyboard octave.
+
+Worth trying specifically
+- Reverb: set PRE to about 30 ms and play short notes in each mode; the reverb should follow the note almost immediately. Load a few of your own reverb-heavy presets and tell us if any now feel too wet or too dry, or if Hall/Room sound too bright or too long.
+- Delay: mono patch, ping-pong on, WIDTH at 100 then 0, on headphones.
+- Draw a Custom LFO onto filter cutoff, then save, reload and confirm the shape comes back. Keep playing QWERTY notes while you edit the points.
+- Turn off OSC A under the filter with a low cutoff and confirm that oscillator stays bright.
+- Save a preset named "BASS Test" and find it under TYPE > Bass.
+- Click RANDOMIZE ALL twenty or thirty times in a row with your library loaded and note any roll that is too quiet to hear (a screenshot of the patch helps).
+
+Install notes
+- macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic. Factory presets regenerate on the first scan.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

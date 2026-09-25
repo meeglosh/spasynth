@@ -13430,6 +13430,137 @@ namespace
                 "osc C filterRoute restored off");
     }
 
+    // v1.0.25 regression, fixed same round: the OSC A/B/C route row that
+    // 545a61f added to FilterPanel was cut out of the knob-row area, so the
+    // six filter knobs (CUTOFF/RES/DRIVE, KEYTRK/ENV 2/MIX) shrank from
+    // their pre-545a61f diameter to a visibly smaller one. Pins the base-
+    // size knob diameter back to the pre-545a61f value (measured directly
+    // from the reverted resized() logic, not by eye) and the filter
+    // response display's minimum height, on both filter tabs. Renders the
+    // real editor -- no synthetic bounds -- so a future layout change to
+    // the panel is caught the same way this one would have been.
+    static void filterKnobDiameterTest()
+    {
+        std::cout << "filterKnobDiameterTest\n";
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        // Only the FRONT tab's content is parented as a visible child at any
+        // moment (juce::TabbedComponent), so a component-tree walk only ever
+        // finds one FilterPanel. Find the TabbedComponent that holds them
+        // and read both tab contents directly instead.
+        juce::TabbedComponent* filterTabs = nullptr;
+        std::function<void (juce::Component&)> findTabs = [&] (juce::Component& c)
+        {
+            if (filterTabs == nullptr)
+            {
+                if (auto* tabs = dynamic_cast<juce::TabbedComponent*> (&c))
+                    if (tabs->getNumTabs() == 2
+                        && dynamic_cast<spa::ui::FilterPanel*> (tabs->getTabContentComponent (0)) != nullptr)
+                        filterTabs = tabs;
+            }
+            for (auto* child : c.getChildren())
+                findTabs (*child);
+        };
+        findTabs (*editor);
+
+        spa::ui::FilterPanel* filterPanels[2] = { nullptr, nullptr };
+        if (filterTabs != nullptr)
+        {
+            filterPanels[0] = dynamic_cast<spa::ui::FilterPanel*> (filterTabs->getTabContentComponent (0));
+            filterPanels[1] = dynamic_cast<spa::ui::FilterPanel*> (filterTabs->getTabContentComponent (1));
+
+            // Only the FRONT tab's content is actually parented/sized by
+            // juce::TabbedComponent (see TabbedComponent::changeCallback) --
+            // the other one sits at its default 0x0 until selected. Switch
+            // to tab 2 so its resized() actually runs against real bounds
+            // before measuring it below; switch back afterwards so the
+            // editor is left the way it started.
+            filterTabs->setCurrentTabIndex (1);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        }
+
+        expect (filterPanels[0] != nullptr && filterPanels[1] != nullptr,
+                "filterKnobDiameterTest: both filter tabs' panels found");
+        if (filterPanels[0] == nullptr || filterPanels[1] == nullptr)
+            return;
+
+        // Measured directly by reverting FilterPanel::resized() to the
+        // pre-545a61f version (no OSC route row at all) against these SAME
+        // real base-size bounds, then confirming the fixed build reproduces
+        // it exactly. Filter 1's response display is taller (86px) than
+        // Filter 2's (64px), so its knob rows start with less height and the
+        // two tabs' pre-regression diameters genuinely differ (47px vs
+        // 58px) -- the shipped 545a61f bug measured 37px/48px, about 10px
+        // (21-27%) smaller on each tab.
+        constexpr int expectedKnobDiameter[2] = { 47, 58 };   // +/- 1px, filter 1 / filter 2
+        constexpr int displayMinHeight = 40;
+
+        const juce::String cutoffIDs[2]  = { id::filter1Cutoff, id::filter2Cutoff };
+        const juce::String envIDs[2]     = { id::filter1EnvAmount, id::filter2EnvAmount };
+
+        for (int i = 0; i < 2; ++i)
+        {
+            auto* cutoffSlider = findByParamID (*filterPanels[i], cutoffIDs[i]);
+            expect (cutoffSlider != nullptr, "CUTOFF slider found on filter tab " + juce::String (i + 1));
+            if (cutoffSlider == nullptr)
+                continue;
+            auto* knob = cutoffSlider->getParentComponent();
+            expect (knob != nullptr, "CUTOFF knob wrapper found on filter tab " + juce::String (i + 1));
+            if (knob == nullptr)
+                continue;
+
+            const auto diameter = juce::jmin (knob->getWidth(), knob->getHeight());
+            expect (std::abs (diameter - expectedKnobDiameter[i]) <= 1,
+                    "filter " + juce::String (i + 1) + " CUTOFF knob diameter is "
+                        + juce::String (diameter) + "px, expected "
+                        + juce::String (expectedKnobDiameter[i]) + "px +/-1 (pre-545a61f size)");
+
+            // Second row (KEYTRK/ENV2/MIX) must match too -- both rows use
+            // the same rowH, but this catches a fix that only restored row 1.
+            auto* envSlider = findByParamID (*filterPanels[i], envIDs[i]);
+            if (envSlider != nullptr && envSlider->getParentComponent() != nullptr)
+            {
+                auto* envKnob = envSlider->getParentComponent();
+                const auto envDiameter = juce::jmin (envKnob->getWidth(), envKnob->getHeight());
+                expect (std::abs (envDiameter - expectedKnobDiameter[i]) <= 1,
+                        "filter " + juce::String (i + 1) + " ENV 2 knob diameter is "
+                            + juce::String (envDiameter) + "px, expected "
+                            + juce::String (expectedKnobDiameter[i]) + "px +/-1");
+            }
+        }
+
+        // The response display's height must never collapse below the
+        // documented floor (currently unreachable at base size -- filter 1
+        // lands at 66px, filter 2 at 44px -- but this is the invariant that
+        // stops a future, taller route row from inverting it).
+        for (int i = 0; i < 2; ++i)
+        {
+            std::function<spa::ui::FilterDisplay* (juce::Component&)> findDisplay =
+                [&] (juce::Component& c) -> spa::ui::FilterDisplay*
+            {
+                if (auto* d = dynamic_cast<spa::ui::FilterDisplay*> (&c))
+                    return d;
+                for (auto* child : c.getChildren())
+                    if (auto* found = findDisplay (*child))
+                        return found;
+                return nullptr;
+            };
+            auto* display = findDisplay (*filterPanels[i]);
+            expect (display != nullptr, "filter " + juce::String (i + 1) + " response display found");
+            if (display != nullptr)
+                expect (display->getHeight() >= displayMinHeight,
+                        "filter " + juce::String (i + 1) + " response display height "
+                            + juce::String (display->getHeight()) + "px >= " + juce::String (displayMinHeight) + "px minimum");
+        }
+    }
+
     // Fundamental frequency estimate via positive-going zero crossings.
     static float zeroCrossingHz (const juce::AudioBuffer<float>& capture,
                                  int start, int len, double sampleRate)
@@ -24895,6 +25026,7 @@ int main (int argc, char* argv[])
     RUN (filterRouteBypassTest);
     RUN (filterRouteExcludedFromRandomizeTest);
     RUN (filterRoutePresetPersistTest);
+    RUN (filterKnobDiameterTest);
     RUN (glideTest);
     RUN (libraryScanTest);
     RUN (libraryDiscoveryTest);

@@ -694,7 +694,21 @@ void FilterPanel::paint (juce::Graphics& g)
 void FilterPanel::resized()
 {
     auto area = getLocalBounds().withTrimmedTop (metrics::sectionHeaderHeight).reduced (7, 3);
-    display.setBounds (area.removeFromTop (index == 2 ? 64 : 86));
+
+    // v1.0.25 regression (545a61f): the OSC A/B/C route row below was
+    // originally cut out of the knob-row area, shrinking the six filter
+    // knobs from their pre-545a61f diameter (47px on Filter 1, 58px on
+    // Filter 2 -- the two tabs differ because Filter 1's response display
+    // above is taller) to 37px/48px. Take its height from the response
+    // display instead -- it has spare room -- so the knob rows get exactly
+    // the area they had before that commit (pinned in
+    // filterKnobDiameterTest). Clamped to a sane minimum so the display
+    // itself can never invert/clip.
+    constexpr int oscRouteRowHeight = 20;   // 18px row + 2px gap below it
+    constexpr int displayMinHeight = 40;
+    const auto baseDisplayHeight = index == 2 ? 64 : 86;
+    const auto displayHeight = juce::jmax (displayMinHeight, baseDisplayHeight - oscRouteRowHeight);
+    display.setBounds (area.removeFromTop (displayHeight));
     area.removeFromTop (4);
 
     {

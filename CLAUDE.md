@@ -10,6 +10,87 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-25): v1.0.25 (main `a7c86a2`) built + staged; big tester round
+
+**1.0.24 was never installed/sent before this round started** (Mike moved
+straight on to new requests), so 1.0.25 supersedes it. Commits
+`cd86a00`..`a7c86a2`, one per job; `docs/CHANGELOG.md ## 1.0.25` and
+`docs/tester-note-1.0.25.txt` describe it in customer voice.
+
+- **Delay ping-pong WIDTH** (`fxDelay.width`, default 100, ping-pong only).
+  Measured: old ping-pong was a no-op on centred input (echo 1 L=R=1.0) --
+  it only crossed feedback. WIDTH blends the injection to the mono sum into
+  the left line; w=0 / ping-pong off bit-identical.
+- **FX displays**: chorus/delay redesign, new `Kind::mod`/`Kind::tremVib`
+  (both tabs had been drawing the CHORUS picture), animated while showing,
+  `Telemetry::bpm` feeds synced timing. `SectionPanel` opt-in `dense`
+  packing (FXPanel only; full-editor pixel diff outside FX = 0); FX
+  captions drop the section word when unambiguous.
+  `fxPanelCaptionFitsColumnTest` exists because `fxPanelLabelClippingTest`
+  never checked text WIDTH (juce::Label eats a 5 px border each side).
+- **Mod matrix dim wash** stayed stale after a dropdown pick: only
+  chaos::syncToBpm repainted the RowsHost. Now listens on every route
+  source/dest param.
+- **RANDOMIZE ALL too quiet** (Mike: "registers on the meters, too quiet to
+  hear", no locks). Several causes found by per-Section reset bisection;
+  floors added (see commit `2226073`), energy-aware random sample start
+  from `SampleData::ampCurve`. Chained test gates -40 dBFS RMS / -30 peak
+  on a WHOLE-NOTE classifier (a plucky patch with an audible attack is not
+  silent; the old held-tail-only classifier over-flagged it). **Still open:**
+  opt-in real-library harness shows 457/3960 (11.5%) quiet-throughout
+  (was 495); residual is mostly Osc A sample content + heavy FX wet; two
+  unapplied proposals (amplitude-weighted start draw, combined-wet cap).
+  Mike to judge by ear first.
+- **Crash**: `Thread::launch` loads could outlive `~SPASynthProcessor` on
+  rapid rolls. `activeBackgroundThreads` + bounded destructor wait;
+  superseded requests bail before work.
+- **Presets**: voiceMode/glide/master were NEVER broken (verified through
+  PresetManager with a live editor; JUCE replaceState already defaults a
+  missing PARAM). Real bugs: WILD (`randomWildness` property) was only
+  written once touched, and its slider stayed stale after load; presets
+  carried uiScale/uiKeyboard* (now preserved on preset load,
+  `restoreStateTree(isPresetLoad)`). Open: `randomLockMask` can ride in a
+  preset saved with a lock on.
+- **Reverb pre-delay (Paul)**: wet output read only the END of delay2, so
+  Hall SIZE 0.5 PRE 32 ms arrived at 285 ms as one block. Now Dattorro's
+  7-tap-per-side output (arrival 38-44 ms). Early taps damped 75/25 with the
+  tank's dampC. vs 1.0.24: RT60 +7..13%, centroid +3..16% (Room), user
+  wet level 1-4 dB off; factory reverbMix re-solved per preset,
+  factoryRecipeVersion 9. **Mike accepted it for tester A/B** after two
+  agent rounds. `plateReverbIndexStressTest` closes the "bounds confirmed
+  by reading only" item. Opt-in `--reverb-predelay-report`.
+- **Per-oscillator filter routing** `osc{A,B,C}.filterRoute` (bypass bus
+  rejoins after the filter block). Its row first stole knob height (caught
+  only by comparing against the old render); fixed, `filterKnobDiameterTest`.
+- **Preset TYPE menu** from the first word of the name (table in
+  PresetBrowser.cpp; KEY/KEYS merged; factory Keys/Texture/Pulse ->
+  Keys/Soundscape/Rhythmic). Quick-filter chips kept (origin vs character).
+- **Custom LFO shape** (`LFOShape::custom`, 32-point breakpoint editor in
+  LFODisplay, `LFOCUSTOM` state child, double buffer + atomic pointer).
+  No undo: the APVTS has no UndoManager anywhere.
+- Test fixes: presetBrowserWidens/NativeShift tests assumed a big display
+  (failed laptop-only); now force their own scale. NOT a product bug.
+
+**Process lesson (Mike, recorded as memory `agent-cost-discipline`):** the
+round cost far too much -- one randomize agent resumed for 8+ h / ~870k
+tokens, and ASan was run on UI jobs. Rule now: `--only` while iterating,
+one full suite per job, ASan only for DSP/lifetime + pre-release, fresh
+agent for a second round, two-round cap then bring numbers to Mike.
+
+Suite ALL PASS Debug + Release (in build_release) + ASan (pre-release run).
+**macOS 1.0.25 pkg** signed + notarized + stapled, `spctl` accepted,
+universal, minos 11.0, md5 `eb18ef1f1b97f162c9145d0ff8463364`. **Windows
+exe from draft release `ci-windows-a7c86a2`** (CI run `36081522228`), md5
+`2c904c213b14281ad4aecdbb78bdd8f3`. Both byte-identical across
+`dist/installers/` and `dist/shopify/SPASynth-{Standard,Pro}-1.0.25/`.
+
+**Pending: Mike installs (`sudo installer -pkg
+/Users/mikejerugim/spasynth/dist/installers/SPASynth-1.0.25-macOS.pkg
+-target /`, then Plug-in Manager -> Reset & Rescan -> relaunch Logic),
+runs the gauntlet, sends to Paul and Phil. Bump to 1.0.26 after that.**
+Still open from before: wavetable chaos-PHASE stepping (waiting on Paul),
+Hall MIX taper taste question (Phil).
+
 ## Current state (2026-09-22): v1.0.24 (main `0936a0a`) built + staged; delete user presets, chaos cue gated per mode, per-kind browse folder, and a TEST bug that looked like a reverb explosion
 
 **The expensive one, record it in full -- it cost most of a day and nearly

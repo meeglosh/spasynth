@@ -17672,155 +17672,231 @@ namespace
     // the window mid-screen first so a real clamp-worthy edge isn't in play,
     // opens the drawer, and asserts the peer's screen x decreased by exactly
     // the added width; closing restores it.
-    static void presetBrowserNativeShiftTest()
+    static void nativeShiftPumpForMs (int ms)
     {
-        std::cout << "presetBrowserNativeShiftTest\n";
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    }
 
-        const auto pumpFor = [] (int ms)
+    static juce::TextButton* findNativeShiftBrowseButton (juce::Component& root)
+    {
+        juce::TextButton* found = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
         {
-            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
-            while (juce::Time::getMillisecondCounter() < deadline)
-                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+            if (found == nullptr)
+                if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                    if (b->getTooltip() == "Browse presets")
+                        found = b;
+            for (auto* child : c.getChildren())
+                find (*child);
         };
+        find (root);
+        return found;
+    }
 
-        spa::SPASynthProcessor proc;
-        proc.prepareToPlay (48000.0, 512);
-
+    // 2026-09-24 root cause, recorded here rather than in source because
+    // there was no source bug: SPASynthEditor::browserToggled already
+    // computes the added width from the editor's actual on-screen (scaled)
+    // pixel size on BOTH the open and close paths, and already remembers +
+    // reverses the EXACT delta shiftNativeWindowX verified it applied on
+    // open (nativeWindowShiftApplied), not the nominal drawer width -- so
+    // open and close were never using different widths or different scales.
+    // The bug was in this TEST: (1) its first assertion compared against
+    // the raw unscaled metrics::presetBrowserWidth, which only matches at
+    // editor scale 1.0 -- on this machine's smaller built-in display the
+    // editor auto-fits below 1.0 (0.85 measured), so the correctly-scaled
+    // real shift never matched the unscaled expectation; (2) the window's
+    // starting position (a naive quarter-of-screen inset) put its right
+    // edge PAST the display's visible width once the editor was fitted
+    // below 1.0 -- the very first, pre-toggle position was already
+    // invalid. Opening happened to pull the window fully on-screen as a
+    // side effect of the anchor-right shift (which is why the open delta
+    // measured 311px instead of the nominal 272px = 320*0.85); closing's
+    // reversal of that same VERIFIED delta reproduced the identical
+    // (correct) edge clamp, landing the window flush with the screen edge
+    // again rather than back at the invalid original x -- 39px short of
+    // the original, reading exactly like "creep" while actually being the
+    // same clamp firing consistently both times against a starting
+    // position the test itself never validated.
+    //
+    // Fixed here: run the scenario at explicit, forced editor scales
+    // (1.0 and a smaller one) instead of whatever this machine's real
+    // display happens to auto-fit to; compute the expected added width the
+    // same scale-aware way production does; and place the window with
+    // margin on every edge so no clamp is in play for this round trip (the
+    // clamped scenario below covers clamping on its own, unchanged in
+    // spirit from before). Also asserts 5 open/close cycles in a row all
+    // land on the exact same position -- the actual anti-creep guarantee.
+    static void runNativeShiftUnclampedScenario (spa::SPASynthProcessor& proc, double forcedScale)
+    {
         std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
         editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
         editor->addToDesktop (0);
         editor->setVisible (true);
+        nativeShiftPumpForMs (200);   // let the one-shot screen-fit check (if any) settle first
 
-        // Mid-screen, well clear of any edge that would force a clamp.
-        if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-        {
-            const auto area = display->userBounds.toNearestInt();
-            editor->setTopLeftPosition (area.getX() + area.getWidth() / 4,
-                                        area.getY() + area.getHeight() / 4);
-        }
-        pumpFor (200);
-
-        juce::TextButton* browseButton = nullptr;
-        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
-        {
-            if (browseButton == nullptr)
-                if (auto* b = dynamic_cast<juce::TextButton*> (&c))
-                    if (b->getTooltip() == "Browse presets")
-                        browseButton = b;
-            for (auto* child : c.getChildren())
-                find (*child);
-        };
-        find (*editor);
-
-        expect (browseButton != nullptr, "browse button found");
-        if (browseButton == nullptr)
-        {
-            editor->removeFromDesktop();
-            return;
-        }
+        // Force the exact scale under test -- the screen-fit check above is
+        // one-shot and already tripped, so this explicit size sticks
+        // regardless of what this machine's real display would have
+        // auto-fitted to. Deterministic across machines/CI.
+        editor->setSize (juce::roundToInt (spa::ui::metrics::baseWidth * forcedScale),
+                          juce::roundToInt (spa::ui::metrics::baseHeight * forcedScale));
+        nativeShiftPumpForMs (50);
 
         auto* peer = editor->getPeer();
-        expect (peer != nullptr, "editor has a real desktop peer");
-        if (peer == nullptr)
+        expect (peer != nullptr, "scale " + juce::String (forcedScale) + ": editor has a real desktop peer");
+        if (peer == nullptr) { editor->removeFromDesktop(); return; }
+
+        auto* browseButton = findNativeShiftBrowseButton (*editor);
+        expect (browseButton != nullptr, "scale " + juce::String (forcedScale) + ": browse button found");
+        if (browseButton == nullptr) { editor->removeFromDesktop(); return; }
+
+        // Scale-aware expected added width, computed the same way
+        // SPASynthEditor::browserToggled does (from the actual on-screen
+        // height, not the nominal forcedScale, so integer rounding matches
+        // production exactly).
+        const auto actualScale = (double) peer->getBounds().getHeight() / (double) spa::ui::metrics::baseHeight;
+        const auto closedW = juce::roundToInt (spa::ui::metrics::baseWidth * actualScale);
+        const auto openW = juce::roundToInt ((spa::ui::metrics::baseWidth + spa::ui::metrics::presetBrowserWidth) * actualScale);
+        const auto expectedAdded = openW - closedW;
+
+        juce::Rectangle<int> screenArea;
+        if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            screenArea = display->userBounds.toNearestInt();
+
+        // Need room for the OPEN width (the closed window's right edge is
+        // anchored to the same point once opened -- see "anchor on the
+        // right" above) plus a small safety margin -- if this display can't
+        // fit that at this scale, there's nothing meaningful to assert
+        // about an UNCLAMPED round trip here (the clamped scenario below
+        // covers clamping on its own).
+        if (screenArea.isEmpty() || screenArea.getWidth() < openW + 40)
         {
             editor->removeFromDesktop();
             return;
         }
+
+        const auto x0 = screenArea.getX() + expectedAdded + 20;
+        editor->setTopLeftPosition (x0, screenArea.getY() + juce::jmax (0, screenArea.getHeight() / 4));
+        nativeShiftPumpForMs (100);
 
         const auto screenXBefore = peer->getBounds().getX();
 
-        browseButton->triggerClick();
-        pumpFor (400);   // past the drawer's open ease
+        // Five round trips in a row: proves there's no per-cycle drift, not
+        // just that a single cycle happens to land back where it started.
+        for (int cycle = 0; cycle < 5; ++cycle)
+        {
+            browseButton->triggerClick();
+            nativeShiftPumpForMs (400);   // past the drawer's open ease
+            const auto screenXOpen = peer->getBounds().getX();
+            expect (screenXOpen == screenXBefore - expectedAdded,
+                    "scale " + juce::String (forcedScale) + " cycle " + juce::String (cycle)
+                    + ": native window moved LEFT by exactly the scale-aware added width when the "
+                      "drawer opened (x " + juce::String (screenXBefore) + " -> " + juce::String (screenXOpen)
+                    + ", expected added " + juce::String (expectedAdded) + ")");
 
-        const auto expectedAdded = spa::ui::metrics::presetBrowserWidth;
-        const auto screenXOpen = peer->getBounds().getX();
-        expect (screenXOpen == screenXBefore - expectedAdded,
-                "native window moved LEFT by exactly the added width when the drawer opened "
-                "(x " + juce::String (screenXBefore) + " -> " + juce::String (screenXOpen) + ")");
-
-        browseButton->triggerClick();
-        pumpFor (400);   // past the drawer's close ease + the deferred shrink
-
-        const auto screenXClosed = peer->getBounds().getX();
-        expect (screenXClosed == screenXBefore,
-                "native window restored to its original screen position after closing "
-                "(x " + juce::String (screenXClosed) + " vs " + juce::String (screenXBefore) + ")");
+            browseButton->triggerClick();
+            nativeShiftPumpForMs (400);   // past the drawer's close ease + the deferred shrink
+            const auto screenXClosed = peer->getBounds().getX();
+            expect (screenXClosed == screenXBefore,
+                    "scale " + juce::String (forcedScale) + " cycle " + juce::String (cycle)
+                    + ": native window restored to its original screen position after closing "
+                      "(x " + juce::String (screenXClosed) + " vs " + juce::String (screenXBefore) + ")");
+        }
 
         editor->removeFromDesktop();
+    }
 
-        // Clamped case: position a second editor's window so the open move
-        // can only go PART of the way (the requested left shift would run
-        // it off the display's usable area) -- proves the editor undoes
-        // exactly the amount shiftNativeWindowX actually applied on close,
-        // not the nominal drawer width, so a clamped open/close cycle
-        // doesn't creep the window. If this editor's platform can't even
-        // move an unclamped window (verified above), a clamped one won't
-        // move either, so only run this half where the plain case worked.
-        if (screenXOpen == screenXBefore - expectedAdded)
+    // Deliberately clamped case: position the window near the left edge so
+    // the open move can only go PART of the way (the requested left shift
+    // would run it off the display's usable area) -- proves the close path
+    // undoes exactly the amount shiftNativeWindowX actually applied, not
+    // the nominal drawer width, so a clamped open/close cycle doesn't creep
+    // the window either.
+    static void runNativeShiftClampedScenario (spa::SPASynthProcessor& proc, double forcedScale)
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        nativeShiftPumpForMs (200);
+
+        editor->setSize (juce::roundToInt (spa::ui::metrics::baseWidth * forcedScale),
+                          juce::roundToInt (spa::ui::metrics::baseHeight * forcedScale));
+        nativeShiftPumpForMs (50);
+
+        auto* peer = editor->getPeer();
+        expect (peer != nullptr, "clamped, scale " + juce::String (forcedScale) + ": editor has a real desktop peer");
+        if (peer == nullptr) { editor->removeFromDesktop(); return; }
+
+        auto* browseButton = findNativeShiftBrowseButton (*editor);
+        expect (browseButton != nullptr, "clamped, scale " + juce::String (forcedScale) + ": browse button found");
+        if (browseButton == nullptr) { editor->removeFromDesktop(); return; }
+
+        const auto actualScale = (double) peer->getBounds().getHeight() / (double) spa::ui::metrics::baseHeight;
+        const auto closedW = juce::roundToInt (spa::ui::metrics::baseWidth * actualScale);
+        const auto openW = juce::roundToInt ((spa::ui::metrics::baseWidth + spa::ui::metrics::presetBrowserWidth) * actualScale);
+        const auto expectedAdded = openW - closedW;
+
+        juce::Rectangle<int> screenArea;
+        if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            screenArea = display->userBounds.toNearestInt();
+        if (screenArea.isEmpty())
         {
-            std::unique_ptr<juce::AudioProcessorEditor> editor2 (proc.createEditor());
-            editor2->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
-            editor2->addToDesktop (0);
-            editor2->setVisible (true);
-
-            juce::Rectangle<int> screenArea;
-            if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-                screenArea = display->userBounds.toNearestInt();
-
-            // Close enough to the left edge that a full-width leftward shift
-            // is impossible, but with SOME room, so the move is clamped
-            // rather than fully rejected (0 applied would trivially satisfy
-            // the "undo what was actually applied" logic without proving
-            // anything about partial clamping).
-            const auto margin = expectedAdded / 2;
-            editor2->setTopLeftPosition (screenArea.getX() + margin,
-                                         screenArea.getY() + screenArea.getHeight() / 4);
-            pumpFor (200);
-
-            juce::TextButton* browseButton2 = nullptr;
-            std::function<void (juce::Component&)> find2 = [&] (juce::Component& c)
-            {
-                if (browseButton2 == nullptr)
-                    if (auto* b = dynamic_cast<juce::TextButton*> (&c))
-                        if (b->getTooltip() == "Browse presets")
-                            browseButton2 = b;
-                for (auto* child : c.getChildren())
-                    find2 (*child);
-            };
-            find2 (*editor2);
-
-            expect (browseButton2 != nullptr, "clamped case: browse button found");
-            if (browseButton2 != nullptr)
-            {
-                auto* peer2 = editor2->getPeer();
-                expect (peer2 != nullptr, "clamped case: editor has a real desktop peer");
-                if (peer2 != nullptr)
-                {
-                    const auto clampedXBefore = peer2->getBounds().getX();
-
-                    browseButton2->triggerClick();
-                    pumpFor (400);
-
-                    const auto clampedXOpen = peer2->getBounds().getX();
-                    expect (clampedXOpen > clampedXBefore - expectedAdded,
-                            "clamped case: open move was actually clamped, not the full requested width "
-                            "(x " + juce::String (clampedXBefore) + " -> " + juce::String (clampedXOpen) + ")");
-                    expect (clampedXOpen >= screenArea.getX(),
-                            "clamped case: window stayed within the display's usable area");
-
-                    browseButton2->triggerClick();
-                    pumpFor (400);
-
-                    const auto clampedXClosed = peer2->getBounds().getX();
-                    expect (clampedXClosed == clampedXBefore,
-                            "clamped case: window restored to its EXACT original position after "
-                            "closing, not creeped right by the clamp shortfall "
-                            "(x " + juce::String (clampedXClosed) + " vs " + juce::String (clampedXBefore) + ")");
-                }
-            }
-
-            editor2->removeFromDesktop();
+            editor->removeFromDesktop();
+            return;
         }
+
+        // Close enough to the left edge that a full-width leftward shift is
+        // impossible, but with SOME room, so the move is clamped rather
+        // than fully rejected (0 applied would trivially satisfy "undo what
+        // was actually applied" without proving anything about a partial
+        // clamp).
+        const auto margin = expectedAdded / 2;
+        editor->setTopLeftPosition (screenArea.getX() + margin,
+                                     screenArea.getY() + juce::jmax (0, screenArea.getHeight() / 4));
+        nativeShiftPumpForMs (100);
+
+        const auto clampedXBefore = peer->getBounds().getX();
+
+        browseButton->triggerClick();
+        nativeShiftPumpForMs (400);
+        const auto clampedXOpen = peer->getBounds().getX();
+        expect (clampedXOpen > clampedXBefore - expectedAdded,
+                "clamped, scale " + juce::String (forcedScale) + ": open move was actually clamped, "
+                "not the full requested width (x " + juce::String (clampedXBefore) + " -> "
+                + juce::String (clampedXOpen) + ")");
+        expect (clampedXOpen >= screenArea.getX(),
+                "clamped, scale " + juce::String (forcedScale) + ": window stayed within the display's usable area");
+
+        browseButton->triggerClick();
+        nativeShiftPumpForMs (400);
+        const auto clampedXClosed = peer->getBounds().getX();
+        expect (clampedXClosed == clampedXBefore,
+                "clamped, scale " + juce::String (forcedScale) + ": window restored to its EXACT original "
+                "position after closing, not creeped right by the clamp shortfall (x "
+                + juce::String (clampedXClosed) + " vs " + juce::String (clampedXBefore) + ")");
+
+        editor->removeFromDesktop();
+    }
+
+    static void presetBrowserNativeShiftTest()
+    {
+        std::cout << "presetBrowserNativeShiftTest\n";
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        // Explicit, forced editor scales -- deterministic across machines
+        // rather than depending on whatever this machine's real display
+        // happens to auto-fit to (see the long comment above these helpers:
+        // that dependency is exactly what hid the 2026-09-24 report until
+        // it hit a smaller built-in display).
+        runNativeShiftUnclampedScenario (proc, 1.0);
+        runNativeShiftUnclampedScenario (proc, 0.85);
+
+        runNativeShiftClampedScenario (proc, 0.85);
     }
 
     // Simulates a host that refuses to actually resize the editor for the

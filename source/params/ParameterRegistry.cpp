@@ -360,7 +360,7 @@ static void addLFOParams (std::vector<ParamDef>& p, int lfoIndex)
     p.push_back ({ pid (id::lfo::shape), prefix + "Shape", section,
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true },
-                   { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H" } });
+                   { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Custom" } });
     p.push_back ({ pid (id::lfo::rate), prefix + "Rate", section,
                    ParamKind::floatParam, frequencyRange (0.01f, 40.0f), 1.0f, "Hz",
                    false, { .enabled = true, .minNorm = 0.2f, .maxNorm = 0.8f } });

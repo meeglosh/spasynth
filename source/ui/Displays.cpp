@@ -3,6 +3,7 @@
 #include "../dsp/FXChain.h"
 #include "../dsp/ParametricEQ.h"
 #include "../dsp/SamplePlayer.h"
+#include "AssignOverlay.h"   // free spa::ui::showPopupAnchored -- see its declaration comment
 
 namespace spa::ui
 {
@@ -936,6 +937,86 @@ void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 
 // ============================ LFODisplay ===================================
 
+namespace
+{
+    constexpr float lfoPointHitRadius = 8.0f;
+    constexpr float lfoHandleHitRadius = 7.0f;
+
+    // Shifts point/curve arrays to insert a new breakpoint at normalized
+    // (xNorm, yNorm), sorted position determined by xNorm. The two segments
+    // the new point splits both start straight (curve 0) rather than
+    // guessing which half of the old bend to keep. No-op past maxPoints.
+    void insertCustomLfoPoint (dsp::CustomLFOShape& s, float xNorm, float yNorm)
+    {
+        if (s.count >= dsp::CustomLFOShape::maxPoints)
+            return;
+
+        // Keep strictly inside the endpoints so the new point can never land
+        // exactly on (or index-collide with) x=0 or x=1.
+        xNorm = juce::jlimit (0.001f, 0.999f, xNorm);
+        yNorm = juce::jlimit (-1.0f, 1.0f, yNorm);
+
+        int insertAt = 1;
+        while (insertAt < s.count - 1 && s.x[(size_t) insertAt] < xNorm)
+            ++insertAt;
+
+        dsp::CustomLFOShape out;
+        out.count = s.count + 1;
+        for (int i = 0; i < insertAt; ++i)
+        {
+            out.x[(size_t) i] = s.x[(size_t) i];
+            out.y[(size_t) i] = s.y[(size_t) i];
+        }
+        out.x[(size_t) insertAt] = xNorm;
+        out.y[(size_t) insertAt] = yNorm;
+        for (int i = insertAt; i < s.count; ++i)
+        {
+            out.x[(size_t) (i + 1)] = s.x[(size_t) i];
+            out.y[(size_t) (i + 1)] = s.y[(size_t) i];
+        }
+
+        for (int seg = 0; seg < out.count - 1; ++seg)
+        {
+            if (seg < insertAt - 1)
+                out.curve[(size_t) seg] = s.curve[(size_t) seg];
+            else if (seg == insertAt - 1 || seg == insertAt)
+                out.curve[(size_t) seg] = 0.0f;   // the two split halves start straight
+            else
+                out.curve[(size_t) seg] = s.curve[(size_t) (seg - 1)];
+        }
+        s = out;
+    }
+
+    // Removes breakpoint `removeIdx` (must be an interior point, 0 <
+    // removeIdx < count-1 -- endpoints refuse silently). The segment that
+    // now spans the gap resets to straight (0) rather than guessing which
+    // of the two removed segments' bends to keep.
+    void removeCustomLfoPoint (dsp::CustomLFOShape& s, int removeIdx)
+    {
+        if (removeIdx <= 0 || removeIdx >= s.count - 1)
+            return;
+
+        dsp::CustomLFOShape out;
+        out.count = s.count - 1;
+        int w = 0;
+        for (int i = 0; i < s.count; ++i)
+        {
+            if (i == removeIdx)
+                continue;
+            out.x[(size_t) w] = s.x[(size_t) i];
+            out.y[(size_t) w] = s.y[(size_t) i];
+            ++w;
+        }
+        for (int seg = 0; seg < out.count - 1; ++seg)
+        {
+            const int origSeg = seg < removeIdx - 1 ? seg
+                               : (seg == removeIdx - 1 ? -1 : seg + 1);
+            out.curve[(size_t) seg] = origSeg >= 0 ? s.curve[(size_t) origSeg] : 0.0f;
+        }
+        s = out;
+    }
+}
+
 LFODisplay::LFODisplay (SPASynthProcessor& p, int lfoIndex)
     : DisplayComponent (p.getAPVTS(),
                         { params::id::lfoParam (lfoIndex, params::id::lfo::shape),
@@ -944,8 +1025,257 @@ LFODisplay::LFODisplay (SPASynthProcessor& p, int lfoIndex)
                           params::id::lfoParam (lfoIndex, params::id::lfo::smooth),
                           params::id::lfoParam (lfoIndex, params::id::lfo::jitter) },
                         &p.getTelemetry()),
-      lfo (lfoIndex)
+      processor (p), lfo (lfoIndex)
 {
+    // Always accept clicks (a plain DisplayComponent ignores them) -- the
+    // editor gestures below gate themselves on isCustomActive() rather than
+    // toggling this per shape change, so switching SHAPE in and out of
+    // Custom needs no extra wiring here. Never grabs keyboard focus, so
+    // QWERTY playing keeps working while editing (same rule as every other
+    // control -- see WaveDisplay's identical pair of calls).
+    setInterceptsMouseClicks (true, false);
+    setMouseClickGrabsKeyboardFocus (false);
+}
+
+bool LFODisplay::isCustomActive() const
+{
+    return (params::LFOShape) (int) value (params::id::lfoParam (lfo, params::id::lfo::shape))
+        == params::LFOShape::custom;
+}
+
+juce::Point<float> LFODisplay::pointToXY (float xNorm, float yNorm, juce::Rectangle<float> area) const
+{
+    return { area.getX() + area.getWidth() * xNorm,
+             area.getCentreY() - yNorm * area.getHeight() * 0.42f };
+}
+
+float LFODisplay::xToPhase (float x, juce::Rectangle<float> area) const
+{
+    if (area.getWidth() <= 0.0f)
+        return 0.0f;
+    return juce::jlimit (0.0f, 1.0f, (x - area.getX()) / area.getWidth());
+}
+
+float LFODisplay::yToValue (float y, juce::Rectangle<float> area) const
+{
+    if (area.getHeight() <= 0.0f)
+        return 0.0f;
+    return juce::jlimit (-1.0f, 1.0f, -(y - area.getCentreY()) / (area.getHeight() * 0.42f));
+}
+
+int LFODisplay::hitTestPoint (juce::Point<float> pos, juce::Rectangle<float> area,
+                              const dsp::CustomLFOShape& shape) const
+{
+    for (int i = 0; i < shape.count; ++i)
+    {
+        const auto p = pointToXY (shape.x[(size_t) i], shape.y[(size_t) i], area);
+        if (p.getDistanceFrom (pos) <= lfoPointHitRadius)
+            return i;
+    }
+    return -1;
+}
+
+int LFODisplay::hitTestHandle (juce::Point<float> pos, juce::Rectangle<float> area,
+                               const dsp::CustomLFOShape& shape) const
+{
+    for (int seg = 0; seg < shape.count - 1; ++seg)
+    {
+        const auto midPhase = 0.5f * (shape.x[(size_t) seg] + shape.x[(size_t) (seg + 1)]);
+        const auto midValue = dsp::evalCustomLFOShape (shape, midPhase);
+        const auto p = pointToXY (midPhase, midValue, area);
+        if (p.getDistanceFrom (pos) <= lfoHandleHitRadius)
+            return seg;
+    }
+    return -1;
+}
+
+int LFODisplay::hitTestPointForTest (juce::Point<float> pos) const
+{
+    return hitTestPoint (pos, curveArea(), processor.getCustomLfoShape (lfo));
+}
+int LFODisplay::hitTestHandleForTest (juce::Point<float> pos) const
+{
+    return hitTestHandle (pos, curveArea(), processor.getCustomLfoShape (lfo));
+}
+
+void LFODisplay::showDeletePointMenu (int pointIndex)
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "Delete point");
+    showPopupAnchored (*this, menu, juce::PopupMenu::Options().withTargetComponent (this),
+        [this, pointIndex] (int result)
+        {
+            if (result != 1)
+                return;
+            auto shape = processor.getCustomLfoShape (lfo);
+            if (pointIndex <= 0 || pointIndex >= shape.count - 1)
+                return;   // endpoints can't be deleted (defensive re-check)
+            removeCustomLfoPoint (shape, pointIndex);
+            processor.setCustomLfoShape (lfo, shape);
+            if (selectedPoint == pointIndex)
+                selectedPoint = -1;
+            markDirty();
+        });
+}
+
+void LFODisplay::mouseDown (const juce::MouseEvent& e)
+{
+    if (! isCustomActive())
+        return;
+
+    const auto shape = processor.getCustomLfoShape (lfo);
+    const auto area = curveArea();
+
+    if (e.mods.isPopupMenu())
+    {
+        const auto idx = hitTestPoint (e.position, area, shape);
+        if (idx > 0 && idx < shape.count - 1)
+            showDeletePointMenu (idx);
+        return;
+    }
+
+    const auto pIdx = hitTestPoint (e.position, area, shape);
+    if (pIdx >= 0)
+    {
+        selectedPoint = pIdx;
+        draggingPoint = pIdx;
+        draggingHandle = -1;
+        dragStartMouse = e.position;
+        dragStartPointX = shape.x[(size_t) pIdx];
+        dragStartPointY = shape.y[(size_t) pIdx];
+        markDirty();
+        return;
+    }
+
+    const auto hIdx = hitTestHandle (e.position, area, shape);
+    if (hIdx >= 0)
+    {
+        selectedPoint = -1;
+        draggingPoint = -1;
+        draggingHandle = hIdx;
+        dragStartMouse = e.position;
+        dragStartCurve = shape.curve[(size_t) hIdx];
+        markDirty();
+        return;
+    }
+
+    selectedPoint = -1;
+    draggingPoint = -1;
+    draggingHandle = -1;
+    markDirty();
+}
+
+void LFODisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! isCustomActive())
+        return;
+
+    const auto area = curveArea();
+    // Shift = fine movement: scale the drag delta down, same convention as
+    // a DAW's fine-adjust modifier.
+    const auto scale = e.mods.isShiftDown() ? 0.25f : 1.0f;
+
+    if (draggingPoint >= 0)
+    {
+        auto shape = processor.getCustomLfoShape (lfo);
+        if (draggingPoint >= shape.count)
+            return;
+
+        const bool endpoint = draggingPoint == 0 || draggingPoint == shape.count - 1;
+        const auto dxPixels = (e.position.x - dragStartMouse.x) * scale;
+        const auto dyPixels = (e.position.y - dragStartMouse.y) * scale;
+
+        auto newY = juce::jlimit (-1.0f, 1.0f,
+            dragStartPointY - dyPixels / (area.getHeight() * 0.42f));
+        auto newX = dragStartPointX;
+        if (! endpoint)
+        {
+            newX = dragStartPointX + dxPixels / area.getWidth();
+            // Clamp strictly between neighbours so points can never cross
+            // (and never collide x with a neighbour, which would divide by
+            // zero in evalCustomLFOShape's segment-width normalization).
+            const auto lo = shape.x[(size_t) (draggingPoint - 1)] + 0.001f;
+            const auto hi = shape.x[(size_t) (draggingPoint + 1)] - 0.001f;
+            newX = juce::jlimit (juce::jmin (lo, hi), juce::jmax (lo, hi), newX);
+        }
+
+        shape.x[(size_t) draggingPoint] = newX;
+        shape.y[(size_t) draggingPoint] = newY;
+        processor.setCustomLfoShape (lfo, shape);
+        markDirty();
+        return;
+    }
+
+    if (draggingHandle >= 0)
+    {
+        auto shape = processor.getCustomLfoShape (lfo);
+        if (draggingHandle >= shape.count - 1)
+            return;
+
+        // Dragging the handle UP (mouse y decreases) increases the curve
+        // amount toward +1 (ease-in, see evalCustomLFOShape's doc comment).
+        const auto dy = (dragStartMouse.y - e.position.y) * scale;
+        const auto newCurve = juce::jlimit (-1.0f, 1.0f,
+            dragStartCurve + dy / (area.getHeight() * 0.5f));
+        shape.curve[(size_t) draggingHandle] = newCurve;
+        processor.setCustomLfoShape (lfo, shape);
+        markDirty();
+    }
+}
+
+void LFODisplay::mouseUp (const juce::MouseEvent&)
+{
+    draggingPoint = -1;
+    draggingHandle = -1;
+}
+
+void LFODisplay::mouseMove (const juce::MouseEvent& e)
+{
+    if (! isCustomActive())
+        return;
+
+    const auto shape = processor.getCustomLfoShape (lfo);
+    const auto area = curveArea();
+    const auto newHoverPoint = hitTestPoint (e.position, area, shape);
+    const auto newHoverHandle = newHoverPoint < 0 ? hitTestHandle (e.position, area, shape) : -1;
+
+    if (newHoverPoint != hoverPoint || newHoverHandle != hoverHandle)
+    {
+        hoverPoint = newHoverPoint;
+        hoverHandle = newHoverHandle;
+        markDirty();
+    }
+}
+
+void LFODisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (! isCustomActive())
+        return;
+
+    auto shape = processor.getCustomLfoShape (lfo);
+    const auto area = curveArea();
+
+    const auto pIdx = hitTestPoint (e.position, area, shape);
+    if (pIdx >= 0)
+    {
+        // Endpoints refuse deletion, by double-click same as by menu.
+        if (pIdx > 0 && pIdx < shape.count - 1)
+        {
+            removeCustomLfoPoint (shape, pIdx);
+            processor.setCustomLfoShape (lfo, shape);
+            if (selectedPoint == pIdx)
+                selectedPoint = -1;
+            markDirty();
+        }
+        return;
+    }
+
+    if (hitTestHandle (e.position, area, shape) >= 0)
+        return;   // don't add a point on top of a curve handle
+
+    insertCustomLfoPoint (shape, xToPhase (e.position.x, area), yToValue (e.position.y, area));
+    processor.setCustomLfoShape (lfo, shape);
+    markDirty();
 }
 
 void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
@@ -958,6 +1288,8 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     const auto unipolar = value (params::id::lfoParam (lfo, params::id::lfo::unipolar)) >= 0.5f;
     const auto smoothAmount = value (params::id::lfoParam (lfo, params::id::lfo::smooth)) * 0.01f;
     const auto jitterAmount = value (params::id::lfoParam (lfo, params::id::lfo::jitter)) * 0.01f;
+    const auto customShape = shape == params::LFOShape::custom
+        ? processor.getCustomLfoShape (lfo) : dsp::CustomLFOShape();
 
     juce::Random shRandom (42 + lfo);  // stable S&H preview
     float shValue = shRandom.nextFloat() * 2.0f - 1.0f;
@@ -1003,6 +1335,9 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
                 v = shValue;
                 break;
             }
+            case params::LFOShape::custom:
+                v = dsp::evalCustomLFOShape (customShape, ph);
+                break;
         }
 
         // Same order of operations as LFO::processChunk: shape, then jitter,
@@ -1045,7 +1380,50 @@ void LFODisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
             curve.lineTo (x, y);
     }
 
+    // Custom shape: filled area under the curve (like the reference
+    // breakpoint editor), drawn BEFORE the stroke/points so it sits behind
+    // them. Baseline is the display's vertical centre (value == 0), same
+    // datum the curve itself is drawn against.
+    if (shape == params::LFOShape::custom)
+    {
+        auto fill = curve;
+        fill.lineTo (area.getRight(), area.getCentreY());
+        fill.lineTo (area.getX(), area.getCentreY());
+        fill.closeSubPath();
+        g.setColour (t.accentMod.withAlpha (0.16f));
+        g.fillPath (fill);
+    }
+
     draw::glowStroke (g, curve, t.accentMod, 1.6f);
+
+    // Custom shape editor overlay: segment curve handles, then points on
+    // top (points win a coincident hit-test/visual with a handle). Hovered/
+    // selected point highlighted; endpoints drawn slightly differently
+    // (square-ish via a smaller inner square) to read as pinned/non-
+    // deletable, though nothing here relies on that distinction for
+    // correctness -- hitTestPoint()/showDeletePointMenu() are what actually
+    // refuse the delete.
+    if (shape == params::LFOShape::custom)
+    {
+        for (int seg = 0; seg < customShape.count - 1; ++seg)
+        {
+            const auto midPhase = 0.5f * (customShape.x[(size_t) seg] + customShape.x[(size_t) (seg + 1)]);
+            const auto midValue = dsp::evalCustomLFOShape (customShape, midPhase);
+            const auto hp = pointToXY (midPhase, midValue, area);
+            const bool active = seg == hoverHandle || seg == draggingHandle;
+            g.setColour (active ? t.textPrimary : t.textSecondary.withAlpha (0.7f));
+            g.drawEllipse (hp.x - 3.5f, hp.y - 3.5f, 7.0f, 7.0f, active ? 2.0f : 1.2f);
+        }
+
+        for (int i = 0; i < customShape.count; ++i)
+        {
+            const auto pp = pointToXY (customShape.x[(size_t) i], customShape.y[(size_t) i], area);
+            const bool active = i == hoverPoint || i == draggingPoint || i == selectedPoint;
+            g.setColour (active ? t.textPrimary : t.accentMod);
+            g.fillEllipse (pp.x - (active ? 4.5f : 3.5f), pp.y - (active ? 4.5f : 3.5f),
+                           active ? 9.0f : 7.0f, active ? 9.0f : 7.0f);
+        }
+    }
 
     // Live playhead dot at (phase, value).
     if (isLive())

@@ -12,6 +12,65 @@ namespace
 {
     constexpr const char* wavetableStateType = "WAVETABLES";
     constexpr const char* sampleStateType = "SAMPLES";
+    constexpr const char* lfoCustomStateType = "LFOCUSTOM";
+
+    juce::Identifier lfoCustomChildType (int lfoIndex)
+    {
+        return { "LFO" + juce::String (lfoIndex) };
+    }
+
+    // CSV-encodes a CustomLFOShape's point/curve arrays (only the first
+    // `count` entries of each -- the rest of the fixed-size arrays are
+    // padding and not meaningful). Human-readable in a saved .spasynth file,
+    // same spirit as the rest of the state tree.
+    juce::ValueTree customLfoShapeToValueTree (const dsp::CustomLFOShape& shape, int lfoIndex)
+    {
+        juce::ValueTree t (lfoCustomChildType (lfoIndex));
+        t.setProperty ("count", shape.count, nullptr);
+
+        juce::StringArray xs, ys, cs;
+        for (int i = 0; i < shape.count; ++i)
+        {
+            xs.add (juce::String (shape.x[(size_t) i], 6));
+            ys.add (juce::String (shape.y[(size_t) i], 6));
+            if (i < shape.count - 1)
+                cs.add (juce::String (shape.curve[(size_t) i], 6));
+        }
+        t.setProperty ("x", xs.joinIntoString (","), nullptr);
+        t.setProperty ("y", ys.joinIntoString (","), nullptr);
+        t.setProperty ("curve", cs.joinIntoString (","), nullptr);
+        return t;
+    }
+
+    // Missing/malformed data (old preset, hand-edited file) falls back to
+    // the default triangle -- CustomLFOShape's own default constructor --
+    // rather than half-applying a corrupt shape.
+    dsp::CustomLFOShape customLfoShapeFromValueTree (const juce::ValueTree& t)
+    {
+        dsp::CustomLFOShape shape;   // default triangle
+        if (! t.isValid())
+            return shape;
+
+        const auto count = (int) t.getProperty ("count", 0);
+        if (count < 2 || count > dsp::CustomLFOShape::maxPoints)
+            return shape;
+
+        const auto xs = juce::StringArray::fromTokens (t.getProperty ("x").toString(), ",", "");
+        const auto ys = juce::StringArray::fromTokens (t.getProperty ("y").toString(), ",", "");
+        const auto cs = juce::StringArray::fromTokens (t.getProperty ("curve").toString(), ",", "");
+        if (xs.size() != count || ys.size() != count || cs.size() != count - 1)
+            return shape;
+
+        shape.count = count;
+        for (int i = 0; i < count; ++i)
+        {
+            shape.x[(size_t) i] = xs[i].getFloatValue();
+            shape.y[(size_t) i] = ys[i].getFloatValue();
+            if (i < count - 1)
+                shape.curve[(size_t) i] = cs[i].getFloatValue();
+        }
+        return shape;
+    }
 
     juce::Identifier slotPathProperty (int slot)
     {
@@ -296,6 +355,13 @@ SPASynthProcessor::SPASynthProcessor()
         slotTables[(size_t) s].current = factoryTable;
         slotTables[(size_t) s].live.store (factoryTable.get());
     }
+
+    // Each buffer's default constructor already sets a default triangle
+    // (dsp::CustomLFOShape's own ctor); point `live` at buffer 0 so
+    // shared.lfo[i].custom is never null even before any edit or state
+    // restore publishes anything.
+    for (auto& c : customLfo)
+        c.live.store (&c.buffers[0]);
 
     shared.telemetry = &telemetry;
     shared.glide = &glideState;
@@ -1781,6 +1847,23 @@ void SPASynthProcessor::renderEngine (juce::AudioBuffer<float>& buffer, juce::Mi
     masterGain.applyGain (buffer, buffer.getNumSamples());
 }
 
+void SPASynthProcessor::setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape)
+{
+    // Single-writer double buffer (message thread only -- see the class
+    // comment on CustomLfoStorage). Write the FULL new shape into whichever
+    // buffer is not currently live, then publish it with one atomic pointer
+    // store; the audio thread only ever reads a complete, already-published
+    // shape via updateSharedState's once-per-block load, never a
+    // half-written one. Both buffers are fixed members (no allocation), so
+    // this is safe to call from the audio thread's perspective at any time,
+    // including while voices are actively rendering.
+    auto& storage = customLfo[(size_t) lfoIndex];
+    const auto* liveNow = storage.live.load();
+    auto& target = storage.buffers[liveNow == &storage.buffers[0] ? 1 : 0];
+    target = shape;
+    storage.live.store (&target);
+}
+
 void SPASynthProcessor::setInternalBpm (double bpm)
 {
     bpm = juce::jlimit (20.0, 300.0, bpm);
@@ -2082,6 +2165,7 @@ void SPASynthProcessor::updateSharedState (int blockLength)
         // conversion happens (mirrors the loopXfade pattern below).
         lp.smooth      = rl.smooth->load() * 0.01f;
         lp.jitter      = rl.jitter->load() * 0.01f;
+        lp.custom      = customLfo[(size_t) i].live.load();
 
         const auto inc = (double) dsp::LFO::effectiveRateHz (lp, shared.bpm) / currentSampleRate;
         lfoPhaseAccum[(size_t) i] = std::fmod (lfoPhaseAccum[(size_t) i], 1.0);
@@ -2444,6 +2528,10 @@ juce::ValueTree SPASynthProcessor::buildStateTree (bool includeMidiMap)
                              nullptr);
     }
 
+    auto lfoCustom = state.getOrCreateChildWithName (lfoCustomStateType, nullptr);
+    for (int i = 0; i < params::numLFOs; ++i)
+        lfoCustom.appendChild (customLfoShapeToValueTree (getCustomLfoShape (i), i), nullptr);
+
     return state;
 }
 
@@ -2463,6 +2551,24 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool 
     auto samples = state.getChildWithName (sampleStateType);
     if (samples.isValid())
         state.removeChild (samples, nullptr);
+
+    // Custom LFO breakpoint shapes (1.0.25): a per-LFO child tree, not
+    // parameters, same reason as wavetable/sample paths above. Per the
+    // design, this DOES apply on preset load (unlike uiScale etc. below) --
+    // a preset's drawn shape is part of the sound, not a window/UI pref. A
+    // session/preset missing the data (predates this feature, or a given
+    // LFO simply has no child) gets the default triangle --
+    // customLfoShapeFromValueTree()/its default-constructed fallback cover
+    // both an absent LFOCUSTOM tree entirely and an absent single LFO child.
+    auto lfoCustom = state.getChildWithName (lfoCustomStateType);
+    if (lfoCustom.isValid())
+        state.removeChild (lfoCustom, nullptr);
+    for (int i = 0; i < params::numLFOs; ++i)
+    {
+        const auto child = lfoCustom.isValid() ? lfoCustom.getChildWithName (lfoCustomChildType (i))
+                                                : juce::ValueTree();
+        setCustomLfoShape (i, customLfoShapeFromValueTree (child));
+    }
 
     // MIDI map: restore when present (host sessions); presets omit it and
     // leave the current hardware mapping untouched.

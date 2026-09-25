@@ -500,8 +500,10 @@ struct ArpPhrase
 
 const std::vector<ArpPhrase>& arpPhrases();
 
-// LFO shape choice order — load-bearing, append-only.
-enum class LFOShape { sine, triangle, sawUp, sawDown, square, sampleHold };
+// LFO shape choice order — load-bearing, append-only. `custom` (1.0.25) is a
+// user-drawn breakpoint shape stored per-LFO in the state tree (see
+// SPASynthProcessor's customLfo storage), not a parameter.
+enum class LFOShape { sine, triangle, sawUp, sawDown, square, sampleHold, custom };
 
 // Tempo-sync divisions, in beats (quarter notes). Choice order matches
 // lfoDivisionBeats(). Append-only.

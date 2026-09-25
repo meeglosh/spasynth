@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "../params/ParameterRegistry.h"
 #include "../dsp/Telemetry.h"
+#include "../dsp/LFO.h"
 #include <vector>
 
 namespace spa
@@ -161,15 +162,61 @@ private:
     const int env;
 };
 
-// One cycle of the LFO shape with a live playhead dot.
+// One cycle of the LFO shape with a live playhead dot. When the LFO's shape
+// is Custom, this also IS the breakpoint editor (1.0.25): drag points, add/
+// remove them, drag a segment's handle to bend it. Editing is a no-op for
+// every other shape (see isCustomActive()) -- the component always accepts
+// mouse clicks (unlike a plain DisplayComponent, which ignores them), but
+// never steals keyboard focus (setMouseClickGrabsKeyboardFocus(false), the
+// same rule every other control in this codebase follows).
 class LFODisplay : public DisplayComponent
 {
 public:
     LFODisplay (SPASynthProcessor&, int lfoIndex);
 
+    // Coordinate mapping shared by paint, the editor gestures, and tests --
+    // same idiom as WaveDisplay's waveArea()/normToX(). area.reduced(3.0f)
+    // of the local bounds, matching DisplayComponent::paint(); x maps phase
+    // 0..1, y maps the bipolar value -1..1 (with the same 0.42f vertical
+    // scale the shape curve itself is drawn at).
+    juce::Rectangle<float> curveArea() const { return getLocalBounds().toFloat().reduced (3.0f); }
+    juce::Point<float> pointToXY (float xNorm, float yNorm, juce::Rectangle<float> area) const;
+    float xToPhase (float x, juce::Rectangle<float> area) const;
+    float yToValue (float y, juce::Rectangle<float> area) const;
+
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    bool isCustomActive() const;   // exposed for tests
+
+    // Test helpers -- observe editor gesture state without a pixel read.
+    int getSelectedPointForTest() const { return selectedPoint; }
+    int hitTestPointForTest (juce::Point<float> pos) const;
+    int hitTestHandleForTest (juce::Point<float> pos) const;
+
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
+    int hitTestPoint (juce::Point<float> pos, juce::Rectangle<float> area,
+                      const dsp::CustomLFOShape&) const;
+    int hitTestHandle (juce::Point<float> pos, juce::Rectangle<float> area,
+                       const dsp::CustomLFOShape&) const;
+    void showDeletePointMenu (int pointIndex);
+
+    SPASynthProcessor& processor;
     const int lfo;
+
+    int selectedPoint = -1;
+    int hoverPoint = -1;
+    int hoverHandle = -1;
+
+    int draggingPoint = -1;
+    int draggingHandle = -1;
+    juce::Point<float> dragStartMouse;
+    float dragStartPointX = 0.0f, dragStartPointY = 0.0f;
+    float dragStartCurve = 0.0f;
 };
 
 // Approximate filter magnitude response; follows the modulated cutoff live.

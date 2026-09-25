@@ -65,6 +65,13 @@
   unfiltered while the rest of the patch is shaped as usual. Every
   oscillator defaults to going through the filters as before, so existing
   presets and sessions sound the same. This came from feedback.
+- Each LFO now has a Custom shape you can draw yourself. Pick Custom from
+  the LFO's shape menu and its display becomes an editor: drag points to
+  reshape the curve, double-click empty space to add a point or double-click
+  a point to remove it, and drag the small handle between two points to
+  bend that segment. Your drawn shape is saved with the preset, so it
+  travels with your sound just like every other setting. This came from
+  feedback asking for more expressive LFO shapes than the built-in ones.
 
 ## 1.0.24
 

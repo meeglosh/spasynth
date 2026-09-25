@@ -4,9 +4,81 @@
 #include "../params/ParameterRegistry.h"
 
 #include <cmath>
+#include <array>
 
 namespace spa::dsp
 {
+
+// User-drawn breakpoint shape for LFOShape::custom (1.0.25). Fixed-capacity
+// (never allocates) so it can be published to the audio thread lock-free
+// (see SPASynthProcessor's customLfo double buffer) and copied by value
+// cheaply for tests/preview. Points are x in [0,1] (sorted, x[0]==0,
+// x[count-1]==1), y bipolar [-1,1]; curve[i] bends the segment from point i
+// to point i+1 (0..count-2 valid), -1..1, 0 = straight line.
+struct CustomLFOShape
+{
+    static constexpr int maxPoints = 32;
+
+    std::array<float, maxPoints> x {};
+    std::array<float, maxPoints> y {};
+    std::array<float, maxPoints> curve {};
+    int count = 3;
+
+    CustomLFOShape() noexcept { setDefaultTriangle(); }
+
+    // A plain triangle, -1 at 0, +1 at 0.5, -1 at 1 -- identical to the
+    // built-in Triangle shape (LFO::shape()) with every curve at 0, so a
+    // fresh Custom shape sounds/looks like the shape it started from.
+    void setDefaultTriangle() noexcept
+    {
+        x.fill (0.0f); y.fill (0.0f); curve.fill (0.0f);
+        count = 3;
+        x[0] = 0.0f; y[0] = -1.0f;
+        x[1] = 0.5f; y[1] = 1.0f;
+        x[2] = 1.0f; y[2] = -1.0f;
+    }
+};
+
+// Evaluates a CustomLFOShape at phase ph (0..1). Finds the segment
+// containing ph, normalizes to t=0..1 within it, bends t by the segment's
+// curve amount (a power curve: k = 4^curve, t' = t^k -- k=1 at curve=0 is
+// the identity/straight line; k>1 eases in, k<1 eases out), then lerps
+// y0..y1 by t'. t' is always in [0,1] for t in [0,1], so the result never
+// leaves [min(y0,y1), max(y0,y1)] -- the curve can never overshoot its
+// segment's own endpoints. count < 2 (should not happen; defensive) reads
+// as silence.
+inline float evalCustomLFOShape (const CustomLFOShape& s, float ph) noexcept
+{
+    if (s.count < 2)
+        return 0.0f;
+
+    ph = juce::jlimit (0.0f, 1.0f, ph);
+
+    int seg = s.count - 2;
+    for (int i = 0; i < s.count - 1; ++i)
+    {
+        if (ph <= s.x[(size_t) (i + 1)])
+        {
+            seg = i;
+            break;
+        }
+    }
+
+    const auto x0 = s.x[(size_t) seg], x1 = s.x[(size_t) (seg + 1)];
+    const auto y0 = s.y[(size_t) seg], y1 = s.y[(size_t) (seg + 1)];
+    const auto dx = x1 - x0;
+    auto t = dx > 1.0e-6f ? (ph - x0) / dx : 0.0f;
+    t = juce::jlimit (0.0f, 1.0f, t);
+
+    const auto c = s.curve[(size_t) seg];
+    if (c != 0.0f)
+    {
+        const auto k = std::pow (4.0f, c);
+        t = std::pow (t, k);
+    }
+
+    return y0 + t * (y1 - y0);
+}
 
 // Per-voice LFO. Retriggered LFOs own their phase; free-running LFOs read a
 // processor-global phase so every voice agrees. Tempo-sync derives the rate
@@ -25,6 +97,15 @@ public:
         bool unipolar = false;
         float smooth = 0.0f;   // 0..1, chunk-rate one-pole slew amount
         float jitter = 0.0f;   // 0..1, random blend renewed once per cycle
+
+        // Only read when shape == custom. Raw pointer into a fixed buffer
+        // owned by the processor (SPASynthProcessor's customLfo double
+        // buffer), refreshed once per block by updateSharedState -- never
+        // owned or allocated here. Null is defensively treated as silence
+        // (see processChunk); the processor always publishes a default
+        // triangle at construction so this should never actually be null in
+        // practice once shape is custom.
+        const CustomLFOShape* custom = nullptr;
     };
 
     void prepare (double newSampleRate) noexcept
@@ -92,7 +173,9 @@ public:
         }
 
         // 1. shape
-        auto value = shape ((float) ph, p.shape);
+        auto value = p.shape == params::LFOShape::custom
+            ? (p.custom != nullptr ? evalCustomLFOShape (*p.custom, (float) ph) : 0.0f)
+            : shape ((float) ph, p.shape);
 
         // 2. jitter -- blends a random value into the shape, renewed once
         // per LFO cycle (own state, so it never disturbs the S&H state
@@ -168,6 +251,11 @@ private:
                 return ph < 0.5f ? 1.0f : -1.0f;
             case params::LFOShape::sampleHold:
                 return shValue;
+            case params::LFOShape::custom:
+                // Never reached: processChunk branches on custom before
+                // calling shape() -- case kept only so this switch stays
+                // exhaustive (-Wswitch) as the enum grows.
+                return 0.0f;
         }
         return 0.0f;
     }

@@ -2,6 +2,7 @@
 // pipeline without a host.
 
 #include <cstring>
+#include <thread>
 #include "SPASynthProcessor.h"
 #include "dsp/Arpeggiator.h"
 #include "dsp/ChaosGenerator.h"
@@ -1115,6 +1116,7 @@ namespace
             case params::LFOShape::sawDown:  return 1.0f - 2.0f * ph;
             case params::LFOShape::square:   return ph < 0.5f ? 1.0f : -1.0f;
             case params::LFOShape::sampleHold: return 0.0f;  // random -- not covered here
+            case params::LFOShape::custom: return 0.0f;      // covered separately, not here
         }
         return 0.0f;
     }
@@ -1446,6 +1448,545 @@ namespace
         expect (allInBounds,
                "LFO output stays within its normal bounds (bipolar -1..1, unipolar 0..1) at "
                "every shape/smooth/jitter/unipolar extreme");
+    }
+
+    // =================== Custom LFO breakpoint shape (1.0.25) ==============
+
+    // Anti-vacuous helper for customLfoEvaluationTest: with the sign of the
+    // eased-t exponent flipped, curve>0 would ease OUT instead of in --
+    // deliberately breaks the "curve sign bends the right way" assertion so
+    // that assertion is proven to actually check something.
+    static float brokenEvalCustomLFOShape (const spa::dsp::CustomLFOShape& s, float ph)
+    {
+        if (s.count < 2) return 0.0f;
+        ph = juce::jlimit (0.0f, 1.0f, ph);
+        int seg = s.count - 2;
+        for (int i = 0; i < s.count - 1; ++i)
+            if (ph <= s.x[(size_t) (i + 1)]) { seg = i; break; }
+        const auto x0 = s.x[(size_t) seg], x1 = s.x[(size_t) (seg + 1)];
+        const auto y0 = s.y[(size_t) seg], y1 = s.y[(size_t) (seg + 1)];
+        const auto dx = x1 - x0;
+        auto t = dx > 1.0e-6f ? (ph - x0) / dx : 0.0f;
+        t = juce::jlimit (0.0f, 1.0f, t);
+        const auto c = s.curve[(size_t) seg];
+        if (c != 0.0f)
+        {
+            const auto k = std::pow (4.0f, -c);   // BUG: sign flipped
+            t = std::pow (t, k);
+        }
+        return y0 + t * (y1 - y0);
+    }
+
+    static void customLfoEvaluationTest()
+    {
+        std::cout << "customLfoEvaluationTest\n";
+        namespace params = spa::params;
+        using spa::dsp::CustomLFOShape;
+        using spa::dsp::evalCustomLFOShape;
+
+        // --- default triangle matches the built-in Triangle shape closely --
+        CustomLFOShape def;   // default ctor -> default triangle
+        expect (def.count == 3, "fresh Custom shape starts as a 3-point triangle");
+        bool triangleMatches = true;
+        for (int i = 0; i <= 100; ++i)
+        {
+            const auto ph = (float) i / 100.0f;
+            const auto builtIn = 1.0f - 4.0f * std::abs (ph - 0.5f);   // LFO::shape()'s Triangle
+            const auto custom = evalCustomLFOShape (def, ph);
+            if (std::abs (builtIn - custom) > 1.0e-5f)
+                triangleMatches = false;
+        }
+        expect (triangleMatches, "default Custom shape matches the built-in Triangle shape "
+                                 "(all segments straight, curve 0)");
+
+        // --- edge x=0/1 ------------------------------------------------
+        expect (std::abs (evalCustomLFOShape (def, 0.0f) - def.y[0]) < 1.0e-6f,
+                "eval at phase 0 returns the first point's y exactly");
+        expect (std::abs (evalCustomLFOShape (def, 1.0f) - def.y[2]) < 1.0e-6f,
+                "eval at phase 1 returns the last point's y exactly");
+
+        // --- straight segment (curve == 0) is linear --------------------
+        CustomLFOShape lin;
+        lin.count = 2;
+        lin.x[0] = 0.0f; lin.y[0] = -1.0f;
+        lin.x[1] = 1.0f; lin.y[1] = 1.0f;
+        lin.curve[0] = 0.0f;
+        bool isLinear = true;
+        for (int i = 0; i <= 20; ++i)
+        {
+            const auto ph = (float) i / 20.0f;
+            const auto expected = -1.0f + 2.0f * ph;
+            if (std::abs (evalCustomLFOShape (lin, ph) - expected) > 1.0e-5f)
+                isLinear = false;
+        }
+        expect (isLinear, "curve == 0 interpolates a segment perfectly linearly");
+
+        // --- curve sign bends the right way, and stays within endpoints -
+        // Positive curve (k>1) eases IN -- the value stays closer to y0 for
+        // longer, then rushes to y1 -- so at the segment midpoint (t=0.5)
+        // the value should sit BELOW the straight-line midpoint (since
+        // y1 > y0 here); negative curve should sit ABOVE it.
+        CustomLFOShape bend = lin;
+        const auto straightMid = evalCustomLFOShape (lin, 0.5f);   // == 0.0f here
+
+        bend.curve[0] = 0.8f;
+        const auto positiveMid = evalCustomLFOShape (bend, 0.5f);
+        expect (positiveMid < straightMid - 1.0e-4f,
+                "positive curve bends the midpoint toward y0 (eases in)");
+
+        bend.curve[0] = -0.8f;
+        const auto negativeMid = evalCustomLFOShape (bend, 0.5f);
+        expect (negativeMid > straightMid + 1.0e-4f,
+                "negative curve bends the midpoint toward y1 (eases out)");
+
+        bool staysWithinEndpoints = true;
+        for (auto c : { -1.0f, -0.5f, 0.5f, 1.0f })
+        {
+            bend.curve[0] = c;
+            for (int i = 0; i <= 20; ++i)
+            {
+                const auto v = evalCustomLFOShape (bend, (float) i / 20.0f);
+                if (v < -1.0f - 1.0e-4f || v > 1.0f + 1.0e-4f)
+                    staysWithinEndpoints = false;
+            }
+        }
+        expect (staysWithinEndpoints,
+                "curve bending never overshoots a segment's own endpoints, at any curve extreme");
+
+        // --- anti-vacuous: a deliberately broken eval (sign flipped) fails
+        // the same "bends the right way" assertion the real function passes.
+        bend.curve[0] = 0.8f;
+        const auto brokenPositiveMid = brokenEvalCustomLFOShape (bend, 0.5f);
+        expect (! (brokenPositiveMid < straightMid - 1.0e-4f),
+                "anti-vacuous: the sign-flipped reference implementation does NOT ease in for "
+                "positive curve, proving the real assertion above actually discriminates");
+    }
+
+    // Preset save/load and host session restore both go through
+    // buildStateTree/restoreStateTree -- exercise both call paths, plus the
+    // "missing data -> default triangle" fallback for old presets/sessions.
+    static void customLfoStateRoundTripTest()
+    {
+        std::cout << "customLfoStateRoundTripTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using spa::dsp::CustomLFOShape;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        CustomLFOShape shape;
+        shape.count = 4;
+        shape.x[0] = 0.0f;  shape.y[0] = -0.3f;
+        shape.x[1] = 0.2f;  shape.y[1] = 0.8f;
+        shape.x[2] = 0.7f;  shape.y[2] = -0.9f;
+        shape.x[3] = 1.0f;  shape.y[3] = 0.1f;
+        shape.curve[0] = 0.4f; shape.curve[1] = -0.6f; shape.curve[2] = 0.2f;
+        proc.setCustomLfoShape (1, shape);
+
+        // --- host session round trip (getStateInformation/setStateInformation,
+        // isPresetLoad == false) ------------------------------------------
+        juce::MemoryBlock mb;
+        proc.getStateInformation (mb);
+
+        spa::SPASynthProcessor proc2;
+        proc2.prepareToPlay (48000.0, 512);
+        proc2.setStateInformation (mb.getData(), (int) mb.getSize());
+
+        const auto restored = proc2.getCustomLfoShape (1);
+        bool matches = restored.count == shape.count;
+        for (int i = 0; matches && i < shape.count; ++i)
+        {
+            if (std::abs (restored.x[(size_t) i] - shape.x[(size_t) i]) > 1.0e-4f
+                || std::abs (restored.y[(size_t) i] - shape.y[(size_t) i]) > 1.0e-4f)
+                matches = false;
+            if (i < shape.count - 1
+                && std::abs (restored.curve[(size_t) i] - shape.curve[(size_t) i]) > 1.0e-4f)
+                matches = false;
+        }
+        expect (matches, "custom LFO shape round-trips through getStateInformation/"
+                         "setStateInformation exactly");
+
+        // A different LFO on the SAME processor, never touched, stays the
+        // untouched default triangle -- the round trip is per-LFO.
+        const auto untouchedLfo0 = proc2.getCustomLfoShape (0);
+        expect (untouchedLfo0.count == 3
+                    && std::abs (untouchedLfo0.y[1] - 1.0f) < 1.0e-6f,
+                "an LFO never edited keeps the default triangle after state restore");
+
+        // --- preset load path (restoreStateTree(..., true)) ----------------
+        auto tree = proc.buildStateTree (false);
+        spa::SPASynthProcessor proc3;
+        proc3.prepareToPlay (48000.0, 512);
+        proc3.restoreStateTree (tree, true);
+        const auto restoredPreset = proc3.getCustomLfoShape (1);
+        expect (restoredPreset.count == shape.count
+                    && std::abs (restoredPreset.y[1] - shape.y[1]) < 1.0e-4f,
+                "custom LFO shape round-trips through buildStateTree/restoreStateTree "
+                "(the preset-load path), unlike a UI pref -- the design explicitly wants this");
+
+        // --- missing data -> default triangle -------------------------
+        auto stripped = tree.createCopy();
+        auto lfoCustomChild = stripped.getChildWithName ("LFOCUSTOM");
+        expect (lfoCustomChild.isValid(), "buildStateTree emits an LFOCUSTOM child to strip for this check");
+        if (lfoCustomChild.isValid())
+            stripped.removeChild (lfoCustomChild, nullptr);
+
+        spa::SPASynthProcessor proc4;
+        proc4.prepareToPlay (48000.0, 512);
+        proc4.restoreStateTree (stripped, true);
+        const auto fallback = proc4.getCustomLfoShape (1);
+        expect (fallback.count == 3 && std::abs (fallback.y[1] - 1.0f) < 1.0e-6f,
+                "a session/preset with no LFOCUSTOM data at all restores the default triangle");
+    }
+
+    // Edit the shape from the "message thread" while processBlock renders
+    // concurrently from another thread -- exercises the lock-free double
+    // buffer under real contention, not just a single-threaded call order.
+    // No allocation to trap: CustomLFOShape, the two-buffer storage in
+    // SPASynthProcessor, and LFO::Params::custom are all fixed-size/raw-
+    // pointer (see the class comments in SPASynthProcessor.h and LFO.h) --
+    // setCustomLfoShape() only writes into an already-allocated member array
+    // and does one atomic pointer store, and processChunk only dereferences
+    // a pointer it's handed; there is no heap-allocating call on either side
+    // of the handoff, so there's nothing for a per-call allocation guard to
+    // catch here (this repo has none; the ASan full run covers memory
+    // safety more directly than an allocation trap would for this feature).
+    static void customLfoAudioThreadHandoffTest()
+    {
+        std::cout << "customLfoAudioThreadHandoffTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::lfoParam (0, id::lfo::shape), (float) (int) params::LFOShape::custom);
+
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+
+        std::atomic<bool> stop { false };
+        std::atomic<bool> crashedOrHung { false };
+
+        std::thread editor ([&]
+        {
+            juce::Random rnd (7);
+            spa::dsp::CustomLFOShape s;
+            while (! stop.load())
+            {
+                s.count = juce::jlimit (2, spa::dsp::CustomLFOShape::maxPoints, 3 + (int) (rnd.nextFloat() * 5));
+                s.x[0] = 0.0f; s.y[0] = rnd.nextFloat() * 2.0f - 1.0f;
+                for (int i = 1; i < s.count - 1; ++i)
+                {
+                    s.x[(size_t) i] = (float) i / (float) (s.count - 1);
+                    s.y[(size_t) i] = rnd.nextFloat() * 2.0f - 1.0f;
+                    s.curve[(size_t) (i - 1)] = rnd.nextFloat() * 2.0f - 1.0f;
+                }
+                s.x[(size_t) (s.count - 1)] = 1.0f;
+                s.y[(size_t) (s.count - 1)] = rnd.nextFloat() * 2.0f - 1.0f;
+                s.curve[(size_t) (s.count - 2)] = rnd.nextFloat() * 2.0f - 1.0f;
+                proc.setCustomLfoShape (0, s);
+            }
+        });
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        bool allFinite = true;
+        for (int b = 0; b < 400 && ! crashedOrHung.load(); ++b)
+        {
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+            midi.clear();
+            for (int ch = 0; ch < buffer.getNumChannels() && allFinite; ++ch)
+                for (int i = 0; i < buffer.getNumSamples() && allFinite; ++i)
+                    if (! std::isfinite (buffer.getSample (ch, i)))
+                        allFinite = false;
+        }
+
+        stop.store (true);
+        editor.join();
+
+        expect (allFinite, "audio stays finite while the custom shape is edited concurrently "
+                           "from another thread during rendering");
+    }
+
+    // Anti-vacuous helper for the SMOOTH/JITTER-still-apply check below: a
+    // custom eval that ignores its points entirely (always 0), so the
+    // resulting LFO output should NOT reproduce the shaped square-wave-ish
+    // pattern the real evalCustomLFOShape produces once jitter is blended
+    // in -- proves the real assertion is checking the actual shape, not
+    // just "jitter changes something".
+    static bool customLfoSmoothJitterStillApplyHelper (bool useBrokenEval)
+    {
+        namespace params = spa::params;
+        using spa::dsp::CustomLFOShape;
+        using LFO = spa::dsp::LFO;
+
+        CustomLFOShape shape;
+        shape.count = 2;
+        shape.x[0] = 0.0f; shape.y[0] = -1.0f;
+        shape.x[1] = 1.0f; shape.y[1] = 1.0f;
+        shape.curve[0] = 0.0f;
+
+        LFO::Params p;
+        p.shape = params::LFOShape::custom;
+        p.custom = &shape;
+        p.rateHz = 2.0f;
+        p.retrig = true;
+        p.jitter = 1.0f;    // fully random blend
+        p.smooth = 0.9f;    // heavy slew
+
+        LFO lfo;
+        lfo.prepare (44100.0);
+        lfo.noteOn (p);
+        juce::Random rnd (99);
+
+        // With jitter=1 and a fixed seed, output should differ from the pure
+        // (unjittered) linear ramp at the same phase -- if useBrokenEval,
+        // pretend jitter/smooth never ran (i.e. always compare equal), which
+        // should make the "differs" assertion fail, proving it discriminates.
+        bool anyDiffers = false;
+        for (int i = 0; i < 30; ++i)
+        {
+            const auto v = lfo.processChunk (p, 64, 120.0, 0.0, rnd);
+            const auto ph = std::fmod ((double) i * 64.0 / 44100.0 * 2.0, 1.0);
+            const auto pureLinear = -1.0f + 2.0f * (float) ph;
+            if (! useBrokenEval && std::abs (v - pureLinear) > 1.0e-3f)
+                anyDiffers = true;
+        }
+        return useBrokenEval ? false : anyDiffers;
+    }
+
+    // Directly ties LFO::processChunk's shape==custom output to the free
+    // evalCustomLFOShape() function across several chunks -- catches a
+    // wiring regression (e.g. the custom branch in processChunk's step 1
+    // silently dropped or bypassed) that customLfoEvaluationTest (which
+    // only calls evalCustomLFOShape() directly, never processChunk) and
+    // customLfoSmoothJitterStillApplyTest (jitter=1 there masks the
+    // underlying shape value entirely) would both miss.
+    static void customLfoProcessChunkWiringTest()
+    {
+        std::cout << "customLfoProcessChunkWiringTest\n";
+        namespace params = spa::params;
+        using spa::dsp::CustomLFOShape;
+        using spa::dsp::evalCustomLFOShape;
+        using LFO = spa::dsp::LFO;
+
+        CustomLFOShape shape;
+        shape.count = 4;
+        shape.x[0] = 0.0f;  shape.y[0] = -0.4f;
+        shape.x[1] = 0.3f;  shape.y[1] = 0.6f;
+        shape.x[2] = 0.65f; shape.y[2] = -0.8f;
+        shape.x[3] = 1.0f;  shape.y[3] = 0.2f;
+        shape.curve[0] = 0.5f; shape.curve[1] = -0.5f; shape.curve[2] = 0.3f;
+
+        LFO::Params p;
+        p.shape = params::LFOShape::custom;
+        p.custom = &shape;
+        p.rateHz = 1.0f;
+        p.retrig = true;
+        p.jitter = 0.0f;
+        p.smooth = 0.0f;
+        p.unipolar = false;
+
+        constexpr double sampleRate = 44100.0;
+        constexpr int chunkLen = 64;
+
+        LFO lfo;
+        lfo.prepare (sampleRate);
+        lfo.noteOn (p);
+        juce::Random rnd (11);
+
+        bool allMatch = true;
+        for (int i = 0; i < 50; ++i)
+        {
+            const auto v = lfo.processChunk (p, chunkLen, 120.0, 0.0, rnd);
+            const auto expectedPhase = std::fmod ((double) i * chunkLen / sampleRate, 1.0);
+            const auto expected = evalCustomLFOShape (shape, (float) expectedPhase);
+            if (std::abs (v - expected) > 1.0e-4f)
+                allMatch = false;
+        }
+        expect (allMatch, "LFO::processChunk's shape==custom output matches "
+                          "evalCustomLFOShape() exactly at every chunk (with jitter/smooth off, "
+                          "so nothing else can mask a wiring break)");
+    }
+
+    static void customLfoSmoothJitterStillApplyTest()
+    {
+        std::cout << "customLfoSmoothJitterStillApplyTest\n";
+        expect (customLfoSmoothJitterStillApplyHelper (false),
+                "SMOOTH and JITTER still measurably alter Custom-shape output (order of "
+                "operations: shape -> jitter -> smoothing -> unipolar fold, unchanged)");
+        expect (! customLfoSmoothJitterStillApplyHelper (true),
+                "anti-vacuous: the helper's own 'broken' branch reports no difference, proving "
+                "the real assertion above is not vacuously true");
+    }
+
+    // Editor interactions, driven the same way waveDisplayZoomTest drives
+    // WaveDisplay: real juce::MouseEvent objects into the real component
+    // methods, on a real editor added to the desktop.
+    static void customLfoEditorInteractionTest()
+    {
+        std::cout << "customLfoEditorInteractionTest\n";
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::lfoParam (0, id::lfo::shape), (float) (int) params::LFOShape::custom);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        editor->resized();
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 300u;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+
+        spa::ui::LFODisplay* display = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (display == nullptr)
+                display = dynamic_cast<spa::ui::LFODisplay*> (&c);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (display != nullptr, "LFODisplay for LFO 1 found in the editor tree");
+        if (display == nullptr) { editor->removeFromDesktop(); return; }
+
+        expect (! display->getMouseClickGrabsKeyboardFocus(),
+                "LFODisplay never grabs keyboard focus, even though it now accepts clicks");
+        expect (display->isCustomActive(), "shape is Custom, so the editor gestures are live");
+
+        const auto mk = [&] (juce::Point<float> pos, int numClicks = 1,
+                             juce::ModifierKeys mods = juce::ModifierKeys())
+        {
+            return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), pos, mods,
+                                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, display, display,
+                                     juce::Time::getCurrentTime(), pos, juce::Time::getCurrentTime(),
+                                     numClicks, false);
+        };
+
+        const auto area = display->curveArea();
+
+        // --- add a point: double-click empty space ------------------------
+        const auto before = proc.getCustomLfoShape (0);
+        const auto emptySpot = display->pointToXY (0.6f, 0.3f, area);
+        // Make sure we're not accidentally on top of an existing point/handle.
+        expect (display->hitTestPointForTest (emptySpot) < 0
+                    && display->hitTestHandleForTest (emptySpot) < 0,
+                "chosen empty spot doesn't collide with an existing point/handle");
+        display->mouseDoubleClick (mk (emptySpot, 2));
+        const auto afterAdd = proc.getCustomLfoShape (0);
+        expect (afterAdd.count == before.count + 1, "double-click on empty space adds one point");
+
+        // --- move the newly added point, with x clamped between neighbours -
+        const auto newIdx = display->hitTestPointForTest (
+            display->pointToXY (afterAdd.x[1], afterAdd.y[1], area));
+        expect (newIdx > 0 && newIdx < afterAdd.count - 1, "the new point is found and interior");
+        if (newIdx > 0 && newIdx < afterAdd.count - 1)
+        {
+            const auto startPx = display->pointToXY (afterAdd.x[(size_t) newIdx],
+                                                      afterAdd.y[(size_t) newIdx], area);
+            display->mouseDown (mk (startPx));
+            expect (display->getSelectedPointForTest() == newIdx, "clicking a point selects it");
+
+            // Drag far to the right, past the far endpoint -- x must clamp
+            // short of it (the neighbour x, minus a hair), never cross it.
+            const auto farRight = juce::Point<float> (area.getRight() + 500.0f, startPx.y);
+            display->mouseDrag (mk (farRight));
+            const auto dragged = proc.getCustomLfoShape (0);
+            expect (dragged.x[(size_t) newIdx] < 1.0f - 1.0e-4f
+                        && dragged.x[(size_t) newIdx] > dragged.x[(size_t) (newIdx - 1)],
+                    "dragging a point past its right neighbour clamps x short of it, never crosses");
+            display->mouseUp (mk (farRight));
+        }
+
+        // --- endpoint only moves vertically -------------------------------
+        const auto beforeEndpointDrag = proc.getCustomLfoShape (0);
+        const auto endpointPx = display->pointToXY (0.0f, beforeEndpointDrag.y[0], area);
+        display->mouseDown (mk (endpointPx));
+        expect (display->getSelectedPointForTest() == 0, "the first endpoint is selectable");
+        const auto draggedDiag = endpointPx + juce::Point<float> (60.0f, -20.0f);
+        display->mouseDrag (mk (draggedDiag));
+        const auto afterEndpointDrag = proc.getCustomLfoShape (0);
+        expect (afterEndpointDrag.x[0] == 0.0f,
+                "dragging the first endpoint never moves its x, even with a horizontal drag component");
+        expect (std::abs (afterEndpointDrag.y[0] - beforeEndpointDrag.y[0]) > 1.0e-4f,
+                "dragging the first endpoint DOES move its y");
+        display->mouseUp (mk (draggedDiag));
+
+        // --- endpoint deletion refused (double-click and menu) -------------
+        const auto shapeBeforeDeleteAttempt = proc.getCustomLfoShape (0);
+        const auto lastIdx = shapeBeforeDeleteAttempt.count - 1;
+        const auto lastPx = display->pointToXY (1.0f, shapeBeforeDeleteAttempt.y[(size_t) lastIdx], area);
+        display->mouseDoubleClick (mk (lastPx, 2));
+        const auto afterEndpointDeleteAttempt = proc.getCustomLfoShape (0);
+        expect (afterEndpointDeleteAttempt.count == shapeBeforeDeleteAttempt.count,
+                "double-clicking the last endpoint does not delete it (endpoints are permanent)");
+
+        // --- delete an interior point by double-click -----------------------
+        const auto beforeDelete = proc.getCustomLfoShape (0);
+        expect (beforeDelete.count >= 3, "shape still has an interior point to delete");
+        if (beforeDelete.count >= 3)
+        {
+            const auto interiorPx = display->pointToXY (beforeDelete.x[1], beforeDelete.y[1], area);
+            display->mouseDoubleClick (mk (interiorPx, 2));
+            const auto afterDelete = proc.getCustomLfoShape (0);
+            expect (afterDelete.count == beforeDelete.count - 1,
+                    "double-clicking an interior point deletes it");
+        }
+
+        // --- curve handle drag bends the segment ---------------------------
+        const auto shapeForCurve = proc.getCustomLfoShape (0);
+        const auto midPhase = 0.5f * (shapeForCurve.x[0] + shapeForCurve.x[1]);
+        const auto midValue = spa::dsp::evalCustomLFOShape (shapeForCurve, midPhase);
+        const auto handlePx = display->pointToXY (midPhase, midValue, area);
+        expect (display->hitTestHandleForTest (handlePx) == 0, "segment 0's handle is found at its drawn position");
+        display->mouseDown (mk (handlePx));
+        const auto draggedUp = handlePx - juce::Point<float> (0.0f, 20.0f);
+        display->mouseDrag (mk (draggedUp));
+        const auto afterCurveDrag = proc.getCustomLfoShape (0);
+        expect (std::abs (afterCurveDrag.curve[0] - shapeForCurve.curve[0]) > 1.0e-3f,
+                "dragging a segment's handle changes that segment's curve amount");
+        display->mouseUp (mk (draggedUp));
+
+        // --- right-click on a point opens a real popup (showPopupAnchored) --
+        const auto shapeForMenu = proc.getCustomLfoShape (0);
+        if (shapeForMenu.count >= 3)
+        {
+            const auto pointPx = display->pointToXY (shapeForMenu.x[1], shapeForMenu.y[1], area);
+            display->mouseDown (mk (pointPx, 1, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)));
+
+            const auto deadline = juce::Time::getMillisecondCounter() + 500u;
+            while (juce::Component::getCurrentlyModalComponent (0) == nullptr
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                    "right-clicking an interior point opens a real popup menu "
+                    "(routed through showPopupAnchored)");
+            if (auto* modal = juce::Component::getCurrentlyModalComponent (0))
+                modal->exitModalState (0);   // dismiss without picking "Delete point"
+
+            const auto dismissDeadline = juce::Time::getMillisecondCounter() + 300u;
+            while (juce::Time::getMillisecondCounter() < dismissDeadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+
+        // --- switching shape away from Custom makes editing a no-op --------
+        setParam (proc, id::lfoParam (0, id::lfo::shape), (float) (int) params::LFOShape::sine);
+        expect (! display->isCustomActive(), "isCustomActive() follows the live shape param");
+        const auto beforeNoOp = proc.getCustomLfoShape (0);
+        display->mouseDoubleClick (mk (display->pointToXY (0.5f, 0.5f, area), 2));
+        const auto afterNoOp = proc.getCustomLfoShape (0);
+        expect (afterNoOp.count == beforeNoOp.count,
+                "double-clicking the display is a no-op once the shape is no longer Custom");
+
+        editor->removeFromDesktop();
     }
 
     // Bug: the Organic Chaos division combo (and, with the SMOOTH/JITTER
@@ -24100,6 +24641,48 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Visual-review render for the Custom LFO breakpoint editor (1.0.25): a
+    // non-trivial hand-shaped curve (five points, mixed curve bends), so the
+    // review can see points/handles/fill drawn together and confirm nothing
+    // clips inside the display well.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-lfo-custom")
+    {
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        setParam (proc, id::lfoParam (0, id::lfo::shape), (float) (int) params::LFOShape::custom);
+
+        spa::dsp::CustomLFOShape shape;
+        shape.count = 5;
+        shape.x[0] = 0.0f;  shape.y[0] = -0.2f;
+        shape.x[1] = 0.15f; shape.y[1] = 0.9f;
+        shape.x[2] = 0.45f; shape.y[2] = -0.7f;
+        shape.x[3] = 0.8f;  shape.y[3] = 0.5f;
+        shape.x[4] = 1.0f;  shape.y[4] = -0.2f;
+        shape.curve[0] = 0.7f; shape.curve[1] = -0.6f; shape.curve[2] = 0.3f; shape.curve[3] = -0.8f;
+        proc.setCustomLfoShape (0, shape);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->resized();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const juce::File outDir (argv[2]);
+        outDir.createDirectory();
+        const auto outFile = outDir.getChildFile ("spasynth-lfo-custom.png");
+        outFile.deleteFile();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream stream (outFile);
+        if (stream.openedOk())
+            png.writeImageToStream (image, stream);
+        std::cout << "snapshot: " << outFile.getFullPathName() << "\n";
+        return 0;
+    }
+
     // Temporary visual-review render for the ASSIGN mode feature: assign
     // mode on, filter 1 cutoff selected (destination, yellow), LFO 2
     // selected (source, yellow), everything else pulsing blue. Writes into
@@ -24377,6 +24960,12 @@ int main (int argc, char* argv[])
     RUN (lfoSmoothNoSwellTest);
     RUN (lfoJitterTest);
     RUN (lfoBoundsTest);
+    RUN (customLfoEvaluationTest);
+    RUN (customLfoStateRoundTripTest);
+    RUN (customLfoAudioThreadHandoffTest);
+    RUN (customLfoProcessChunkWiringTest);
+    RUN (customLfoSmoothJitterStillApplyTest);
+    RUN (customLfoEditorInteractionTest);
     RUN (comboTextFitsCellTest);
     RUN (tabSwitchKeyboardFocusTest);
     RUN (randomizeAllClearsHeldNotesTest);

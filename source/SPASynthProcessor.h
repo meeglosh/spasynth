@@ -139,6 +139,20 @@ public:
     // Audio -> UI telemetry (lock-free; UI reads on its repaint timers).
     dsp::Telemetry& getTelemetry() { return telemetry; }
 
+    // Custom LFO breakpoint shape (LFOShape::custom, 1.0.25). Message-thread
+    // API: getCustomLfoShape() returns the current shape by value (a tiny
+    // fixed-size struct, cheap to copy) for the editor to read/mutate a
+    // working copy of; setCustomLfoShape() publishes an edited copy to the
+    // audio thread lock-free and allocation-free (double buffer + atomic
+    // pointer swap, see customLfo below) and rides the APVTS state tree so
+    // it saves/restores with presets and host sessions. Never call from the
+    // audio thread.
+    dsp::CustomLFOShape getCustomLfoShape (int lfoIndex) const
+    {
+        return *customLfo[(size_t) lfoIndex].live.load();
+    }
+    void setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape);
+
     // MIDI Learn (right-click assignments).
     MidiLearnManager& getMidiLearn() { return *midiLearn; }
 
@@ -385,6 +399,23 @@ private:
     };
     std::array<SlotSample, params::maxOscSlots> slotSamples;
     std::vector<std::shared_ptr<const dsp::SampleData>> retiredSamples;  // message thread
+
+    // --- Custom LFO breakpoint shape storage (1.0.25) ----------------------
+    // Fixed-size (never allocates), so unlike wavetables/samples this needs
+    // no shared_ptr/retirement scheme: both buffers live for the processor's
+    // whole lifetime and are always valid to dereference. Message thread
+    // (setCustomLfoShape) writes a full copy into the buffer NOT currently
+    // live, then publishes it with one atomic pointer store; the audio
+    // thread (updateSharedState, once per block) just loads the pointer --
+    // classic single-writer double buffer, same shape as SlotTable/SlotSample
+    // but without the retirement machinery those need for variable-lifetime
+    // content.
+    struct CustomLfoStorage
+    {
+        std::array<dsp::CustomLFOShape, 2> buffers {};
+        std::atomic<const dsp::CustomLFOShape*> live { nullptr };   // set in the constructor
+    };
+    std::array<CustomLfoStorage, params::numLFOs> customLfo;
 
     // Every juce::Thread::launch() call site (sample load, wavetable load,
     // built-in wavetable build) increments this before launching and

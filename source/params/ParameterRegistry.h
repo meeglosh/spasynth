@@ -84,6 +84,7 @@ enum class ModSource
     sfxPitchB,
     sfxAmpC,
     sfxPitchC,
+    key,        // keyboard tracking: current (glide-aware) pitch vs MIDI 60
     count,
 };
 

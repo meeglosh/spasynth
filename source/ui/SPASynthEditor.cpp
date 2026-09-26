@@ -949,6 +949,9 @@ void ContentComponent::ModAssignTable::rebuild()
                 // ChaosGenerator's matrix-source walker has no documented
                 // sign convention either -- same reasoning, bipolar.
                 return true;
+            case MS::key:
+                // Documented bipolar: (note-60)/60 clamped to [-1,1].
+                return true;
             case MS::none:
             case MS::count:
             default:

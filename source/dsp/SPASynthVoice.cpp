@@ -355,6 +355,13 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     src[(int) params::ModSource::modWheel]   = shared.modWheel;
     src[(int) params::ModSource::aftertouch] = shared.aftertouch;
 
+    // Key: bipolar keyboard tracking, driven by the same glide-aware pitch
+    // (glideNote, already advanced above) that the filter's own keytrack
+    // uses. Five octaves either side of MIDI 60/C3 reach the +-1 ends;
+    // clamped so notes further out don't exceed full modulation depth.
+    src[(int) params::ModSource::key] =
+        juce::jlimit (-1.0f, 1.0f, (glideNote - 60.0f) / 60.0f);
+
     // SFX followers: stream the offline analysis curves at each slot's
     // current playback position.
     for (int s = 0; s < params::numOscSlots; ++s)

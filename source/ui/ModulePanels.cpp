@@ -643,6 +643,9 @@ FilterPanel::FilterPanel (SPASynthProcessor& p, int filterIndex)
     addAndMakeVisible (resonance);
     addAndMakeVisible (drive);
     addAndMakeVisible (keytrack);
+    keytrack.slider.setTooltip ("Keyboard tracking: how much the cutoff follows the note "
+                                 "you play. 100% tracks pitch exactly (1 octave up per octave "
+                                 "played); C3/MIDI 60 is unchanged.");
     addAndMakeVisible (envAmount);
     addAndMakeVisible (mix);
 

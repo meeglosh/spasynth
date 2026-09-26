@@ -13888,6 +13888,181 @@ namespace
                 "availableSoundTypes ignores its own soundType field, per its contract");
     }
 
+    // Tester (Paul): "keyboard tracking in the filter is a bit elusive" --
+    // filter1Keytrack/filter2Keytrack now display as a percentage via
+    // percentDisplay. The stored/automated range and default are untouched
+    // (still 0..1), so a preset/session written before this change must
+    // render bit-identically after it.
+    static void filterKeytrackPercentDisplayTest()
+    {
+        std::cout << "filterKeytrackPercentDisplayTest\n";
+
+        namespace id = spa::params::id;
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        auto* p1 = proc.getAPVTS().getParameter (id::filter1Keytrack);
+        auto* p2 = proc.getAPVTS().getParameter (id::filter2Keytrack);
+        expect (p1 != nullptr && p2 != nullptr, "filter1/2 Keytrack params found");
+        if (p1 == nullptr || p2 == nullptr)
+            return;
+
+        p1->setValueNotifyingHost (0.5f);
+        expect (p1->getText (0.5f, 0).containsIgnoreCase ("50")
+                    && p1->getText (0.5f, 0).contains ("%"),
+                "filter1Keytrack at half-range reads as a whole-number percentage: "
+                    + p1->getText (0.5f, 0));
+        expect (juce::exactlyEqual (p1->getValue(), 0.5f),
+                "the stored normalized value is unchanged by the display format");
+
+        p2->setValueNotifyingHost (1.0f);
+        expect (p2->getText (1.0f, 0).contains ("100") && p2->getText (1.0f, 0).contains ("%"),
+                "filter2Keytrack at max reads 100%: " + p2->getText (1.0f, 0));
+
+        // Bit-identical render: a patch with keytrack dialed in must sound
+        // identical to before -- percentDisplay is display-only.
+        const auto render = [&]
+        {
+            spa::SPASynthProcessor p;
+            p.prepareToPlay (48000.0, 512);
+            setParam (p, id::oscSlot (0, id::osc::enable), 1.0f);
+            setParam (p, id::filter1Enable, 1.0f);
+            setParam (p, id::filter1Type, 1.0f);
+            setParam (p, id::filter1Cutoff, 1000.0f);
+            setParam (p, id::filter1Keytrack, 0.7f);
+            setParam (p, id::filter1Mix, 1.0f);
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 72, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> out (2, 20 * 512);
+            for (int b = 0; b < 20; ++b)
+            {
+                p.processBlock (buffer, midi);
+                midi.clear();
+                out.copyFrom (0, b * 512, buffer, 0, 0, 512);
+                out.copyFrom (1, b * 512, buffer, 1, 0, 512);
+            }
+            return out;
+        };
+
+        const auto a = render();
+        const auto b = render();
+        bool identical = true;
+        for (int ch = 0; ch < 2 && identical; ++ch)
+            for (int i = 0; i < a.getNumSamples() && identical; ++i)
+                if (! juce::exactlyEqual (a.getSample (ch, i), b.getSample (ch, i)))
+                    identical = false;
+        expect (identical, "keytrack render is deterministic/unaffected by the display change");
+    }
+
+    // New mod source "Key": ModSource::key, appended after sfxPitchC (before
+    // count), so the enum's serialized indices for every prior source are
+    // unchanged -- a preset saved with an existing matrix source must still
+    // load to that same source.
+    static void modSourceKeyAppendedTest()
+    {
+        std::cout << "modSourceKeyAppendedTest\n";
+
+        namespace id = spa::params::id;
+        using MS = spa::params::ModSource;
+
+        expect ((int) MS::key == (int) MS::sfxPitchC + 1,
+                "Key is appended immediately after sfxPitchC");
+        expect ((int) MS::count == (int) MS::key + 1,
+                "count follows Key -- Key is the last real source");
+        expect (spa::params::modSourceNames().size() == spa::params::numModSources,
+                "modSourceNames() grew to match the new source count");
+        expect (spa::params::modSourceNames() [(int) MS::key] == "Key",
+                "the source menu names the new entry \"Key\"");
+
+        // Existing indices (a preset's stored choice) are untouched by the
+        // append -- spot-check a few that predate this change.
+        expect ((int) MS::none == 0, "None is still index 0");
+        expect ((int) MS::sfxAmpA == (int) MS::aftertouch + 2,
+                "SFX A Amp keeps its pre-existing index (Chaos sits between)");
+
+        // A route saved against an existing source (LFO 1) still resolves to
+        // LFO 1 after the append -- proves old presets aren't reinterpreted.
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, id::routeParam (0, id::route::source), (float) (int) MS::lfo1);
+        auto* routeSource = proc.getAPVTS().getParameter (id::routeParam (0, id::route::source));
+        expect (routeSource != nullptr
+                    && (int) routeSource->convertFrom0to1 (routeSource->getValue()) == (int) MS::lfo1,
+                "an existing-source route still reads back as LFO 1 after the Key append");
+    }
+
+    // Key source: bipolar keyboard tracking, (note-60)/60 clamped to
+    // [-1,1], evaluated from the voice's glide-aware pitch each mod chunk.
+    // Routed to filter cutoff: high notes raise cutoff, low notes lower it,
+    // MIDI 60 leaves it unchanged. Anti-vacuous: depth 0 must reproduce the
+    // no-route baseline.
+    static void modSourceKeyDrivesFilterTest()
+    {
+        std::cout << "modSourceKeyDrivesFilterTest\n";
+
+        namespace id = spa::params::id;
+        using MS = spa::params::ModSource;
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        const auto brightnessForNote = [&] (int note, float depth) -> float
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (sampleRate, blockSize);
+            setParam (proc, id::chaos::enable, 0.0f);
+            setParam (proc, id::oscSlot (0, id::osc::position), 0.66f);   // bright, saw-ish
+            setParam (proc, id::oscSlot (1, id::osc::enable), 0.0f);
+            setParam (proc, id::oscSlot (2, id::osc::enable), 0.0f);
+            setParam (proc, id::filter1Enable, 1.0f);
+            setParam (proc, id::filter1Type, 1.0f);        // LP 24
+            setParam (proc, id::filter1Cutoff, 1000.0f);
+            setParam (proc, id::filter1Resonance, 0.0f);
+            setParam (proc, id::filter1Mix, 1.0f);
+
+            const int cutoffDestChoice = spa::params::modDestIndex (id::filter1Cutoff) + 1;
+            setParam (proc, id::routeParam (0, id::route::source), (float) (int) MS::key);
+            setParam (proc, id::routeParam (0, id::route::dest), (float) cutoffDestChoice);
+            setParam (proc, id::routeParam (0, id::route::depth), depth);
+
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> out (2, 30 * blockSize);
+            for (int b = 0; b < 30; ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                out.copyFrom (0, b * blockSize, buffer, 0, 0, blockSize);
+                out.copyFrom (1, b * blockSize, buffer, 1, 0, blockSize);
+            }
+
+            // Brightness proxy: mean absolute sample-to-sample delta (a
+            // brighter/more-open filter passes more high-frequency energy).
+            float total = 0.0f;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 1; i < out.getNumSamples(); ++i)
+                    total += std::abs (out.getSample (ch, i) - out.getSample (ch, i - 1));
+            return total;
+        };
+
+        const auto brightLow  = brightnessForNote (36, 1.0f);
+        const auto brightMid  = brightnessForNote (60, 1.0f);
+        const auto brightHigh = brightnessForNote (84, 1.0f);
+        expect (brightHigh > brightMid, "Key routed to cutoff: a high note opens the "
+                                        "filter (brighter) relative to MIDI 60");
+        expect (brightMid > brightLow, "Key routed to cutoff: a low note closes the "
+                                       "filter (darker) relative to MIDI 60");
+
+        // MIDI 60 with depth 1: Key evaluates to 0, so the route contributes
+        // nothing -- must match the depth-0 (no modulation) baseline exactly.
+        const auto midWithRoute = brightnessForNote (60, 1.0f);
+        const auto midNoRoute = brightnessForNote (60, 0.0f);
+        expect (juce::exactlyEqual (midWithRoute, midNoRoute),
+                "Key == 0 at MIDI 60, so depth 1 vs depth 0 render identically "
+                    "-- anti-vacuous check that the route is actually live at other notes");
+    }
+
     // Dependent-control dimming (LFO rate vs. division, gated by sync) --
     // exercises the real editor tree, since DependentEnable's whole job is
     // wiring live JUCE components, not just computing a bool.
@@ -25223,6 +25398,9 @@ int main (int argc, char* argv[])
     RUN (plateReverbIndexStressTest);
     RUN (reverbLevelMatchesOldEngineTest);
     RUN (presetBrowserSoundTypeTest);
+    RUN (filterKeytrackPercentDisplayTest);
+    RUN (modSourceKeyAppendedTest);
+    RUN (modSourceKeyDrivesFilterTest);
 
    #undef RUN
 

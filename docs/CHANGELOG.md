@@ -1,5 +1,17 @@
 # SPASynth changelog
 
+## 1.0.26
+
+- The filter's KEYTRK knob now reads as a percentage, with a tooltip
+  explaining what it does: 100% means the cutoff follows the note you play
+  exactly, one octave up for every octave you play higher; C3 is left
+  unchanged. Existing patches sound exactly the same, only the readout
+  changed. This came from feedback.
+- New "Key" source in the mod matrix. It tracks the note you play, so you
+  can route it to any destination, for example the filter cutoff, to open
+  it up on higher notes and darken it on lower ones. This came from
+  feedback.
+
 ## 1.0.25
 
 - You can now browse presets by sound type. A new TYPE menu next to the

@@ -59,6 +59,7 @@ const juce::StringArray& modSourceNames()
         "SFX A Amp", "SFX A Pitch",
         "SFX B Amp", "SFX B Pitch",
         "SFX C Amp", "SFX C Pitch",
+        "Key",
     };
     jassert (names.size() == numModSources);
     return names;
@@ -470,9 +471,14 @@ static std::vector<ParamDef> buildCoreDefs()
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
                    true, { .enabled = true, .maxNorm = 0.7f, .biasCentre = 0.2f,
                            .biasStrength = 0.5f } });
+    // Displayed as a percentage (100% = cutoff follows the played pitch
+    // exactly, 1 octave per octave, referenced to MIDI 60/C3 -- see
+    // SPASynthVoice's cutoff*2^(kt*(note-60)/12)). Stored range/default are
+    // unchanged (still 0..1) so presets/sessions are unaffected.
     p.push_back ({ id::filter1Keytrack, "Keytrack", Section::filter1,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f },
+                   {}, true });
 
     // --- Filter 2 (non-destination controls; dests are appended later) ---
     p.push_back ({ id::filter2Enable, "F2 On", Section::filter2,
@@ -483,9 +489,11 @@ static std::vector<ParamDef> buildCoreDefs()
                    false, { .enabled = true },
                    { "LP 12", "LP 24", "HP 12", "HP 24",
                      "BP 12", "BP 24", "Notch 12", "Notch 24" } });
+    // Same percentage display as filter1Keytrack above.
     p.push_back ({ id::filter2Keytrack, "F2 Keytrack", Section::filter2,
                    ParamKind::floatParam, { 0.0f, 1.0f }, 0.0f, "",
-                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f } });
+                   false, { .enabled = true, .biasCentre = 0.3f, .biasStrength = 0.4f },
+                   {}, true });
     p.push_back ({ id::filterRouting, "Routing", Section::filter2,
                    ParamKind::choiceParam, {}, 0.0f, "",
                    false, { .enabled = true }, { "Series", "Parallel" } });

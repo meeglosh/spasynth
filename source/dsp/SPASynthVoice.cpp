@@ -251,6 +251,8 @@ void SPASynthVoice::startNote (int midiNoteNumber, float noteVelocity,
     env2.noteOn();
     env3.noteOn();
     ampEnvLast = 0.0f;
+    envOnElapsed = 0.0;
+    envOffElapsed = -1.0;
 }
 
 void SPASynthVoice::stopNote (float, bool allowTailOff)
@@ -260,6 +262,7 @@ void SPASynthVoice::stopNote (float, bool allowTailOff)
         ampEnv.noteOff();
         env2.noteOff();
         env3.noteOff();
+        envOffElapsed = 0.0;
     }
     else
     {
@@ -267,6 +270,16 @@ void SPASynthVoice::stopNote (float, bool allowTailOff)
         env2.reset();
         env3.reset();
         clearCurrentNote();
+
+        // Hard stop, no tail: free this voice's envelope-viz slot right
+        // away rather than leaving a dot frozen on a note that's already
+        // gone silent.
+        if (auto* tel = shared.telemetry; tel != nullptr && noteSerial >= 0)
+        {
+            auto& viz = tel->envViz[(size_t) (noteSerial % Telemetry::maxEnvViz)];
+            if (viz.voiceSerial.load (std::memory_order_relaxed) == noteSerial)
+                viz.voiceSerial.store (-1, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -682,6 +695,64 @@ void SPASynthVoice::computeChunk (int blockOffset, int chunkLen)
     env3.setParameters ({ denorm (eff, lookup.env3A), denorm (eff, lookup.env3D),
                           denorm (eff, lookup.env3S), denorm (eff, lookup.env3R) });
 
+    // --- Envelope playhead viz: EVERY active voice publishes its own AMP/
+    // ENV2/ENV3 stage + progress (up to maxEnvViz newest), unlike the single
+    // narrating-voice block below. Uses these SAME effective a/d/r times, so
+    // the dot tracks whatever mod-matrix modulation just did to them.
+    const double chunkSeconds = (double) chunkLen / juce::jmax (1.0, sampleRate);
+    envOnElapsed += chunkSeconds;
+    if (envOffElapsed >= 0.0)
+        envOffElapsed += chunkSeconds;
+
+    if (auto* tel = shared.telemetry; tel != nullptr && noteSerial >= 0)
+    {
+        auto stageOf = [&] (float aT, float dT, float rT, int& stageOut, float& progOut)
+        {
+            using Stage = Telemetry::EnvStage;
+            if (envOffElapsed >= 0.0)
+            {
+                const auto rSecs = juce::jmax (1.0e-4, (double) rT);
+                stageOut = (int) Stage::release;
+                progOut = (float) juce::jlimit (0.0, 1.0, envOffElapsed / rSecs);
+                return;
+            }
+            const auto aSecs = (double) juce::jmax (0.0f, aT);
+            if (envOnElapsed < aSecs)
+            {
+                stageOut = (int) Stage::attack;
+                progOut = aSecs > 0.0 ? (float) juce::jlimit (0.0, 1.0, envOnElapsed / aSecs) : 1.0f;
+                return;
+            }
+            const auto dSecs = (double) juce::jmax (0.0f, dT);
+            if (envOnElapsed < aSecs + dSecs)
+            {
+                stageOut = (int) Stage::decay;
+                progOut = dSecs > 0.0
+                    ? (float) juce::jlimit (0.0, 1.0, (envOnElapsed - aSecs) / dSecs) : 1.0f;
+                return;
+            }
+            stageOut = (int) Stage::sustain;
+            // No natural "position" through a held sustain -- a slow 0..1
+            // pulse phase instead, which EnvDisplay turns into a brightness
+            // pulse rather than a location on the curve.
+            progOut = (float) std::fmod (envOnElapsed / 1.6, 1.0);
+        };
+
+        auto& viz = tel->envViz[(size_t) (noteSerial % Telemetry::maxEnvViz)];
+        viz.voiceSerial.store (noteSerial, std::memory_order_relaxed);
+
+        int s0, s1, s2; float p0, p1, p2;
+        stageOf (denorm (eff, lookup.ampA), denorm (eff, lookup.ampD), denorm (eff, lookup.ampR), s0, p0);
+        stageOf (denorm (eff, lookup.env2A), denorm (eff, lookup.env2D), denorm (eff, lookup.env2R), s1, p1);
+        stageOf (denorm (eff, lookup.env3A), denorm (eff, lookup.env3D), denorm (eff, lookup.env3R), s2, p2);
+        viz.stage[0].store (s0, std::memory_order_relaxed);
+        viz.stage[1].store (s1, std::memory_order_relaxed);
+        viz.stage[2].store (s2, std::memory_order_relaxed);
+        viz.progress[0].store (p0, std::memory_order_relaxed);
+        viz.progress[1].store (p1, std::memory_order_relaxed);
+        viz.progress[2].store (p2, std::memory_order_relaxed);
+    }
+
     // --- Telemetry: the newest active voice narrates its effective state ----
     if (auto* tel = shared.telemetry)
     {
@@ -800,7 +871,19 @@ void SPASynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                                     int startSample, int numSamples)
 {
     if (! ampEnv.isActive())
+    {
+        // Tail-off finished naturally (as opposed to the hard-stop path in
+        // stopNote(), which clears this eagerly): free the envelope-viz slot
+        // here too, so a released note's dot disappears the instant it goes
+        // silent rather than lingering at its last published stage.
+        if (auto* tel = shared.telemetry; tel != nullptr && noteSerial >= 0)
+        {
+            auto& viz = tel->envViz[(size_t) (noteSerial % Telemetry::maxEnvViz)];
+            if (viz.voiceSerial.load (std::memory_order_relaxed) == noteSerial)
+                viz.voiceSerial.store (-1, std::memory_order_relaxed);
+        }
         return;
+    }
 
     auto* left = outputBuffer.getWritePointer (0, startSample);
     auto* right = outputBuffer.getNumChannels() > 1

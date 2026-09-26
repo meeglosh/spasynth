@@ -11,6 +11,17 @@
   can route it to any destination, for example the filter cutoff, to open
   it up on higher notes and darken it on lower ones. This came from
   feedback.
+- The Convolve tab's "From library..." menu now remembers where you left
+  off: the pack (and sample) your current impulse came from is ticked, or
+  if nothing's loaded yet, the pack you last browsed shows up highlighted
+  instead of the list always starting from the top. Picking an impulse this
+  way also updates where the "browser" file chooser opens, so the two stay
+  in sync. This came from feedback.
+- The AMP, ENV 2 and ENV 3 displays now show a small glowing dot riding the
+  envelope as it plays: through attack, decay, a gentle pulse while held,
+  then release, following the real modulated envelope rather than just the
+  raw knob settings. Held notes each get their own dot, with the most
+  recently played note shown brightest. This came from feedback.
 
 ## 1.0.25
 

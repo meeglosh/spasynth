@@ -355,6 +355,13 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ContentComponent)
 };
 
+// Test hook (1.0.26): ConvolvePanel is file-local (SPASynthEditor.cpp's
+// anonymous namespace), so this walks from any component in the editor tree
+// to find it and returns the pack folder its library menu would currently
+// tick (the loaded IR's pack, or the last pack browsed into if none is
+// loaded). Returns an invalid File if no ConvolvePanel is found.
+juce::File convolveTickedPackForTest (juce::Component& editorRoot);
+
 } // namespace ui
 
 // Shell: hosts the fixed-layout content at base size and scales it

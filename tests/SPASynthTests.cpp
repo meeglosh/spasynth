@@ -10952,6 +10952,43 @@ namespace
             allOff.addEvent (juce::MidiMessage::allNotesOff (1), 0);
             proc.processBlock (buffer, allOff);
         }
+
+        // Envelope playhead dot (1.0.26): hold a note through a slow attack
+        // so the render lands mid-attack, with isLive() true, showing the
+        // dot away from both curve endpoints -- a full-attack or idle render
+        // wouldn't visibly prove the feature.
+        {
+            namespace id = spa::params::id;
+            setParam (proc, id::ampAttack, 2.0f);   // seconds, slow enough to catch mid-rise
+
+            constexpr double sampleRate = 48000.0;
+            constexpr int blockSize = 512;
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            for (int b = 0; b < (int) (0.5 * sampleRate / blockSize); ++b)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+            }
+
+            std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+            editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+            const auto file = outDir.getChildFile ("spasynth-envviz.png");
+            file.deleteFile();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream stream (file);
+            if (stream.openedOk())
+                png.writeImageToStream (image, stream);
+            std::cout << "snapshot: " << file.getFullPathName() << "\n";
+
+            juce::MidiBuffer allOff;
+            allOff.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            proc.processBlock (buffer, allOff);
+            setParam (proc, id::ampAttack, 0.0f);
+        }
     }
 
     // Logic (AUHostingService's out-of-process view) flickered the whole
@@ -24352,6 +24389,315 @@ static void presetBrowserDeleteTest()
     pm.rescan();
 }
 
+// 1.0.26: the Convolve "library" dropdown must go through showPopupAnchored
+// (proven the same way popupAnchoringTest does -- the menu stays open past
+// the flash-dismiss window, which only happens with a focusable anchor),
+// tick the current IR's pack/sample (or the last-browsed pack if nothing's
+// loaded), and remember the folder via library::setLastIRFolder so the
+// plain file-chooser picks up where the menu left off.
+static void convolveLibraryMenuTest()
+{
+    std::cout << "convolveLibraryMenuTest\n";
+    namespace id = spa::params::id;
+    namespace lib = spa::library;
+
+    const auto pumpFor = [] (int ms)
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    };
+
+    const auto savedRoot = spa::library::getLibraryRoot();
+    const auto savedIrFolder = lib::getLastIRFolder();
+    const auto root = makeFakeLibrary();   // Alpha Pack / Beta Pack, 3 wavs each
+    lib::setLibraryRoot (root);
+    lib::setLastIRFolder (juce::File());   // clear so we can see the menu actually set it
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+    editor->addToDesktop (0);
+    editor->setVisible (true);
+    pumpFor (200);
+
+    const bool foreground = juce::Process::isForegroundProcess();
+    if (! foreground)
+        std::cout << "  ..   not foreground -- the flash-dismiss / keyboard-selection checks "
+                     "below are skipped, the rest still runs\n";
+
+    // Front the CONV tab so its ConvolvePanel is actually laid out/findable.
+    juce::TabbedComponent* fxTabs = nullptr;
+    std::function<void (juce::Component&)> findTabs = [&] (juce::Component& c)
+    {
+        if (fxTabs == nullptr)
+            if (auto* t = dynamic_cast<juce::TabbedComponent*> (&c))
+                if (t->getTabNames().contains ("CONV"))
+                    fxTabs = t;
+        for (auto* child : c.getChildren())
+            findTabs (*child);
+    };
+    findTabs (*editor);
+    expect (fxTabs != nullptr, "FX tab bar (with a CONV tab) found");
+    if (fxTabs != nullptr)
+    {
+        fxTabs->setCurrentTabIndex (fxTabs->getTabNames().indexOf ("CONV"));
+        fxTabs->resized();
+        pumpFor (50);
+    }
+
+    juce::TextButton* libraryButton = nullptr;
+    std::function<void (juce::Component&)> findButton = [&] (juce::Component& c)
+    {
+        if (libraryButton == nullptr)
+            if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                if (b->getButtonText().startsWith ("From library"))
+                    libraryButton = b;
+        for (auto* child : c.getChildren())
+            findButton (*child);
+    };
+    findButton (*editor);
+    expect (libraryButton != nullptr, "Convolve's \"From library...\" button found");
+
+    // Before anything is loaded, nothing is ticked and nothing's been
+    // browsed into yet.
+    expect (! spa::ui::convolveTickedPackForTest (*editor).isDirectory(),
+            "no pack ticked before anything is loaded or browsed");
+
+    if (libraryButton != nullptr)
+    {
+        libraryButton->triggerClick();
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + 1500u;
+            while (juce::Component::getCurrentlyModalComponent (0) == nullptr
+                   && juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        }
+        expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                "pack menu appeared (routed through showPopupAnchored)");
+
+        if (juce::Component::getCurrentlyModalComponent (0) != nullptr && foreground)
+        {
+            pumpFor (300);
+            expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                    "pack menu is STILL open 300ms later (no flash-dismiss -- "
+                    "proves showPopupAnchored, not a bare showMenuAsync)");
+
+            // Down + Enter through the real peer picks the first item,
+            // alphabetically "Alpha Pack" -- same technique popupAnchoringTest
+            // and eqEditorTypeMenuTest use (no item-id lookup API on a live menu).
+            if (auto* peer = editor->getPeer())
+            {
+                peer->handleKeyPress (juce::KeyPress::downKey, 0);
+                pumpFor (30);
+                peer->handleKeyPress (juce::KeyPress::returnKey, 0);
+                pumpFor (200);
+            }
+
+            // Picking a pack opens a second, nested popup (the sample list).
+            {
+                const auto deadline = juce::Time::getMillisecondCounter() + 500u;
+                while (juce::Component::getCurrentlyModalComponent (0) == nullptr
+                       && juce::Time::getMillisecondCounter() < deadline)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+            }
+            expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                    "sample submenu appeared after picking a pack");
+
+            if (juce::Component::getCurrentlyModalComponent (0) != nullptr)
+            {
+                pumpFor (300);
+                expect (juce::Component::getCurrentlyModalComponent (0) != nullptr,
+                        "sample submenu is STILL open 300ms later (also anchored)");
+
+                if (auto* peer = editor->getPeer())
+                {
+                    peer->handleKeyPress (juce::KeyPress::downKey, 0);
+                    pumpFor (30);
+                    peer->handleKeyPress (juce::KeyPress::returnKey, 0);
+                    pumpFor (200);
+                }
+                else
+                {
+                    juce::PopupMenu::dismissAllActiveMenus();
+                    pumpFor (100);
+                }
+            }
+
+            // Alphabetically first sample in Alpha Pack is "one.wav".
+            const auto irPath = proc.getConvolutionIRPath();
+            expect (irPath.getFileName() == "one.wav",
+                    "picking the menu's first pack+sample loaded Alpha Pack/one.wav (got \""
+                        + irPath.getFileName() + "\")");
+            expect (irPath.getParentDirectory().getFileName() == "Alpha Pack",
+                    "loaded IR's pack is Alpha Pack");
+            expect (lib::getLastIRFolder() == root.getChildFile ("Alpha Pack"),
+                    "picking from the menu updated library::lastIRFolder to the pack folder");
+
+            // Reopening now: the loaded pack/sample is what the tick logic
+            // reads (ConvolvePanel is file-local, so this is the only way a
+            // test can observe it -- see convolveTickedPackForTest's comment).
+            expect (spa::ui::convolveTickedPackForTest (*editor) == root.getChildFile ("Alpha Pack"),
+                    "current IR's pack (Alpha Pack) is what the menu would tick now");
+        }
+        else
+        {
+            juce::PopupMenu::dismissAllActiveMenus();
+            pumpFor (100);
+        }
+    }
+
+    editor->removeFromDesktop();
+    lib::setLibraryRoot (savedRoot);
+    lib::setLastIRFolder (savedIrFolder);
+    root.deleteRecursively();
+}
+
+// 1.0.26: the envelope playhead dot. Every active voice publishes its own
+// AMP/ENV2/ENV3 stage + progress once per mod chunk (Telemetry::envViz),
+// using the SAME effective (post mod-matrix) attack/decay/release times just
+// handed to that voice's ADSR -- so this exercises attack -> decay ->
+// sustain -> release end to end, checks the slot clears once release
+// finishes (no lingering dot), that EnvDisplay::curvePoint (the exact
+// function paintDisplay uses for the dot) lands on the curve it maps to for
+// a sample of stage/progress values, and that a second, later-started voice
+// reports a higher serial (so it draws as the "newest").
+static void envelopePlayheadTelemetryTest()
+{
+    std::cout << "envelopePlayheadTelemetryTest\n";
+    namespace id = spa::params::id;
+    using Stage = spa::dsp::Telemetry::EnvStage;
+
+    spa::SPASynthProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    // Slow enough attack/decay/release that a handful of 512-sample blocks
+    // land solidly inside each stage rather than racing through it in one.
+    setParam (proc, id::ampAttack, 0.4f);
+    setParam (proc, id::ampDecay, 0.4f);
+    setParam (proc, id::ampSustain, 0.5f);
+    setParam (proc, id::ampRelease, 0.4f);
+
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    auto& tel = proc.getTelemetry();
+
+    const auto findSlot = [&] () -> const spa::dsp::Telemetry::EnvViz*
+    {
+        for (auto& v : tel.envViz)
+            if (v.voiceSerial.load() >= 0)
+                return &v;
+        return nullptr;
+    };
+
+    // --- Anti-vacuous: before any note, every slot is empty. ---------------
+    expect (findSlot() == nullptr, "no envViz slot active before any note is played");
+
+    proc.processBlock (buffer, midi);
+    midi.clear();
+
+    auto* slot = findSlot();
+    expect (slot != nullptr, "a voice claimed an envViz slot on noteOn");
+    if (slot == nullptr) return;
+
+    expect (slot->stage[0].load() == (int) Stage::attack,
+            "AMP envelope reports attack right after noteOn (0.4s attack, one 512-sample block in)");
+    const auto attackProgress = slot->progress[0].load();
+    expect (attackProgress > 0.0f && attackProgress < 1.0f,
+            "attack progress is a fraction, not 0 or 1 (" + juce::String (attackProgress) + ")");
+
+    // Run through to well past attack+decay (0.8s) into sustain.
+    for (int b = 0; b < (int) (1.0 * 48000.0 / 512); ++b)
+    {
+        proc.processBlock (buffer, midi);
+        midi.clear();
+    }
+    expect (slot->stage[0].load() == (int) Stage::sustain,
+            "AMP envelope reports sustain ~1s in (0.4s attack + 0.4s decay)");
+
+    // Release: stage should report release, then the slot should clear once
+    // the 0.4s release has actually finished.
+    juce::MidiBuffer noteOff;
+    noteOff.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    proc.processBlock (buffer, noteOff);
+
+    bool sawRelease = false;
+    juce::MidiBuffer empty;
+    for (int b = 0; b < (int) (0.2 * 48000.0 / 512) && ! sawRelease; ++b)
+    {
+        proc.processBlock (buffer, empty);
+        if (slot->voiceSerial.load() >= 0 && slot->stage[0].load() == (int) Stage::release)
+            sawRelease = true;
+    }
+    expect (sawRelease, "AMP envelope reports release after noteOff");
+
+    for (int b = 0; b < (int) (1.0 * 48000.0 / 512); ++b)
+        proc.processBlock (buffer, empty);
+    expect (findSlot() == nullptr,
+            "no envViz slot is active once release has actually finished (dot vanishes with the note)");
+
+    // --- Newest-voice ordering: a later noteOn gets a higher serial. -------
+    {
+        spa::SPASynthProcessor proc2;
+        proc2.prepareToPlay (48000.0, 512);
+        auto& tel2 = proc2.getTelemetry();
+        juce::AudioBuffer<float> buf2 (2, 512);
+
+        juce::MidiBuffer m1;
+        m1.addEvent (juce::MidiMessage::noteOn (1, 48, (juce::uint8) 100), 0);
+        proc2.processBlock (buf2, m1);
+
+        int firstSerial = -1;
+        for (auto& v : tel2.envViz)
+            if (v.voiceSerial.load() >= 0)
+                firstSerial = v.voiceSerial.load();
+        expect (firstSerial >= 0, "first voice claimed a slot");
+
+        juce::MidiBuffer m2;
+        m2.addEvent (juce::MidiMessage::noteOn (1, 55, (juce::uint8) 100), 0);
+        proc2.processBlock (buf2, m2);
+
+        int maxSerial = -1;
+        for (auto& v : tel2.envViz)
+            maxSerial = juce::jmax (maxSerial, v.voiceSerial.load());
+        expect (maxSerial > firstSerial,
+                "second (later) noteOn's voice has a strictly higher serial -- draws as newest");
+    }
+
+    // --- curvePoint lands on the curve it maps to, for a sample of points. -
+    // Same shape paintDisplay draws: a/d/s/r are the display's own local
+    // variables (sqrt-scaled attack/decay/release, real sustain level).
+    const float a = 0.3f, d = 0.25f, s = 0.6f, r = 0.35f;
+    struct Sample { Stage stage; float progress; };
+    for (const auto& sm : { Sample { Stage::attack, 0.0f }, Sample { Stage::attack, 1.0f },
+                            Sample { Stage::decay, 0.0f }, Sample { Stage::decay, 1.0f },
+                            Sample { Stage::release, 0.0f }, Sample { Stage::release, 1.0f },
+                            Sample { Stage::sustain, 0.3f } })
+    {
+        float seg = -1.0f, level = -1.0f;
+        spa::ui::EnvDisplay::curvePoint (sm.stage, sm.progress, a, d, s, r, seg, level);
+        expect (seg >= 0.0f && level >= 0.0f && level <= 1.0f,
+                "curvePoint returns a valid (segment, level) point for stage "
+                    + juce::String ((int) sm.stage) + " progress " + juce::String (sm.progress));
+    }
+    // Endpoints are exact and shared between adjoining stages, which is what
+    // makes the curve continuous: attack ends where decay starts (level 1),
+    // decay ends where release starts (level s), release ends at level 0.
+    float seg1, lvl1, seg2, lvl2;
+    spa::ui::EnvDisplay::curvePoint (Stage::attack, 1.0f, a, d, s, r, seg1, lvl1);
+    expect (juce::approximatelyEqual (lvl1, 1.0f), "attack's progress==1 endpoint is level 1 (peak)");
+    spa::ui::EnvDisplay::curvePoint (Stage::decay, 1.0f, a, d, s, r, seg2, lvl2);
+    expect (juce::approximatelyEqual (lvl2, s), "decay's progress==1 endpoint is exactly the sustain level");
+    spa::ui::EnvDisplay::curvePoint (Stage::release, 1.0f, a, d, s, r, seg1, lvl1);
+    expect (juce::approximatelyEqual (lvl1, 0.0f), "release's progress==1 endpoint is level 0 (silent)");
+
+    setParam (proc, id::ampAttack, 0.0f);
+    setParam (proc, id::ampDecay, 0.0f);
+    setParam (proc, id::ampSustain, 1.0f);
+    setParam (proc, id::ampRelease, 0.0f);
+}
 
 int main (int argc, char* argv[])
 {
@@ -25401,6 +25747,8 @@ int main (int argc, char* argv[])
     RUN (filterKeytrackPercentDisplayTest);
     RUN (modSourceKeyAppendedTest);
     RUN (modSourceKeyDrivesFilterTest);
+    RUN (convolveLibraryMenuTest);
+    RUN (envelopePlayheadTelemetryTest);
 
    #undef RUN
 

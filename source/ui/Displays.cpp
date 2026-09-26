@@ -891,6 +891,42 @@ EnvDisplay::EnvDisplay (SPASynthProcessor& p, juce::String idPrefix, int envInde
 {
 }
 
+void EnvDisplay::curvePoint (dsp::Telemetry::EnvStage stage, float progress,
+                             float a, float d, float s, float r,
+                             float& segOut, float& levelOut)
+{
+    using Stage = dsp::Telemetry::EnvStage;
+    const auto qb = [] (float tt, float p0, float pc, float p1)
+    {
+        const auto u = 1.0f - tt;
+        return u * u * p0 + 2.0f * u * tt * pc + tt * tt * p1;
+    };
+    const auto tt = juce::jlimit (0.0f, 1.0f, progress);
+    const auto total = juce::jmax (0.05f, a + d + 0.25f + r);
+    switch (stage)
+    {
+        case Stage::attack:
+            segOut = qb (tt, 0.0f, a * 0.4f, a);
+            levelOut = qb (tt, 0.0f, 0.85f, 1.0f);
+            return;
+        case Stage::decay:
+            segOut = qb (tt, a, a + d * 0.3f, a + d);
+            levelOut = qb (tt, 1.0f, s + (1.0f - s) * 0.25f, s);
+            return;
+        case Stage::sustain:
+            segOut = a + d + 0.125f;
+            levelOut = s;
+            return;
+        case Stage::release:
+            segOut = qb (tt, a + d + 0.25f, a + d + 0.25f + r * 0.3f, total);
+            levelOut = qb (tt, s, s * 0.25f, 0.0f);
+            return;
+        case Stage::idle:
+        default:
+            segOut = 0.0f; levelOut = 0.0f; return;
+    }
+}
+
 void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto& t = currentTheme();
@@ -933,6 +969,60 @@ void EnvDisplay::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
     g.setColour (t.accentMod.withAlpha (0.18f));
     g.fillPath (fill);
     draw::glowStroke (g, curve, t.accentMod, 1.6f);
+
+    // Live playhead dot(s), per the same effective (mod-matrix-modulated)
+    // stage/progress each voice publishes in SPASynthVoice::computeChunk.
+    // Mirrors the curve's own quadratic-Bezier construction above exactly,
+    // so the dot always lands ON the drawn curve rather than an approximation
+    // of it -- see Telemetry::EnvViz's comment for why sustain uses a pulse
+    // phase instead of an x-position.
+    if (telemetry == nullptr)
+        return;
+
+    using Stage = dsp::Telemetry::EnvStage;
+
+    // Newest voice first (highest serial), so it draws the brightest dot;
+    // up to maxEnvViz entries, insertion-sorted (small, fixed N -- no need
+    // for <algorithm>).
+    struct Entry { int serial = -1, stage = 0; float progress = 0.0f; };
+    std::array<Entry, dsp::Telemetry::maxEnvViz> entries {};
+    int n = 0;
+    for (auto& viz : telemetry->envViz)
+    {
+        const auto vs = viz.voiceSerial.load (std::memory_order_relaxed);
+        if (vs < 0)
+            continue;
+        Entry e { vs, viz.stage[(size_t) env].load (std::memory_order_relaxed),
+                  viz.progress[(size_t) env].load (std::memory_order_relaxed) };
+        int insertAt = n;
+        while (insertAt > 0 && entries[(size_t) (insertAt - 1)].serial < e.serial)
+        {
+            entries[(size_t) insertAt] = entries[(size_t) (insertAt - 1)];
+            --insertAt;
+        }
+        entries[(size_t) insertAt] = e;
+        ++n;
+    }
+
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& e = entries[(size_t) i];
+        if (e.stage == (int) Stage::idle)
+            continue;
+        float seg = 0.0f, level = 0.0f;
+        curvePoint ((Stage) e.stage, e.progress, a, d, s, r, seg, level);
+        const auto x = xAt (seg);
+        const auto y = yAt (level);
+
+        float alpha = i == 0 ? 1.0f : juce::jmax (0.12f, 0.55f - 0.18f * (float) i);
+        if ((Stage) e.stage == Stage::sustain)
+            alpha *= 0.55f + 0.45f * std::sin (e.progress * juce::MathConstants<float>::twoPi);
+
+        g.setColour (t.accentMod.withAlpha (alpha * 0.35f));
+        g.fillEllipse (x - 6.0f, y - 6.0f, 12.0f, 12.0f);
+        g.setColour (t.accentMod.withAlpha (alpha));
+        g.fillEllipse (x - 3.5f, y - 3.5f, 7.0f, 7.0f);
+    }
 }
 
 // ============================ LFODisplay ===================================

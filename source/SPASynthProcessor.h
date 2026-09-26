@@ -189,6 +189,7 @@ public:
     // remembers the path (portable, saved per preset). Empty name = none.
     void loadConvolutionIR (const juce::File& file);
     juce::String getConvolutionIRName() const { return juce::File (convIrPath).getFileNameWithoutExtension(); }
+    juce::File getConvolutionIRPath() const { return juce::File (convIrPath); }
     // Shaped-IR waveform envelope for the Convolve display (message thread).
     const std::array<float, dsp::FXChain::convEnvPoints>& getConvolutionEnvelope() const
     {

@@ -65,6 +65,32 @@ struct Telemetry
     std::atomic<float> filter2Resonance { 0.0f };
 
     std::array<std::atomic<float>, 3> envValue {};                 // amp, env2, env3
+
+    // Per-voice envelope playhead viz (1.0.26): up to maxEnvViz of the most
+    // recently started active voices each publish their own AMP/ENV2/ENV3
+    // stage + progress-within-stage once per mod chunk, straight from the
+    // SAME effective (post mod-matrix) attack/decay/release times just
+    // handed to that voice's juce::ADSR::setParameters -- so a dot riding
+    // the drawn curve always matches what's actually heard, including any
+    // modulation of the envelope's own times. Slot = noteSerial %
+    // maxEnvViz (an occasional wraparound collision between two very old
+    // held notes is a cosmetic redraw, not a correctness issue). voiceSerial
+    // < 0 marks an empty/freed slot -- the voice that owned it clears this
+    // the moment its ampEnv goes idle, so a finished note's dot vanishes
+    // rather than freezing in place. progress is 0..1 within attack/decay/
+    // release; for sustain it's instead a slow 0..1 pulse phase (there is no
+    // natural "progress" through a held sustain), which EnvDisplay turns
+    // into a gentle brightness pulse rather than a position.
+    static constexpr int maxEnvViz = 8;
+    enum class EnvStage : int { idle = 0, attack, decay, sustain, release };
+    struct EnvViz
+    {
+        std::atomic<int> voiceSerial { -1 };
+        std::array<std::atomic<int>, 3> stage {};       // EnvStage, amp/env2/env3
+        std::array<std::atomic<float>, 3> progress {};
+    };
+    std::array<EnvViz, maxEnvViz> envViz {};
+
     std::array<std::atomic<float>, params::numLFOs> lfoValue {};   // post uni/bipolar
     std::array<std::atomic<float>, params::numLFOs> lfoPhase {};   // 0..1 base phase
     std::atomic<float> chaosValue { 0.0f };                        // scaled matrix source

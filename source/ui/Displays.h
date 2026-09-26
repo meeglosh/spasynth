@@ -156,6 +156,18 @@ class EnvDisplay : public DisplayComponent
 public:
     EnvDisplay (SPASynthProcessor&, juce::String idPrefix, int envIndex);
 
+    // Maps (stage, progress-within-stage) to a point ON the drawn ADSR
+    // curve, in the same (segment, level) space paintDisplay's own curve
+    // uses -- a/d/r are the display's sqrt-scaled attack/decay/release
+    // lengths and s the sustain level (the exact locals paintDisplay derives
+    // from the envelope's own parameters). paintDisplay calls this same
+    // function for the live playhead dot, so there is one source of truth
+    // for "is the dot on the curve" rather than two copies that could drift.
+    // Exposed (rather than local to paintDisplay) so tests can verify it.
+    static void curvePoint (dsp::Telemetry::EnvStage stage, float progress,
+                            float a, float d, float s, float r,
+                            float& segOut, float& levelOut);
+
 private:
     void paintDisplay (juce::Graphics&, juce::Rectangle<float>) override;
     juce::String prefix;

@@ -450,6 +450,12 @@ private:
     int currentNote = -1;
     int noteSerial = -1;       // telemetry writer arbitration
 
+    // Envelope playhead viz (1.0.26): elapsed seconds since noteOn/noteOff,
+    // audio-thread only, reset in startNote(); envOffElapsed stays negative
+    // until stopNote() actually triggers a release. See Telemetry::EnvViz.
+    double envOnElapsed = 0.0;
+    double envOffElapsed = -1.0;
+
     // Portamento: the pitch actually sounding, ramped toward the struck note
     // per modulation chunk. Equal to the note when glide is off.
     float glideNote = -1.0f, glideTarget = -1.0f;

@@ -502,6 +502,16 @@ public:
 
     ~ConvolvePanel() override { processor.removeChangeListener (this); }
 
+    // Which pack the library menu would tick right now: the current IR's
+    // pack, or (nothing loaded) the pack last browsed into. Exposed for
+    // tests -- ConvolvePanel is file-local, so convolveTickedPackForTest()
+    // below is the only way a test can reach this.
+    juce::File tickedPackForTest() const
+    {
+        const auto irPath = processor.getConvolutionIRPath();
+        return irPath.existsAsFile() ? irPath.getParentDirectory() : lastPackChosen;
+    }
+
     // Faceplate restyle: FX-chain tab content, same as FXPanel's other tabs
     // (DIST/CHORUS/DELAY/...) — no card fill, continuous surface shows through.
     void paint (juce::Graphics& g) override
@@ -612,23 +622,32 @@ private:
         std::sort (packs.begin(), packs.end(), [] (const juce::File& a, const juce::File& b)
                    { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
 
+        // Tick the pack the current IR lives in; if nothing's loaded, tick
+        // the pack the user last browsed into, so the menu picks up where
+        // they left off rather than always starting from the top.
+        const auto currentPack = tickedPackForTest();
+
         juce::Component::SafePointer<ConvolvePanel> safe (this);
         juce::PopupMenu menu;
         for (const auto& folder : packs)
         {
             const auto f = folder;
-            menu.addItem (folder.getFileName(), [safe, f]
+            juce::PopupMenu::Item item;
+            item.text = folder.getFileName();
+            item.isTicked = f == currentPack;
+            item.action = [safe, f]
             {
                 if (safe != nullptr)
+                {
+                    safe->lastPackChosen = f;
                     safe->chooseLibrarySample (f);
-            });
+                }
+            };
+            menu.addItem (item);
         }
         if (menu.getNumItems() == 0)
             menu.addItem ("(no library found)", false, false, nullptr);
-        if (auto* content = findParentComponentOfClass<ContentComponent>())
-            content->showPopupAnchored (menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
-        else
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
+        showPopupAnchored (libraryButton, menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
     }
 
     void chooseLibrarySample (const juce::File& packFolder)
@@ -637,27 +656,30 @@ private:
         std::sort (wavs.begin(), wavs.end(), [] (const juce::File& a, const juce::File& b)
                    { return a.getFileName().compareIgnoreCase (b.getFileName()) < 0; });
 
+        const auto currentIr = processor.getConvolutionIRPath();
+
         juce::Component::SafePointer<ConvolvePanel> safe (this);
         juce::PopupMenu menu;
         for (const auto& wav : wavs)
         {
             const auto f = wav;
-            menu.addItem (wav.getFileNameWithoutExtension(),
-                          [safe, f]
+            juce::PopupMenu::Item item;
+            item.text = wav.getFileNameWithoutExtension();
+            item.isTicked = f == currentIr;
+            item.action = [safe, f]
             {
                 if (safe != nullptr)
                 {
                     safe->processor.loadConvolutionIR (f);
+                    library::setLastIRFolder (f);   // so the "browser" chooser opens in the same place
                     safe->updateLabel();
                 }
-            });
+            };
+            menu.addItem (item);
         }
         if (menu.getNumItems() == 0)
             menu.addItem ("(no samples in this pack)", false, false, nullptr);
-        if (auto* content = findParentComponentOfClass<ContentComponent>())
-            content->showPopupAnchored (menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
-        else
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton));
+        showPopupAnchored (libraryButton, menu, juce::PopupMenu::Options().withTargetComponent (&libraryButton), nullptr);
     }
 
     void chooseIR()
@@ -693,6 +715,9 @@ private:
     Knob mix, predelay, start, decay, damping, width;
     std::unique_ptr<juce::FileChooser> fileChooser;
     bool dragHighlight = false;
+    // Which pack the menu last browsed into, so it can highlight that pack
+    // on reopen even before any IR has actually been loaded from it.
+    juce::File lastPackChosen;
 };
 
 // Voice-allocation controls, shown in a call-out from the header VOICE button:
@@ -855,6 +880,23 @@ static juce::Image makeFaceplateNoiseTexture()
     return img;
 }
 } // namespace
+
+// Test hook (1.0.26): ConvolvePanel is file-local (anonymous namespace
+// above), so this is the only way tests can read which pack its library
+// menu would tick right now. Declared in SPASynthEditor.h.
+juce::File convolveTickedPackForTest (juce::Component& editorRoot)
+{
+    ConvolvePanel* panel = nullptr;
+    std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+    {
+        if (panel == nullptr)
+            panel = dynamic_cast<ConvolvePanel*> (&c);
+        for (auto* child : c.getChildren())
+            find (*child);
+    };
+    find (editorRoot);
+    return panel != nullptr ? panel->tickedPackForTest() : juce::File();
+}
 
 // --- ModAssignTable ---------------------------------------------------------
 // See the class comment in SPASynthEditor.h. Listens on every matrix route

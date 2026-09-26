@@ -144,6 +144,10 @@ private:
     void chooseLibraryFolder();
     void rescanLibrary();
     void saveUserPreset();
+    // SAVE button (1.0.26): offers Save/Save As for a loaded user preset
+    // whose file still exists, else goes straight to saveUserPreset()'s
+    // existing Save As flow. See the definition comment.
+    void onSaveButtonClicked();
     // One-time "we couldn't find your library" prompt for a first-time
     // buyer whose extraction went wrong -- see processor's
     // consumeEmptyLibraryPromptDecision(). Called once from the ctor.

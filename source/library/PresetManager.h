@@ -87,6 +87,19 @@ public:
     // place across the rescan.
     bool deleteUserPreset (const juce::File& file);
 
+    // Rewrites a USER preset IN PLACE (1.0.26 SAVE button's "Save" item):
+    // current state -> the SAME file, keeping its bank folder, display name
+    // and stored "type"/"recipe" XML attributes untouched (the favourite key
+    // is category + "/" + name, both unchanged, so it needs no attention
+    // here). The previous version is moved to the system Trash first, same
+    // rationale and mechanism as deleteUserPreset() (recoverable, never
+    // deleteFile()); if that move fails the new state is still written via
+    // an atomic temp-file + move (see writePreset/setPresetType's identical
+    // pattern) so a Trash hiccup can never lose the new save. Refused for
+    // anything not flagged isUser by the last rescan(), or the previous
+    // preset's own XML fails to parse.
+    bool saveInPlace (const juce::File& file);
+
     // --- Export / import (1.0.26) -------------------------------------------
 
     // Sample/wavetable/IR references inside a saved state that are NOT

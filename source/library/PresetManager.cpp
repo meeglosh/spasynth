@@ -321,6 +321,55 @@ bool PresetManager::deleteUserPreset (const juce::File& file)
     return true;
 }
 
+bool PresetManager::saveInPlace (const juce::File& file)
+{
+    const PresetInfo* entry = nullptr;
+    for (const auto& p : presets)
+        if (p.file == file)
+            entry = &p;
+
+    if (entry == nullptr || ! entry->isUser)
+        return false;
+
+    // Read the file's own name/recipe stamp rather than assuming them --
+    // entry->storedType already carries the type, but name/recipe aren't
+    // cached on PresetInfo.
+    const auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName (presetTag))
+        return false;
+    const auto name = xml->getStringAttribute ("name", file.getFileNameWithoutExtension());
+    const auto recipe = xml->getIntAttribute ("recipe", 0);
+    const auto type = entry->storedType;
+
+    // Recoverable backup of the previous version, exactly like
+    // deleteUserPreset(): moveToTrash(), never deleteFile(). Best-effort --
+    // if it fails, the atomic write below still lands (moveFileTo replaces
+    // an existing destination), so the new save is never lost over a Trash
+    // hiccup, only the recoverable backup of the old one.
+    file.moveToTrash();
+
+    const auto tempFile = file.getSiblingFile (file.getFileNameWithoutExtension() + ".tmp"
+                                               + presetExtension);
+    if (! writePreset (tempFile, name, captureState(), recipe, type))
+    {
+        tempFile.deleteFile();
+        return false;
+    }
+    if (! tempFile.moveFileTo (file))   // moveFileTo deletes an existing destination first
+    {
+        tempFile.deleteFile();
+        return false;
+    }
+
+    currentName = name;
+    rescan();
+    for (size_t i = 0; i < presets.size(); ++i)
+        if (presets[i].file == file)
+            currentIndex = (int) i;
+
+    return true;
+}
+
 namespace
 {
     // Shared parse used by import (never applies state -- that would be

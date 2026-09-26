@@ -1186,9 +1186,11 @@ ContentComponent::ContentComponent (SPASynthProcessor& p, std::function<void()> 
     addAndMakeVisible (nextPresetButton);
     presetNameButton.onClick = [this] { togglePresetBrowser(); };
     presetNameButton.setTooltip ("Browse presets");
+    presetNameButton.setComponentID ("presetName");   // test hook (1.0.26 edited indicator)
     presetNameButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
     addAndMakeVisible (presetNameButton);
-    savePresetButton.onClick = [this] { saveUserPreset(); };
+    savePresetButton.onClick = [this] { onSaveButtonClicked(); };
+    savePresetButton.setComponentID ("savePreset");   // test hook (1.0.26 Save/Save As menu)
     savePresetButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
     addAndMakeVisible (savePresetButton);
 
@@ -1923,6 +1925,31 @@ void ContentComponent::timerCallback()
     }
 }
 
+namespace
+{
+    // Truncates `text` (with a trailing ellipsis) so text + suffix fits
+    // within maxWidth at `font` -- used for the top-bar preset name so a
+    // long name's truncation ellipsis never eats the edited indicator's
+    // " *" (TextButton's own default fitted-text truncation would put the
+    // ellipsis at the very end, cutting off any suffix first).
+    juce::String truncateKeepingSuffix (const juce::String& text, const juce::String& suffix,
+                                        const juce::Font& font, int maxWidth)
+    {
+        const auto full = text + suffix;
+        if (maxWidth <= 0 || juce::GlyphArrangement::getStringWidth (font, full) <= (float) maxWidth
+            || text.isEmpty())
+            return full;
+
+        const auto budget = (float) maxWidth - juce::GlyphArrangement::getStringWidth (font, suffix)
+                           - juce::GlyphArrangement::getStringWidth (font, "...");
+        auto truncated = text;
+        while (truncated.isNotEmpty()
+               && juce::GlyphArrangement::getStringWidth (font, truncated) > budget)
+            truncated = truncated.dropLastCharacters (1);
+        return truncated + "..." + suffix;
+    }
+}
+
 void ContentComponent::refreshAll()
 {
     // Keep the FX tab order in sync with the processor (e.g. after RANDOMIZE ALL
@@ -1952,9 +1979,19 @@ void ContentComponent::refreshAll()
     randomizeButton.setColour (juce::TextButton::textColourOffId, t.display);
 
     const auto presetName = processor.getPresetManager().getCurrentName();
+    const auto baseNameText = (presetName == "Init" && ! library::findLibraryRoot().isDirectory())
+                                  ? juce::String ("Set library folder...") : presetName;
+    // Edited/dirty indicator (1.0.26): "<name> *" once any sound-affecting
+    // change has happened since the preset last loaded/saved -- see
+    // SPASynthProcessor::isPresetDirty(). Never shown for the "Set library
+    // folder..." placeholder text, which isn't a preset name at all.
+    const auto dirtySuffix = (processor.isPresetDirty() && baseNameText == presetName)
+                                 ? juce::String (" *") : juce::String();
+    const auto presetNameFont = getLookAndFeel().getTextButtonFont (presetNameButton,
+                                                                    presetNameButton.getHeight());
     presetNameButton.setButtonText (
-        presetName == "Init" && ! library::findLibraryRoot().isDirectory()
-            ? "Set library folder..." : presetName);
+        truncateKeepingSuffix (baseNameText, dirtySuffix, presetNameFont,
+                               presetNameButton.getWidth() - 12));
 
     if (presetBrowser != nullptr)
         presetBrowser->refresh();   // theme colours
@@ -2991,11 +3028,55 @@ void ContentComponent::saveUserPreset()
             if (safe == nullptr)
                 return;
             const auto result = fc.getResult();
-            if (result != juce::File())
-                safe->processor.getPresetManager().saveUserPreset (
-                    result.getFileNameWithoutExtension(), result.getParentDirectory(), type);
+            if (result != juce::File()
+                && safe->processor.getPresetManager().saveUserPreset (
+                       result.getFileNameWithoutExtension(), result.getParentDirectory(), type))
+            {
+                // Save As is a fresh, clean save of the current sound (1.0.26
+                // edited indicator) -- same as loading a preset.
+                safe->processor.clearPresetDirty();
+                safe->refreshAll();
+            }
         });
     };
+}
+
+// SAVE button (1.0.26): a currently-loaded USER preset whose file still
+// exists offers "Save" (rewrite it in place) alongside the existing
+// "Save As..." flow; anything else (factory, Init, nothing loaded, or a
+// user preset whose file has vanished from under it) skips straight to
+// Save As, same as before this feature existed.
+void ContentComponent::onSaveButtonClicked()
+{
+    auto& pm = processor.getPresetManager();
+    const auto idx = pm.getCurrentIndex();
+    const auto& presetList = pm.getPresets();
+    const bool canSaveInPlace = idx >= 0 && idx < (int) presetList.size()
+                              && presetList[(size_t) idx].isUser
+                              && presetList[(size_t) idx].file.existsAsFile();
+
+    if (! canSaveInPlace)
+    {
+        saveUserPreset();
+        return;
+    }
+
+    const auto file = presetList[(size_t) idx].file;
+    juce::Component::SafePointer<ContentComponent> safe (this);
+
+    juce::PopupMenu m;
+    m.addItem ("Save", [safe, file]
+    {
+        if (safe == nullptr)
+            return;
+        if (safe->processor.getPresetManager().saveInPlace (file))
+            safe->processor.clearPresetDirty();
+        safe->refreshAll();
+    });
+    m.addItem ("Save As...", [safe] { if (safe != nullptr) safe->saveUserPreset(); });
+
+    showPopupAnchored (m, juce::PopupMenu::Options().withTargetComponent (&savePresetButton),
+                       nullptr);
 }
 
 } // namespace ui

@@ -172,11 +172,15 @@ SPASynthProcessor::SPASynthProcessor()
         rs.noiseColor  = apvts.getRawParameterValue (pid (params::id::osc::noiseColor));
         rs.filterRoute = apvts.getRawParameterValue (pid (params::id::osc::filterRoute));
 
-        // Drives the lazy Pluck-buffer allocation below (parameterChanged()).
-        apvts.addParameterListener (pid (params::id::osc::mode), this);
-        // Drives the built-in wavetable Table menu (parameterChanged()).
-        apvts.addParameterListener (pid (params::id::osc::table), this);
     }
+
+    // Edited/dirty indicator (1.0.26): one listener registration per
+    // parameter so parameterChanged() sees every one of them (osc mode/table
+    // included -- no separate registration needed for those any more, since
+    // this single generic pass now covers the whole layout).
+    for (auto* p : getParameters())
+        if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            apvts.addParameterListener (withID->paramID, this);
 
     for (int i = 0; i < params::numLFOs; ++i)
     {
@@ -425,11 +429,9 @@ SPASynthProcessor::~SPASynthProcessor()
         jassert (activeBackgroundThreads.load (std::memory_order_acquire) == 0);
     }
 
-    for (int s = 0; s < params::numOscSlots; ++s)
-    {
-        apvts.removeParameterListener (params::id::oscSlot (s, params::id::osc::mode), this);
-        apvts.removeParameterListener (params::id::oscSlot (s, params::id::osc::table), this);
-    }
+    for (auto* p : getParameters())
+        if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            apvts.removeParameterListener (withID->paramID, this);
 }
 
 void SPASynthProcessor::parameterChanged (const juce::String& parameterID, float)
@@ -452,6 +454,26 @@ void SPASynthProcessor::parameterChanged (const juce::String& parameterID, float
         else if (parameterID == params::id::oscSlot (s, params::id::osc::table))
             applyBuiltInWavetableFromParam (s);
     }
+
+    // Every parameter is now registered (see the ctor's generic sweep), so
+    // this fires for the whole layout, including automation. markPresetDirty()
+    // itself no-ops during a preset/reset load (presetLoadGuard).
+    markPresetDirty();
+}
+
+void SPASynthProcessor::markPresetDirty()
+{
+    if (presetLoadGuard.load (std::memory_order_relaxed))
+        return;
+
+    if (! presetDirty.exchange (true, std::memory_order_relaxed))
+        dirtyNotifier.triggerAsyncUpdate();
+}
+
+void SPASynthProcessor::clearPresetDirty()
+{
+    if (presetDirty.exchange (false, std::memory_order_relaxed))
+        dirtyNotifier.triggerAsyncUpdate();
 }
 
 void SPASynthProcessor::ensurePluckAllocatedForSlot (int s)
@@ -631,8 +653,14 @@ void SPASynthProcessor::installSample (int slot, std::shared_ptr<const dsp::Samp
     sendChangeMessage();
 }
 
-void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file)
+void SPASynthProcessor::loadSampleFromFile (int slot, const juce::File& file, bool markEdited)
 {
+    // A content change (1.0.26 edited indicator) -- see markPresetDirty().
+    // markEdited is false only for restoreStateTree()'s own deferred
+    // content restore -- see its declaration comment.
+    if (markEdited)
+        markPresetDirty();
+
     // Count the in-flight load (and broadcast) so the UI can show a loading
     // state; the decrement lives in the completion lambda — NOT in
     // installSample — so direct installs never underflow the counter.
@@ -835,6 +863,7 @@ float SPASynthProcessor::getRandomWildness() const
 void SPASynthProcessor::setRandomWildness (float wildness)
 {
     apvts.state.setProperty (wildnessProperty, (double) wildness, nullptr);
+    markPresetDirty();   // WILD rides an apvts.state PROPERTY, not a parameter
 }
 
 bool SPASynthProcessor::isLockGroupLocked (int group) const
@@ -852,6 +881,12 @@ void SPASynthProcessor::setLockGroupLocked (int group, bool locked)
 
 void SPASynthProcessor::randomizeAll()
 {
+    // Unconditional (1.0.26 edited indicator): every unlocked param rolled
+    // below already marks dirty itself via parameterChanged(), but this
+    // guarantees the invariant even in the edge case every lock group is
+    // engaged (so nothing else below would fire it).
+    markPresetDirty();
+
     {
         // Stuck-note safety net (tester report, 1.0.21): clicking RANDOMIZE ALL
         // while a QWERTY key is held left that note sounding forever, because
@@ -1562,8 +1597,13 @@ void SPASynthProcessor::installTable (int slot, std::shared_ptr<const dsp::Wavet
     sendChangeMessage();
 }
 
-void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file)
+void SPASynthProcessor::loadWavetableFromFile (int slot, const juce::File& file, bool markEdited)
 {
+    // A content change (1.0.26 edited indicator) -- see markPresetDirty().
+    // markEdited: see loadSampleFromFile()'s identical parameter.
+    if (markEdited)
+        markPresetDirty();
+
     // Same loading-state + latest-wins bookkeeping as loadSampleFromFile
     // (requestSerial rationale: see that function).
     auto& st = slotTables[(size_t) slot];
@@ -1847,7 +1887,7 @@ void SPASynthProcessor::renderEngine (juce::AudioBuffer<float>& buffer, juce::Mi
     masterGain.applyGain (buffer, buffer.getNumSamples());
 }
 
-void SPASynthProcessor::setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape)
+void SPASynthProcessor::setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape, bool markEdited)
 {
     // Single-writer double buffer (message thread only -- see the class
     // comment on CustomLfoStorage). Write the FULL new shape into whichever
@@ -1862,6 +1902,9 @@ void SPASynthProcessor::setCustomLfoShape (int lfoIndex, const dsp::CustomLFOSha
     auto& target = storage.buffers[liveNow == &storage.buffers[0] ? 1 : 0];
     target = shape;
     storage.live.store (&target);
+
+    if (markEdited)
+        markPresetDirty();   // a content change (1.0.26 edited indicator)
 }
 
 void SPASynthProcessor::setInternalBpm (double bpm)
@@ -1887,6 +1930,9 @@ void SPASynthProcessor::setFxOrder (const juce::Array<int>& moduleIds)
     const auto packed = dsp::FXChain::packOrder (ord);
     fxOrderPacked.store (packed, std::memory_order_relaxed);
     apvts.state.setProperty ("fxOrder", (juce::int64) packed, nullptr);
+    markPresetDirty();   // a content change (1.0.26 edited indicator); also
+                          // covers RANDOMIZE ALL's own FX-order shuffle,
+                          // which goes through this same setter
 }
 
 juce::Array<int> SPASynthProcessor::getFxOrder() const
@@ -1907,6 +1953,7 @@ void SPASynthProcessor::loadConvolutionIR (const juce::File& file)
     apvts.state.setProperty ("convIR",
         convIrPath.isEmpty() ? juce::String() : library::toPortable (file, libraryRoot),
         nullptr);
+    markPresetDirty();   // a content change (1.0.26 edited indicator)
     sendChangeMessage();   // refresh the IR name in the UI
 }
 
@@ -2540,6 +2587,14 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool 
     if (! incoming.hasType (apvts.state.getType()))
         return;
 
+    // The dirty/edited flag must not flip anywhere in this function or in
+    // the deferred content loads it kicks off below -- set BEFORE anything
+    // else runs, not just before apvts.replaceState() (the per-LFO
+    // setCustomLfoShape() restore a few lines down also marks dirty on its
+    // own, as a normal content change, and that loop runs before the
+    // ScopedLock block).
+    presetLoadGuard.store (true, std::memory_order_relaxed);
+
     auto state = incoming.createCopy();
     const auto libraryRoot = library::findLibraryRoot();
 
@@ -2567,7 +2622,7 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool 
     {
         const auto child = lfoCustom.isValid() ? lfoCustom.getChildWithName (lfoCustomChildType (i))
                                                 : juce::ValueTree();
-        setCustomLfoShape (i, customLfoShapeFromValueTree (child));
+        setCustomLfoShape (i, customLfoShapeFromValueTree (child), false);
     }
 
     // MIDI map: restore when present (host sessions); presets omit it and
@@ -2671,7 +2726,24 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool 
         convIrPath = convIR.isEmpty() ? juce::String()
                                       : library::fromPortable (convIR, libraryRoot).getFullPathName();
         convIrPathLocal = convIrPath;
+
+        // Lands clean and lifts the guard: a preset load, Reset to Default
+        // and a host session restore all start the edited/dirty indicator
+        // fresh (a just-restored session is not "edited" relative to
+        // itself). Safe to do here, synchronously, even though the convIR/
+        // per-slot content loads below still run via deferred callAsync --
+        // each of THOSE calls its own loadConvolutionIR/loadWavetableFromFile/
+        // loadSampleFromFile/setCustomLfoShape with markEdited=false (see
+        // their calls below and the per-LFO restore loop above), so they
+        // never mark dirty in the first place; this no longer depends on
+        // guarding a window until they happen to run, which is not
+        // deterministically timed against a plain guard/counter (measured:
+        // callAsync delivery in this process can lag by seconds under load).
+        presetLoadGuard.store (false, std::memory_order_relaxed);
+        presetDirty.store (false, std::memory_order_relaxed);
     }
+    dirtyNotifier.triggerAsyncUpdate();
+
     // Weak-ref treatment mirrors loadSampleFromFile — see the comment there.
     juce::MessageManager::callAsync ([weak = juce::WeakReference<SPASynthProcessor> (this),
                                       f = juce::File (convIrPathLocal)]
@@ -2703,13 +2775,15 @@ void SPASynthProcessor::restoreStateTree (const juce::ValueTree& incoming, bool 
             // osc::table choice param is already restored by the time this
             // deferred callback runs -- rebuild from it rather than always
             // forcing Basic Shapes. A loaded file still wins over the choice.
+            // markEdited=false on both loads: this is the preset/session's
+            // OWN saved content loading back in, not a new edit.
             if (wtPath.isEmpty())
                 weak->applyBuiltInWavetableFromParam (s);
             else
-                weak->loadWavetableFromFile (s, library::fromPortable (wtPath, libraryRoot));
+                weak->loadWavetableFromFile (s, library::fromPortable (wtPath, libraryRoot), false);
 
             if (smpPath.isNotEmpty())
-                weak->loadSampleFromFile (s, library::fromPortable (smpPath, libraryRoot));
+                weak->loadSampleFromFile (s, library::fromPortable (smpPath, libraryRoot), false);
         });
     }
 }

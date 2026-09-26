@@ -2,6 +2,12 @@
 
 ## 1.0.26
 
+- The preset name now shows a small asterisk once you've changed anything
+  since it was last loaded or saved, so it's always clear whether what
+  you're hearing has been tweaked. SAVE on one of your own presets now
+  offers a quick "Save" to update it in place, alongside the existing
+  "Save As...", and the previous version goes to the Trash first so you can
+  always get it back. This came from feedback.
 - Added "About SPASynth..." to the logo settings menu. It shows the version,
   build date and commit, which format is running (AU, VST3 or Standalone),
   a link to silverplatteraudio.com, and a "Copy Info" button for pasting a

@@ -3,6 +3,7 @@ SPASynth 1.0.26 - what's new since 1.0.25
 Mostly from your feedback, and the last feature round before the beta. Nothing here changes how existing presets or sessions sound.
 
 New
+- The preset name shows a small asterisk once you've changed anything since it was last loaded or saved. SAVE on one of your own presets now offers a quick Save (updates it in place) alongside Save As...; the previous version goes to the Trash first, so it's always recoverable.
 - Presets can be exported and imported. Right-click a preset for Export preset..., or a preset inside one of your banks for Export bank... (one zip). The IMPORT button in the preset browser, or dragging files onto the browser, takes single presets, a folder, or a zip; a zip or folder becomes its own bank. If a name already exists you choose Replace, Keep both or Skip. Afterwards it lists any presets that need library packs you don't have.
 - Saving a preset now asks for a TYPE first (Bass, Pad, Keys... or New type... for your own). Right-click one of your presets and choose Set type... to change it later.
 - New Key source in the mod matrix: the note you play, centred on C3, reaching full strength five octaves either way, and it follows glide.
@@ -13,6 +14,7 @@ New
 - The Convolve library menu now opens with your current pack and impulse ticked.
 
 Worth trying specifically
+- Turn any knob and confirm the preset name gets a "*"; load or save a preset and confirm it clears. Save a preset you've edited with SAVE's new Save option and confirm it updates in place rather than asking for a new file each time.
 - Export one of your presets, delete it (Move to Trash), import the exported file, and confirm it comes back identical. Then export a bank, import the zip, and check it appears as its own bank.
 - Import the same preset twice and try each of Replace, Keep both and Skip.
 - Save a preset with a new custom type and find it under TYPE.

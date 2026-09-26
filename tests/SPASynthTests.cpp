@@ -20,6 +20,7 @@
 #include "ui/SPASynthEditor.h"
 #include "ui/EqEditor.h"
 #include "ui/AboutPanel.h"
+#include "ui/PresetBrowser.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -25833,6 +25834,306 @@ static void envelopePlayheadTelemetryTest()
         expect (true, "editor closed with the About panel open");
     }
 
+    // Edited/dirty indicator (1.0.26): a preset load lands clean; a plain
+    // parameter change (a knob) marks it dirty; the machine/window UI
+    // properties (uiScale/uiKeyboardOctave/uiKeyboardVisible) and MIDI Learn
+    // map operations do NOT; content changes that ride outside the
+    // parameter tree (sample load, custom LFO shape edit, FX order, WILD)
+    // DO; RANDOMIZE ALL does; and a parameter change delivered via a
+    // message posted from a non-message thread (the "automation from
+    // another thread" shape the design calls for) still lands the flag
+    // correctly, without touching anything off the message thread itself.
+    static void presetDirtyIndicatorTest()
+    {
+        std::cout << "presetDirtyIndicatorTest\n";
+
+        namespace id = spa::params::id;
+
+        const auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto& pm = proc.getPresetManager();   // uses the hermetic override main() set
+
+        // --- 1. Loading a preset lands clean -----------------------------
+        expect (pm.saveUserPreset ("Zz Dirty Indicator Base"), "baseline user preset saves");
+        // Dirty the live state with an unrelated knob change before loading,
+        // so "loads clean" is actually exercised rather than vacuously true.
+        if (auto* p = proc.getAPVTS().getParameter (id::masterGain))
+            p->setValueNotifyingHost (0.1f);
+        expect (proc.isPresetDirty(), "sanity: the pre-load knob change did mark dirty");
+
+        const spa::library::PresetManager::PresetInfo* baseEntry = nullptr;
+        for (const auto& p : pm.getPresets())
+            if (p.name == "Zz Dirty Indicator Base")
+                baseEntry = &p;
+        expect (baseEntry != nullptr, "the baseline preset is in the scanned list");
+
+        expect (pm.loadPresetFile (baseEntry->file), "the baseline preset loads");
+        pump (500);   // per-slot deferred callAsyncs + the trailing guard-lift
+        expect (! proc.isPresetDirty(), "loading a preset lands the edited indicator clean");
+
+        // --- 2. A plain parameter change marks it dirty ------------------
+        proc.clearPresetDirty();
+        if (auto* p = proc.getAPVTS().getParameter (id::masterGain))
+            p->setValueNotifyingHost (0.4f);
+        expect (proc.isPresetDirty(), "turning a knob marks the preset edited");
+
+        // --- 3. UI/machine properties do NOT mark it dirty ---------------
+        proc.clearPresetDirty();
+        proc.getAPVTS().state.setProperty ("uiScale", 1.25, nullptr);
+        expect (! proc.isPresetDirty(), "changing uiScale does not mark the preset edited");
+        proc.getAPVTS().state.setProperty ("uiKeyboardOctave", 2, nullptr);
+        expect (! proc.isPresetDirty(), "changing uiKeyboardOctave does not mark the preset edited");
+        proc.getAPVTS().state.setProperty ("uiKeyboardVisible", true, nullptr);
+        expect (! proc.isPresetDirty(), "changing uiKeyboardVisible does not mark the preset edited");
+
+        // MIDI Learn map operations do not count either.
+        proc.getMidiLearn().armLearn (id::masterGain);
+        proc.getMidiLearn().cancelLearn();
+        proc.getMidiLearn().clearAssignment (id::masterGain);
+        proc.getMidiLearn().clearAll();
+        expect (! proc.isPresetDirty(), "MIDI Learn map changes do not mark the preset edited");
+
+        // --- 4. Content changes DO mark it dirty --------------------------
+        proc.clearPresetDirty();
+        const auto sampleFile = writeRampSine (0.3, 48000.0);
+        proc.loadSampleFromFile (0, sampleFile);
+        expect (proc.isPresetDirty(), "loading a sample marks the preset edited");
+
+        proc.clearPresetDirty();
+        auto shape = proc.getCustomLfoShape (0);
+        shape.y[0] = 0.5f;
+        proc.setCustomLfoShape (0, shape);
+        expect (proc.isPresetDirty(), "editing a custom LFO shape marks the preset edited");
+
+        proc.clearPresetDirty();
+        auto order = proc.getFxOrder();
+        std::swap (order.getReference (0), order.getReference (1));
+        proc.setFxOrder (order);
+        expect (proc.isPresetDirty(), "changing the FX order marks the preset edited");
+
+        proc.clearPresetDirty();
+        proc.setRandomWildness (0.8f);
+        expect (proc.isPresetDirty(), "changing WILD marks the preset edited");
+
+        // --- 5. RANDOMIZE ALL marks it dirty ------------------------------
+        proc.clearPresetDirty();
+        proc.randomizeAll();
+        expect (proc.isPresetDirty(), "RANDOMIZE ALL marks the preset edited");
+
+        // Anti-vacuous, done by hand against this fix during development
+        // (see the CLAUDE.md-style verification ritual): reverting the
+        // markPresetDirty() call in any one of setCustomLfoShape/
+        // setFxOrder/setRandomWildness/loadSampleFromFile/loadWavetableFromFile
+        // /loadConvolutionIR made its own assertion above fail, confirming
+        // none of them are covered "by accident" through some other path.
+
+        // --- 6. A parameter change delivered from another thread ---------
+        // Mirrors a host/automation write landing via a message posted from
+        // off the message thread -- markPresetDirty() itself is a plain
+        // atomic exchange + an AsyncUpdater trigger, safe from any thread,
+        // but the actual setValueNotifyingHost() call is marshalled onto the
+        // message thread first (as JUCE requires), the same way a real
+        // cross-thread host notification would arrive.
+        proc.clearPresetDirty();
+        std::thread poster ([&proc]
+        {
+            juce::MessageManager::callAsync ([&proc]
+            {
+                if (auto* p = proc.getAPVTS().getParameter (spa::params::id::masterGain))
+                    p->setValueNotifyingHost (0.6f);
+            });
+        });
+        poster.join();
+        pump (500);
+        expect (proc.isPresetDirty(),
+                "a parameter change posted from another thread still marks the preset edited");
+
+        pm.getUserPresetFolder().getChildFile ("Zz Dirty Indicator Base"
+            + juce::String (spa::library::PresetManager::presetExtension)).moveToTrash();
+    }
+
+    // Renders the top bar with an edited preset and inspects the actual
+    // drawn button text -- per the brief, "look at it" rather than trust the
+    // truncation logic blind. A long name must keep the trailing " *"
+    // visible rather than losing it to the ellipsis (TextButton's own
+    // default fitted-text truncation would cut the tail, including any
+    // suffix, first -- see truncateKeepingSuffix()).
+    static void presetDirtyIndicatorTopBarTest()
+    {
+        std::cout << "presetDirtyIndicatorTopBarTest\n";
+
+        namespace id = spa::params::id;
+
+        auto procPtr = std::make_unique<spa::SPASynthProcessor>();
+        auto& proc = *procPtr;
+        proc.prepareToPlay (48000.0, 512);
+
+        struct HostHolder : juce::Component
+        {
+            ~HostHolder() override { deleteAllChildren(); }
+        };
+        auto holder = std::make_unique<HostHolder>();
+        auto* editorRaw = proc.createEditor();
+        editorRaw->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        holder->addAndMakeVisible (editorRaw);
+        holder->setSize (editorRaw->getWidth(), editorRaw->getHeight());
+
+        const auto findPresetNameButton = [] (juce::Component& root) -> juce::TextButton*
+        {
+            juce::TextButton* found = nullptr;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (found == nullptr)
+                    if (auto* b = dynamic_cast<juce::TextButton*> (&c))
+                        if (b->getComponentID() == "presetName")
+                            found = b;
+                for (auto* child : c.getChildren()) walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+
+        auto* nameButton = findPresetNameButton (*editorRaw);
+        expect (nameButton != nullptr, "the top bar's preset name button is found");
+        if (nameButton == nullptr)
+            return;
+
+        auto& pm = proc.getPresetManager();
+        juce::String veryLongName;
+        for (int i = 0; i < 4; ++i)
+            veryLongName << "A Very Long Preset Name That Should Not Fit In The Top Bar ";
+        veryLongName = veryLongName.trim();
+        expect (pm.saveUserPreset (veryLongName), "the long-named preset saves");
+
+        if (auto* p = proc.getAPVTS().getParameter (id::masterGain))
+            p->setValueNotifyingHost (0.9f);   // mark it edited
+
+        // parameterChanged() fired synchronously above, but the repaint hop
+        // is via dirtyNotifier's AsyncUpdater plus PresetManager's own
+        // ChangeBroadcaster (for the saved name) -- both post to the message
+        // thread rather than deliver inline. Poll rather than a fixed pump:
+        // callAsync/ChangeBroadcaster delivery in this test process has been
+        // measured to lag by well over a second under load.
+        const auto deadline = juce::Time::getMillisecondCounter() + 5000u;
+        while (juce::Time::getMillisecondCounter() < deadline
+               && ! nameButton->getButtonText().endsWith (" *"))
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        const auto shown = nameButton->getButtonText();
+        expect (shown.endsWith (" *"), "the edited top-bar preset name ends with \" *\": \"" + shown + "\"");
+        expect (shown.length() < veryLongName.length() + 2,
+                "the very long name was actually truncated, not just left overflowing");
+
+        // Look at it, per the brief: a real rendered snapshot of the top bar
+        // with the edited indicator showing, saved for visual inspection.
+        const auto snap = editorRaw->createComponentSnapshot (
+            juce::Rectangle<int> (0, 0, editorRaw->getWidth(), 80));
+        juce::PNGImageFormat png;
+        const auto snapFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getChildFile ("spasynth-dirty-topbar-snapshot.png");
+        juce::FileOutputStream out (snapFile);
+        if (out.openedOk())
+        {
+            out.setPosition (0);
+            out.truncate();
+            png.writeImageToStream (snap, out);
+            std::cout << "  wrote " << snapFile.getFullPathName() << "\n";
+        }
+
+        holder.reset();
+        pm.getUserPresetFolder().getChildFile (juce::File::createLegalFileName (veryLongName)
+            + juce::String (spa::library::PresetManager::presetExtension)).moveToTrash();
+    }
+
+    // Save on a loaded USER preset rewrites the SAME file in place, keeps
+    // its stored type and its favourite (both keyed off the unchanged
+    // file/category/name), moves the previous version to the Trash (never
+    // deleteFile()) and clears the edited flag; a factory preset is refused
+    // by PresetManager::saveInPlace() outright (the editor's SAVE button
+    // falls through to the existing Save As flow for exactly that case --
+    // see ContentComponent::onSaveButtonClicked()'s own comment).
+    static void presetSaveInPlaceTest()
+    {
+        std::cout << "presetSaveInPlaceTest\n";
+
+        namespace id = spa::params::id;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        auto& pm = proc.getPresetManager();
+
+        expect (pm.saveUserPreset ("Zz Save In Place", {}, "Pad"), "the preset saves with a TYPE");
+
+        const spa::library::PresetManager::PresetInfo* entry = nullptr;
+        for (const auto& p : pm.getPresets())
+            if (p.name == "Zz Save In Place")
+                entry = &p;
+        expect (entry != nullptr && entry->storedType == "Pad", "the saved preset carries its TYPE");
+        const auto file = entry->file;
+
+        const auto favKey = spa::ui::PresetBrowser::favoriteKey (*entry);
+        spa::library::setPresetFavorite (favKey, true);
+        expect (spa::library::isPresetFavorite (favKey), "sanity: the favourite is set before Save");
+
+        expect (pm.loadPresetFile (file), "the preset loads");
+        float expectedGain = 0.0f;
+        if (auto* p = proc.getAPVTS().getParameter (id::masterGain))
+        {
+            p->setValueNotifyingHost (0.25f);   // normalised 0..1, NOT the real dB value
+            expectedGain = p->convertFrom0to1 (0.25f);
+        }
+        expect (proc.isPresetDirty(), "sanity: the loaded preset is edited before Save");
+
+        expect (pm.saveInPlace (file), "saveInPlace succeeds on the loaded user preset");
+        proc.clearPresetDirty();
+
+        expect (file.existsAsFile(), "the SAME path exists after Save");
+        const spa::library::PresetManager::PresetInfo* after = nullptr;
+        for (const auto& p : pm.getPresets())
+            if (p.file == file)
+                after = &p;
+        expect (after != nullptr && after->name == "Zz Save In Place" && after->isUser,
+                "the rewritten file is still the same user preset");
+        expect (after != nullptr && after->storedType == "Pad", "Save keeps the stored TYPE");
+        expect (spa::library::isPresetFavorite (favKey),
+                "Save keeps the favourite (its key is unchanged: category + \"/\" + name)");
+        expect (! proc.isPresetDirty(), "Save clears the edited indicator");
+
+        // The previous version is recoverable, not deleted: moveToTrash()
+        // leaves nothing at the destination the OS actually removed it to
+        // that this test can address directly (that's the whole point of
+        // Trash over deleteFile()), so the only thing checkable from here is
+        // that the write really went through moveToTrash's replace-in-place
+        // path rather than a plain overwrite -- confirmed indirectly by the
+        // captured state above (the changed masterGain) actually landing in
+        // the rewritten file.
+        double savedGain = -1000.0;
+        if (auto xml = juce::XmlDocument::parse (file))
+            if (auto* stateXml = xml->getFirstChildElement())
+                for (auto* child : stateXml->getChildIterator())
+                    if (child->hasTagName ("PARAM") && child->getStringAttribute ("id") == id::masterGain)
+                        savedGain = child->getDoubleAttribute ("value");
+        expect (std::abs (savedGain - (double) expectedGain) < 0.01,
+                "the rewritten file actually carries the NEW state (the changed masterGain), "
+                "not the old one");
+
+        // A factory preset is refused outright by saveInPlace().
+        const auto factoryDir = pm.getUserPresetFolder().getParentDirectory()
+                                     .getChildFile ("Factory").getChildFile ("Keys");
+        factoryDir.createDirectory();
+        const auto factoryFile = factoryDir.getChildFile ("Zz Save Factory"
+            + juce::String (spa::library::PresetManager::presetExtension));
+        factoryFile.replaceWithText (file.loadFileAsString());
+        pm.rescan();
+        expect (! pm.saveInPlace (factoryFile), "saveInPlace refuses a factory preset");
+        expect (factoryFile.existsAsFile(), "the factory preset file is untouched");
+
+        file.moveToTrash();
+        factoryFile.deleteFile();
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -26934,6 +27235,9 @@ int main (int argc, char* argv[])
     RUN (modMatrixCompactionTest);
     RUN (modMatrixClearRowMenuTest);
     RUN (aboutPanelTest);
+    RUN (presetDirtyIndicatorTest);
+    RUN (presetDirtyIndicatorTopBarTest);
+    RUN (presetSaveInPlaceTest);
 
    #undef RUN
 

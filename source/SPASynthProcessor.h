@@ -64,7 +64,11 @@ public:
 
     // Wavetable slot management (message thread). Loads run on a background
     // thread; ChangeBroadcaster fires when a slot's table changes.
-    void loadWavetableFromFile (int slot, const juce::File& file);
+    // markEdited: false ONLY from restoreStateTree()'s own deferred per-slot
+    // content-load callback (a preset/session's own saved content loading
+    // back in is not a new edit); every other caller (UI drag-drop, quick-
+    // swap, tests) uses the default and marks the edited indicator.
+    void loadWavetableFromFile (int slot, const juce::File& file, bool markEdited = true);
     void setFactoryWavetable (int slot);
     // Installs one of the built-in Table-menu wavetables (see
     // dsp::WavetableFactory) -- INIT is choice 0 (Basic Shapes), same as
@@ -78,7 +82,8 @@ public:
     juce::String getWavetableError (int slot) const;
 
     // Sample/SFX slot management — same threading contract as wavetables.
-    void loadSampleFromFile (int slot, const juce::File& file);
+    // markEdited: see loadWavetableFromFile()'s identical parameter.
+    void loadSampleFromFile (int slot, const juce::File& file, bool markEdited = true);
     juce::String getSampleName (int slot) const;
     juce::String getSampleError (int slot) const;
     juce::File getSampleFile (int slot) const
@@ -151,7 +156,9 @@ public:
     {
         return *customLfo[(size_t) lfoIndex].live.load();
     }
-    void setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape);
+    // markEdited: see loadWavetableFromFile()'s identical parameter --
+    // false ONLY from restoreStateTree()'s own per-LFO shape restore.
+    void setCustomLfoShape (int lfoIndex, const dsp::CustomLFOShape& shape, bool markEdited = true);
 
     // MIDI Learn (right-click assignments).
     MidiLearnManager& getMidiLearn() { return *midiLearn; }
@@ -225,6 +232,32 @@ public:
     // are left exactly as they were -- a preset is a sound, not a window
     // layout -- whereas a host session restore does apply them.
     void restoreStateTree (const juce::ValueTree& incoming, bool isPresetLoad = false);
+
+    // --- Edited (dirty) indicator (1.0.26) ----------------------------------
+    //
+    // True once any SOUND-affecting change has happened since the last
+    // preset load/save/reset-to-default: any APVTS parameter (every one is
+    // registered via a generic addParameterListener sweep in the
+    // constructor -- see parameterChanged()), plus the handful of things
+    // that ride outside the parameter tree entirely (sample/wavetable/IR
+    // loads, custom LFO shape edits, FX order, WILD) via explicit
+    // markPresetDirty() calls at their own setters. uiScale/uiKeyboardOctave/
+    // uiKeyboardVisible are plain ValueTree properties, never parameters, so
+    // they never reach parameterChanged() and are excluded automatically.
+    // MIDI Learn rides its own map (MidiLearnManager), untouched by any of
+    // this. A parameter listener is, by JUCE convention, only ever invoked
+    // from the message thread for this codebase's setValueNotifyingHost/
+    // preset-restore paths (see the comment on parameterChanged()) -- but
+    // markPresetDirty() is kept a plain atomic exchange + an AsyncUpdater
+    // trigger anyway, so it stays correct even if some future host or code
+    // path calls it from the audio thread.
+    bool isPresetDirty() const { return presetDirty.load (std::memory_order_relaxed); }
+
+    // Called by the editor after a successful Save/Save As/in-place Save --
+    // none of those go through restoreStateTree(), so nothing else clears
+    // the flag for them. Preset load and Reset to Default clear it
+    // themselves (see restoreStateTree()'s isPresetLoad guard).
+    void clearPresetDirty();
 
     // Rescans the configured library and (re)generates factory presets for
     // any packs that don't have them yet.
@@ -302,10 +335,13 @@ private:
                         juce::String path, juce::String error);
     void timerCallback() override;
 
-    // AudioProcessorValueTreeState::Listener. Registered ONLY for the osc-slot
-    // mode parameters (see the ctor), to lazily allocate Pluck buffers -- see
-    // ensurePluckAllocatedForSlot() and the comment on its definition for why
-    // this callback is safely message-thread-only.
+    // AudioProcessorValueTreeState::Listener. Registered for the osc-slot
+    // mode/table parameters (see the ctor) to lazily allocate Pluck buffers /
+    // rebuild built-in wavetables -- see ensurePluckAllocatedForSlot() and
+    // the comment on its definition for why this callback is safely
+    // message-thread-only. ALSO registered (1.0.26) for EVERY OTHER
+    // parameter, purely to feed the edited/dirty indicator -- see
+    // markPresetDirty().
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void ensurePluckAllocatedForSlot (int slot);
     // Rebuilds a slot's wavetable from its current osc::table choice param --
@@ -313,6 +349,24 @@ private:
     // restoreStateTree()'s "no file loaded" fallback since the choice value
     // is already restored (it's a plain APVTS param) by the time that runs.
     void applyBuiltInWavetableFromParam (int slot);
+
+    // Marks the edited/dirty indicator (1.0.26). No-op while
+    // presetLoadGuard is set (the replaceState storm during a preset/reset
+    // load). Safe from any thread: a plain atomic exchange, and the actual
+    // UI repaint is deferred through dirtyNotifier (an AsyncUpdater) rather
+    // than touched directly here.
+    void markPresetDirty();
+
+    std::atomic<bool> presetDirty { false };
+    std::atomic<bool> presetLoadGuard { false };
+
+    struct DirtyNotifier : public juce::AsyncUpdater
+    {
+        explicit DirtyNotifier (SPASynthProcessor& p) : proc (p) {}
+        void handleAsyncUpdate() override { proc.sendChangeMessage(); }
+        SPASynthProcessor& proc;
+    };
+    DirtyNotifier dirtyNotifier { *this };
 
     juce::AudioProcessorValueTreeState apvts;
 

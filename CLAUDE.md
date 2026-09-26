@@ -10,6 +10,30 @@ AAX deliberately out for v1. Original spec: `spasynth-claude-code-brief.md`
 (the project was renamed Arsenal → SPASynth; the repo folder is still
 `arsenal`, plugin code `SpSy`, manufacturer `SpAu`).
 
+## Current state (2026-09-26): v1.0.26 (main `0f8ff5d`) built + staged; last feature round before beta
+
+**1.0.25 was installed and confirmed working by Mike.** 1.0.26 = KEYTRK in
+percent + `ModSource::key` (appended; clamp((glideNote-60)/60)); Convolve
+library menu ticks current pack/IR (via showPopupAnchored); envelope
+playhead dots (`Telemetry::EnvViz`, 8 slots); mod matrix drag-to-reorder +
+compaction on USER edits only (route params are host-automatable, so a
+reorder retargets automation lanes -- told Mike, no remap layer); About
+panel (`AboutPanel.h`, commit/date injected at configure, build_release
+reconfigures every run); preset export/import (files, folders, zip packs ->
+banks, zip-slip safe, missing-library report) with an ASYNC clash prompt
+(`PresetManager::ImportSession`; a first draft used `runModalLoop`, caught
+in review -- never block inside a plugin editor); stored preset `type`
+attribute wins over the name prefix; TYPE picker before save; Set type...
+Known flake: `convolveLibraryMenuTest` can time out under heavy load
+(ASan, or two suites at once); passes alone. **Never run two suites at
+once** -- agents may leave a background ASan run alive after handing back;
+check `ps` before starting another.
+macOS pkg md5 `d11066e999d275e406221e179ee474b7` (notarized, universal,
+minos 11.0); Windows `ci-windows-0f8ff5d` (run `36218241677`) md5
+`43f97a9968c2c4403ceb4fd529fcf4f9`; byte-identical across dist/installers
+and both shopify folders. Tester note `docs/tester-note-1.0.26.txt`.
+**Pending: Mike installs, runs the gauntlet, sends to testers (beta).**
+
 ## Current state (2026-09-25): v1.0.25 (main `a7c86a2`) built + staged; big tester round
 
 **1.0.24 was never installed/sent before this round started** (Mike moved

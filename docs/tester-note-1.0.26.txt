@@ -1,0 +1,26 @@
+SPASynth 1.0.26 - what's new since 1.0.25
+
+Mostly from your feedback, and the last feature round before the beta. Nothing here changes how existing presets or sessions sound.
+
+New
+- Presets can be exported and imported. Right-click a preset for Export preset..., or a preset inside one of your banks for Export bank... (one zip). The IMPORT button in the preset browser, or dragging files onto the browser, takes single presets, a folder, or a zip; a zip or folder becomes its own bank. If a name already exists you choose Replace, Keep both or Skip. Afterwards it lists any presets that need library packs you don't have.
+- Saving a preset now asks for a TYPE first (Bass, Pad, Keys... or New type... for your own). Right-click one of your presets and choose Set type... to change it later.
+- New Key source in the mod matrix: the note you play, centred on C3, reaching full strength five octaves either way, and it follows glide.
+- The filter KEYTRK knob now reads in percent, with a tooltip. 100% means the cutoff follows the note exactly.
+- The AMP, ENV 2 and ENV 3 displays show a dot travelling along the envelope while you play. It pulses while a note is held and disappears once the note has faded.
+- Mod matrix rows have drag handles for reordering. Clearing a row pulls the rows below it up, and right-clicking the handle offers Clear row. Loading a preset never rearranges anything.
+- About SPASynth... in the logo menu, with version, build and format info and a Copy info button. If you report a bug, please paste that info in.
+- The Convolve library menu now opens with your current pack and impulse ticked.
+
+Worth trying specifically
+- Export one of your presets, delete it (Move to Trash), import the exported file, and confirm it comes back identical. Then export a bank, import the zip, and check it appears as its own bank.
+- Import the same preset twice and try each of Replace, Keep both and Skip.
+- Save a preset with a new custom type and find it under TYPE.
+- Route Key to filter cutoff and play up and down the keyboard, with and without glide.
+- Watch the envelope dot with a long attack and release; hold chords and see each note's dot.
+- Drag matrix rows around and confirm the sound does not change. If you automate matrix rows in your DAW, note that the automation follows the row position, not the route you moved.
+- Open About SPASynth..., click Copy info, and paste it somewhere to check it reads correctly.
+
+Install notes
+- macOS: signed and notarised. If the new version does not show up, Plug-in Manager > Reset & Rescan Selection, then restart Logic.
+- Windows: unsigned. Click More info, then Run anyway at the SmartScreen prompt.

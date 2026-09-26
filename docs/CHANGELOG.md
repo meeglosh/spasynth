@@ -43,9 +43,6 @@
   own presets can show up correctly in the TYPE menu instead of only ever
   falling back to a guess from the name. You can also change a preset's
   type later from its right-click menu. This came from feedback.
-- Small polish to the About panel: it now shows the SPASynth wordmark in
-  our own brand style, the website link uses your accent colour, and the
-  license line no longer leaves a gap when there's nothing to show there.
 
 ## 1.0.25
 

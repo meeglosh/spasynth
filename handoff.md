@@ -5,7 +5,7 @@ is the short version.
 
 ## Where we are
 
-- **2026-09-26: v1.0.26 built + staged, going to Paul and Phil as the BETA.**
+- **2026-09-26: v1.0.26 SENT to Paul and Phil as the BETA.**
   Mike installed and confirmed 1.0.25, then asked for one last feature
   round. 1.0.26 = edited-preset asterisk + SAVE (update in place, previous
   version to Trash) / Save As; preset export/import (files, folders, zip

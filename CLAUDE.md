@@ -34,7 +34,7 @@ Save (in place, old file to Trash) / Save As. FINAL macOS pkg md5
 Windows `ci-windows-8e262f8` (run `36257870675`) md5
 `a9047fc29b2b16284a9ff033d1e9185d` (the `0f8ff5d` pair is superseded); byte-identical across dist/installers
 and both shopify folders. Tester note `docs/tester-note-1.0.26.txt`.
-**Pending: Mike sends 1.0.26 to Paul and Phil as the beta. Bump to 1.0.27
+**1.0.26 WAS SENT to Paul and Phil as the beta (2026-09-26). Bump to 1.0.27
 for anything after that.**
 
 ## Current state (2026-09-25): v1.0.25 (main `a7c86a2`) built + staged; big tester round

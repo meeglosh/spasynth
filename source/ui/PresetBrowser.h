@@ -19,7 +19,8 @@ namespace ui
 class PresetBrowser : public juce::Component,
                       private juce::ChangeListener,
                       private juce::ListBoxModel,
-                      private juce::ComponentListener
+                      private juce::ComponentListener,
+                      public juce::FileDragAndDropTarget
 {
 public:
     // onRequestKeyboardFocus: called after a preset row click loads a preset
@@ -57,6 +58,11 @@ public:
     static juce::String soundTypeOf (const library::PresetManager::PresetInfo&);
 
     static juce::String favoriteKey (const library::PresetManager::PresetInfo&);
+
+    // The sound-type dropdown's built-in table, display names only, in
+    // table order -- exposed so the save dialog's TYPE combo (SPASynthEditor.cpp)
+    // and this drawer's own "Set type..." submenu build from the same one list.
+    static juce::StringArray builtInSoundTypeNames();
     static std::vector<int> filterIndices (
         const std::vector<library::PresetManager::PresetInfo>&,
         const Filter&, const juce::StringArray& favoriteKeys);
@@ -89,11 +95,44 @@ public:
     // carries one. So a right-click on a row reaches both, and only this one
     // puts up a menu.
     static constexpr int deleteMenuItemId = 1;
+    static constexpr int exportPresetMenuItemId = 2;
+    static constexpr int exportBankMenuItemId = 3;
+    static constexpr int newTypeMenuItemId = 4;
+    static constexpr int firstTypeMenuItemId = 1000;   // one id per offered type, see buildRowMenu
 
     bool canDeleteRow (int row) const;            // false for factory/out-of-range rows
-    juce::PopupMenu buildRowMenu (int row) const;  // also the test surface for the item's state
+
+    // typeMenuNamesOut, if given, is filled in the SAME order the "Set
+    // type..." submenu's items were added, so a caller holding onto a
+    // selected id (>= firstTypeMenuItemId) can look up
+    // typeMenuNamesOut[id - firstTypeMenuItemId] afterwards. Kept as an out
+    // parameter (not a mutable member) so this stays a pure function --
+    // also the test surface for the item's state.
+    juce::PopupMenu buildRowMenu (int row, juce::StringArray* typeMenuNamesOut = nullptr) const;
     void showRowMenu (int row);                    // goes through showPopupAnchored -- never showMenuAsync
     bool deleteRow (int row);                      // the menu action; trashes + cleans the favourite
+
+    // --- export / import (1.0.26) --------------------------------------------
+    void exportPresetRow (int row);
+    void exportBankRow (int row);
+    void promptNewTypeForRow (int row);
+    void applyTypeToRow (int row, const juce::String& newType);
+
+    void showImportChooser();
+    void importFromPaths (const juce::Array<juce::File>& paths);
+
+    // Drives one step of an async import session (see
+    // PresetManager::ImportSession): advances until finished (shows the
+    // summary) or a clash needs an async decision (shows the prompt, then
+    // resumes via decide() + another continueImport() from the callback).
+    // Public so tests can drive/inspect the flow without going through the
+    // UI's file chooser or drag-and-drop.
+    void continueImport (std::shared_ptr<library::PresetManager::ImportSession> session);
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override { draggingOver = true; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { draggingOver = false; repaint(); }
 
     // Test helpers: the filtered (visible) row list.
     int getNumVisibleRows() const { return (int) filtered.size(); }
@@ -133,6 +172,9 @@ private:
     juce::ListBox list { {}, this };
     juce::Label countLabel;
     juce::TextButton libraryButton { "SET LIBRARY..." }, rescanButton { "RESCAN" };
+    juce::TextButton importButton { "IMPORT..." };
+    std::unique_ptr<juce::FileChooser> fileChooser;   // import picker + the two export save dialogs
+    bool draggingOver = false;   // paints a highlighted drop target while a drag hovers
 
     std::vector<library::PresetManager::PresetInfo> presets;   // snapshot
     std::vector<int> filtered;                                 // indices into presets

@@ -33,6 +33,11 @@ public:
                                 // bank subfolder). NOT the same as
                                 // category == "User" -- a bank's category is
                                 // its own folder name.
+        juce::String storedType;   // "" if the file carries no "type" XML
+                                    // attribute (1.0.26); soundTypeOf() reads
+                                    // this FIRST, before the name-prefix
+                                    // table, so a preset moved/renamed keeps
+                                    // its user-set type.
     };
 
     PresetManager (std::function<juce::ValueTree()> captureState,
@@ -56,7 +61,8 @@ public:
     // If chosenFolder is inside the User presets folder (a bank the user
     // just picked or created via the save dialog's "New Folder"), the
     // preset is written there; otherwise it falls back to the User root.
-    bool saveUserPreset (const juce::String& name, const juce::File& chosenFolder = {});
+    bool saveUserPreset (const juce::String& name, const juce::File& chosenFolder = {},
+                         const juce::String& type = {});
 
     // Moves a USER preset to the system Trash and rescans. Returns false --
     // touching nothing at all -- for a factory preset, for a file this
@@ -80,6 +86,117 @@ public:
     // Otherwise the cursor is re-resolved by file so next/prev keep their
     // place across the rescan.
     bool deleteUserPreset (const juce::File& file);
+
+    // --- Export / import (1.0.26) -------------------------------------------
+
+    // Sample/wavetable/IR references inside a saved state that are NOT
+    // portable $LIB$/... paths (see library::toPortable/fromPortable) --
+    // i.e. absolute paths outside the current library root. These will not
+    // travel with an exported .spasynth file at all; callers use this to
+    // build a non-blocking warning. Pure/testable against a bare state tree.
+    static juce::StringArray nonPortableRefs (const juce::ValueTree& state);
+
+    struct ExportResult
+    {
+        bool ok = false;
+        juce::StringArray nonPortable;   // see nonPortableRefs; "<preset>: <path>"
+    };
+
+    // Copies a scanned preset's file verbatim to destFile (nothing is
+    // rewritten -- the file already stores whatever portable/absolute paths
+    // it was saved with). Works for factory presets too (export is read-only).
+    ExportResult exportPreset (const juce::File& srcPresetFile, const juce::File& destFile) const;
+
+    // Zips every preset found under User/<bankName> (recursively) into
+    // destZip, preserving relative paths within the bank so re-importing the
+    // zip recreates the same bank layout.
+    ExportResult exportBank (const juce::String& bankName, const juce::File& destZip) const;
+
+    enum class ImportClash { replace, keepBoth, skip };
+    using ClashResolver = std::function<ImportClash (const juce::String& targetDisplayName)>;
+
+    struct ImportResult
+    {
+        int imported = 0;
+        juce::StringArray malformed;         // source names skipped as unreadable/invalid
+        juce::StringArray rejectedZipSlip;   // zip entries refused for escaping the bank
+        juce::StringArray needsLibraryPacks; // imported preset names whose $LIB$ sample
+                                              // refs don't resolve against the CURRENT
+                                              // library root
+    };
+
+    // paths: any mix of .spasynth files (imported to User/ root), folders
+    // (imported as a bank under User/ named after the folder), and .zip
+    // files (imported as a bank under User/ named after the zip, extracted
+    // zip-slip-safe -- an entry that would resolve outside the target bank
+    // folder is refused, not written). resolveClash is asked once per name
+    // clash, given the clashing display name, and its decision is honored
+    // exactly once (an "apply to all" UI maps to the caller returning the
+    // same action every time). rescan() runs once at the end iff anything
+    // was actually imported.
+    ImportResult importPaths (const juce::Array<juce::File>& paths, const ClashResolver& resolveClash);
+
+    // Async-friendly alternative to importPaths() for UI code that must
+    // never resolve a name clash with a blocking modal loop (unsafe inside a
+    // plugin editor -- see CLAUDE.md's callOutParent/SafePointer rules).
+    // beginImport() flattens `paths` into individual preset items up front
+    // (no writes yet). Call advance() repeatedly: each call either does
+    // some writing and reports {finished=true}, or stops at the next name
+    // clash and reports {awaitingDecision=true, clashName}. The caller
+    // resolves that clash out of band (e.g. an async AlertWindow) and calls
+    // decide() before calling advance() again -- decide() does not itself
+    // advance, so the next advance() re-examines the same item with the
+    // decision now in hand. Once advance() reports finished, call finish()
+    // exactly once to run the rescan + missing-library-pack scan and get the
+    // same ImportResult importPaths() would have produced. The session owns
+    // no UI state and can be torn down at any point (e.g. editor closed
+    // mid-import) with nothing left half-applied beyond whatever was
+    // already written to disk.
+    class ImportSession
+    {
+    public:
+        ~ImportSession();
+
+        struct StepResult
+        {
+            bool finished = false;
+            bool awaitingDecision = false;
+            juce::String clashName;   // valid only when awaitingDecision
+        };
+
+        StepResult advance();
+
+        // applyToRest: remembers `action` for every later clash in this
+        // session too (an "apply to all" checkbox), mirroring how a
+        // synchronous ClashResolver would honor a caller-side remembered
+        // choice.
+        void decide (ImportClash action, bool applyToRest);
+
+        ImportResult finish();
+
+    private:
+        friend class PresetManager;
+        ImportSession (PresetManager& owner, const juce::Array<juce::File>& paths);
+        struct Impl;
+        std::unique_ptr<Impl> impl;
+
+        JUCE_DECLARE_NON_COPYABLE (ImportSession)
+    };
+
+    std::unique_ptr<ImportSession> beginImport (const juce::Array<juce::File>& paths);
+
+    // Rewrites a USER preset's stored "type" XML attribute in place
+    // (atomic: write to a sibling temp file, then juce::File::replaceFileIn
+    // this permits). Refused (false, file untouched) for anything not
+    // flagged isUser by the last rescan().
+    bool setPresetType (const juce::File& file, const juce::String& newType);
+
+    // Every distinct non-empty stored "type" currently in use across all
+    // scanned presets that is NOT one of builtInTypeNames -- what the save
+    // dialog's TYPE menu should append below the built-in list. Kept here
+    // (not computed from PresetInfo by the caller) so it's covered by this
+    // class's own tests.
+    juce::StringArray customTypesInUse (const juce::StringArray& builtInTypeNames) const;
 
     // Exposed for tests: -1 = nothing loaded from the list.
     int getCurrentIndex() const { return currentIndex; }
@@ -189,7 +306,8 @@ public:
 private:
     juce::ValueTree makeTemplateState() const;
     bool writePreset (const juce::File& file, const juce::String& name,
-                      const juce::ValueTree& state, int recipeVersionStamp = 0) const;
+                      const juce::ValueTree& state, int recipeVersionStamp = 0,
+                      const juce::String& type = {}) const;
 
     juce::ValueTree buildKeysState (const juce::File& smallest, const juce::File& libraryRoot,
                                     int variant) const;

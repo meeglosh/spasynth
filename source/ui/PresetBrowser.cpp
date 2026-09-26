@@ -139,6 +139,12 @@ juce::String PresetBrowser::typeOf (const library::PresetManager::PresetInfo& p)
 
 juce::String PresetBrowser::soundTypeOf (const library::PresetManager::PresetInfo& p)
 {
+    // A stored "type" attribute (1.0.26: set at save time or via "Set
+    // type...") always wins over the name-prefix guess -- it's the user's
+    // (or the save dialog's) explicit choice, including any custom type.
+    if (p.storedType.isNotEmpty())
+        return p.storedType;
+
     const auto prefixed = prefixSoundType (p.name);
     if (prefixed.isNotEmpty())
         return prefixed;
@@ -146,6 +152,14 @@ juce::String PresetBrowser::soundTypeOf (const library::PresetManager::PresetInf
     // Fallback only for un-prefixed FACTORY presets (isUser == false); a
     // user preset with no matching prefix genuinely has no sound type.
     return p.isUser ? juce::String() : factoryFallbackSoundType (p.name);
+}
+
+juce::StringArray PresetBrowser::builtInSoundTypeNames()
+{
+    juce::StringArray names;
+    for (const auto& entry : soundTypeTable)
+        names.add (entry.display);
+    return names;
 }
 
 juce::String PresetBrowser::favoriteKey (const library::PresetManager::PresetInfo& p)
@@ -277,6 +291,13 @@ PresetBrowser::PresetBrowser (SPASynthProcessor& p,
     rescanButton.onClick = [this] { processor.refreshLibrary(); };
     rescanButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
     addAndMakeVisible (rescanButton);
+
+    importButton.setComponentID ("browser");
+    importButton.setTooltip ("Import .spasynth files, a folder, or a .zip pack "
+                              "(drag and drop onto this drawer works too)");
+    importButton.onClick = [this] { showImportChooser(); };
+    importButton.setMouseClickGrabsKeyboardFocus (false);   // see Controls.h's Knob
+    addAndMakeVisible (importButton);
 
     // Blanket sweep for everything else in the drawer -- the ListBox (and its
     // internal viewport/rows/scrollbars), the type chips, and any other
@@ -534,7 +555,7 @@ bool PresetBrowser::canDeleteRow (int row) const
     return presets[(size_t) filtered[(size_t) row]].isUser;
 }
 
-juce::PopupMenu PresetBrowser::buildRowMenu (int row) const
+juce::PopupMenu PresetBrowser::buildRowMenu (int row, juce::StringArray* typeMenuNamesOut) const
 {
     juce::PopupMenu menu;
 
@@ -542,14 +563,44 @@ juce::PopupMenu PresetBrowser::buildRowMenu (int row) const
         return menu;
 
     const auto& p = presets[(size_t) filtered[(size_t) row]];
+    const bool isUser = canDeleteRow (row);   // isUser, not category == "User" -- see canDeleteRow
+
     menu.addSectionHeader (p.name);
-    menu.addItem (deleteMenuItemId, "Move to Trash", canDeleteRow (row));
+    menu.addItem (deleteMenuItemId, "Move to Trash", isUser);
+    menu.addItem (exportPresetMenuItemId, "Export preset...");   // works for factory too, read-only
+
+    // "Set type..." rewrites the file, so it's user-preset-only, same gate
+    // as delete. Offered types = the built-in table + every custom type
+    // currently in use, in that order; ids are dense from firstTypeMenuItemId
+    // so a caller can recover the chosen name via typeMenuNamesOut.
+    {
+        juce::PopupMenu typeMenu;
+        juce::StringArray names = builtInSoundTypeNames();
+        names.addArray (processor.getPresetManager().customTypesInUse (builtInSoundTypeNames()));
+        int id = firstTypeMenuItemId;
+        for (const auto& name : names)
+            typeMenu.addItem (id++, name, isUser);
+        typeMenu.addSeparator();
+        typeMenu.addItem (newTypeMenuItemId, "New type...", isUser);
+        if (typeMenuNamesOut != nullptr)
+            *typeMenuNamesOut = names;
+        menu.addSubMenu ("Set type...", typeMenu, isUser);
+    }
+
+    // "Export bank..." has no natural home on the plain pack/bank ComboBox
+    // (JUCE combo items don't carry a per-item context menu), so it lives
+    // here instead, on any preset that belongs to a real user bank (not the
+    // User/ root itself, which isn't a "bank").
+    if (isUser && p.category != "User")
+        menu.addItem (exportBankMenuItemId, "Export bank \"" + p.category + "\"...");
+
     return menu;
 }
 
 void PresetBrowser::showRowMenu (int row)
 {
-    auto menu = buildRowMenu (row);
+    juce::StringArray typeMenuNames;
+    auto menu = buildRowMenu (row, &typeMenuNames);
     if (menu.getNumItems() == 0)
         return;
 
@@ -558,10 +609,22 @@ void PresetBrowser::showRowMenu (int row)
     // host. See ContentComponent::showPopupAnchored's declaration comment.
     juce::Component::SafePointer<PresetBrowser> safe (this);
     showPopupAnchored (*this, menu, juce::PopupMenu::Options().withMousePosition(),
-                       [safe, row] (int result)
+                       [safe, row, typeMenuNames] (int result)
                        {
-                           if (safe != nullptr && result == deleteMenuItemId)
+                           if (safe == nullptr || result == 0)
+                               return;
+
+                           if (result == deleteMenuItemId)
                                safe->deleteRow (row);
+                           else if (result == exportPresetMenuItemId)
+                               safe->exportPresetRow (row);
+                           else if (result == exportBankMenuItemId)
+                               safe->exportBankRow (row);
+                           else if (result == newTypeMenuItemId)
+                               safe->promptNewTypeForRow (row);
+                           else if (result >= firstTypeMenuItemId
+                                    && result < firstTypeMenuItemId + typeMenuNames.size())
+                               safe->applyTypeToRow (row, typeMenuNames[result - firstTypeMenuItemId]);
                        });
 }
 
@@ -589,6 +652,244 @@ bool PresetBrowser::deleteRow (int row)
     // chip all re-applied by applyFilter().
     refresh();
     return true;
+}
+
+namespace
+{
+    // Non-blocking heads-up for a warning that doesn't need a decision --
+    // used for the "won't travel" export warning and the "needs library
+    // packs" import summary. Shown with SafePointer so a fast-closing test
+    // editor never leaves a dangling callback.
+    void showInfo (juce::Component* parent, const juce::String& title, const juce::String& message)
+    {
+        if (message.isEmpty())
+            return;
+        juce::NativeMessageBox::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon,
+                                                     title, message, parent);
+    }
+}
+
+void PresetBrowser::exportPresetRow (int row)
+{
+    if (row < 0 || row >= (int) filtered.size())
+        return;
+
+    const auto& p = presets[(size_t) filtered[(size_t) row]];
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Export preset", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                              .getChildFile (p.name + library::PresetManager::presetExtension),
+        "*" + juce::String (library::PresetManager::presetExtension));
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                             | juce::FileBrowserComponent::canSelectFiles,
+                              [this, file = p.file] (const juce::FileChooser& fc)
+    {
+        const auto dest = fc.getResult();
+        if (dest == juce::File())
+            return;
+
+        const auto result = processor.getPresetManager().exportPreset (file, dest);
+        if (! result.ok)
+        {
+            showInfo (this, "Export Failed", "The preset could not be written to \""
+                                              + dest.getFullPathName() + "\".");
+            return;
+        }
+        if (! result.nonPortable.isEmpty())
+            showInfo (this, "Some Content Won't Travel",
+                      "This preset references sound content outside your library folder, "
+                      "so it will not travel with the exported file:\n\n"
+                          + result.nonPortable.joinIntoString ("\n"));
+    });
+}
+
+void PresetBrowser::exportBankRow (int row)
+{
+    if (row < 0 || row >= (int) filtered.size())
+        return;
+
+    const auto bankName = presets[(size_t) filtered[(size_t) row]].category;
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Export bank", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                            .getChildFile (bankName + ".zip"),
+        "*.zip");
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                             | juce::FileBrowserComponent::canSelectFiles,
+                              [this, bankName] (const juce::FileChooser& fc)
+    {
+        const auto dest = fc.getResult();
+        if (dest == juce::File())
+            return;
+
+        const auto result = processor.getPresetManager().exportBank (bankName, dest);
+        if (! result.ok)
+        {
+            showInfo (this, "Export Failed", "The bank could not be written to \""
+                                              + dest.getFullPathName() + "\".");
+            return;
+        }
+        if (! result.nonPortable.isEmpty())
+            showInfo (this, "Some Content Won't Travel",
+                      "This bank references sound content outside your library folder, "
+                      "so it will not travel with the exported zip:\n\n"
+                          + result.nonPortable.joinIntoString ("\n"));
+    });
+}
+
+void PresetBrowser::promptNewTypeForRow (int row)
+{
+    if (row < 0 || row >= (int) filtered.size())
+        return;
+    const auto file = presets[(size_t) filtered[(size_t) row]].file;
+
+    // A synchronous (foreground, user-initiated) text-input prompt -- this
+    // drawer has no first-class "new type" input control of its own, and a
+    // one-line name is all this ever needs.
+    auto* aw = new juce::AlertWindow ("New Type", "Enter a name for the new sound type:",
+                                      juce::MessageBoxIconType::NoIcon, this);
+    aw->addTextEditor ("name", "");
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<PresetBrowser> (this),
+                                              aw, file] (int result)
+        {
+            const auto name = aw->getTextEditorContents ("name").trim();
+            std::unique_ptr<juce::AlertWindow> owner (aw);   // dismissed either way
+            if (result == 1 && name.isNotEmpty() && safe != nullptr)
+                safe->processor.getPresetManager().setPresetType (file, name);
+        }),
+        false);
+}
+
+void PresetBrowser::applyTypeToRow (int row, const juce::String& newType)
+{
+    if (row < 0 || row >= (int) filtered.size())
+        return;
+    const auto file = presets[(size_t) filtered[(size_t) row]].file;
+    processor.getPresetManager().setPresetType (file, newType);
+}
+
+void PresetBrowser::showImportChooser()
+{
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Import presets (.spasynth files, a folder, or a .zip pack)",
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                             | juce::FileBrowserComponent::canSelectFiles
+                             | juce::FileBrowserComponent::canSelectDirectories
+                             | juce::FileBrowserComponent::canSelectMultipleItems,
+                              [this] (const juce::FileChooser& fc)
+    {
+        importFromPaths (fc.getResults());
+    });
+}
+
+bool PresetBrowser::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+    {
+        const juce::File file (f);
+        if (file.isDirectory()
+            || file.hasFileExtension ("spasynth")
+            || file.hasFileExtension ("zip"))
+            return true;
+    }
+    return false;
+}
+
+void PresetBrowser::filesDropped (const juce::StringArray& files, int, int)
+{
+    draggingOver = false;
+    repaint();
+
+    juce::Array<juce::File> paths;
+    for (const auto& f : files)
+        paths.add (juce::File (f));
+    importFromPaths (paths);
+}
+
+void PresetBrowser::importFromPaths (const juce::Array<juce::File>& paths)
+{
+    if (paths.isEmpty())
+        return;
+
+    // Fully async: the session is flattened up front (no writes yet), then
+    // driven one file at a time by continueImport(). A blocking modal loop
+    // here would be unsafe inside a plugin editor (see CLAUDE.md's
+    // callOutParent/SafePointer rules) -- Logic's AUHostingService and
+    // similar hosts don't tolerate the message thread stalling on a nested
+    // event loop mid-render. The shared_ptr lets the session outlive this
+    // browser (and even this editor) if the user closes either mid-import;
+    // PresetManager (owned by the processor, which outlives the browser)
+    // does the actual writes, so nothing is left half-applied.
+    std::shared_ptr<library::PresetManager::ImportSession> session (
+        processor.getPresetManager().beginImport (paths).release());
+    continueImport (session);
+}
+
+void PresetBrowser::continueImport (std::shared_ptr<library::PresetManager::ImportSession> session)
+{
+    using Clash = library::PresetManager::ImportClash;
+
+    const auto step = session->advance();
+
+    if (step.finished)
+    {
+        const auto result = session->finish();
+
+        juce::StringArray summary;
+        if (! result.malformed.isEmpty())
+            summary.add ("Skipped (could not be read as a preset):\n" + result.malformed.joinIntoString ("\n"));
+        if (! result.rejectedZipSlip.isEmpty())
+            summary.add ("Rejected (an entry tried to write outside its bank folder):\n"
+                         + result.rejectedZipSlip.joinIntoString ("\n"));
+        if (! result.needsLibraryPacks.isEmpty())
+            summary.add ("Needs library packs you don't have (the sample content is missing):\n"
+                         + result.needsLibraryPacks.joinIntoString ("\n"));
+
+        if (result.imported > 0 || ! summary.isEmpty())
+            showInfo (this, "Import Finished",
+                      juce::String (result.imported) + " preset(s) imported."
+                          + (summary.isEmpty() ? juce::String() : ("\n\n" + summary.joinIntoString ("\n\n"))));
+        return;
+    }
+
+    // step.awaitingDecision: ask, then resume via decide() + another
+    // advance() -- one decision per clashing name, with a "apply to this
+    // whole import" toggle so the common case (several presets from the
+    // same source) needs one click. Same button layout/order as the old
+    // synchronous prompt, now via enterModalState instead of runModalLoop.
+    auto* aw = new juce::AlertWindow ("Preset Already Exists",
+                                      "\"" + step.clashName + "\" already exists in the destination.",
+                                      juce::MessageBoxIconType::QuestionIcon, this);
+    auto applyToAll = std::make_shared<juce::ToggleButton> ("Do this for every clash in this import");
+    applyToAll->setSize (280, 22);
+    aw->addCustomComponent (applyToAll.get());
+    aw->addButton ("Replace", (int) Clash::replace + 1);
+    aw->addButton ("Keep Both", (int) Clash::keepBoth + 1);
+    aw->addButton ("Skip", (int) Clash::skip + 1);
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<PresetBrowser> (this),
+                                              aw, applyToAll, session] (int pressed)
+        {
+            std::unique_ptr<juce::AlertWindow> owner (aw);   // dismissed either way
+            const auto action = static_cast<Clash> (juce::jlimit (0, 2, pressed - 1));
+            session->decide (action, applyToAll->getToggleState());
+
+            // If the browser (or its editor) was closed while this prompt
+            // was up, drop the session here rather than resuming: the files
+            // already written stay written (PresetManager did that, and it
+            // outlives us), but nothing further touches a freed `this`.
+            if (safe != nullptr)
+                safe->continueImport (session);
+        }),
+        false);
 }
 
 bool PresetBrowser::keyPressed (const juce::KeyPress& key)
@@ -625,6 +926,13 @@ void PresetBrowser::paint (juce::Graphics& g)
     g.drawText ("PRESETS", titleArea, juce::Justification::centredLeft);
 
     draw::displayWell (g, listWell.toFloat().expanded (2.0f), false);
+
+    // Drop target highlight while a file/folder/zip drag hovers the drawer.
+    if (draggingOver)
+    {
+        g.setColour (t.accent.withAlpha (0.5f));
+        g.drawRect (getLocalBounds().reduced (1), 2);
+    }
 }
 
 void PresetBrowser::resized()
@@ -665,6 +973,8 @@ void PresetBrowser::resized()
     rescanButton.setBounds (footer.removeFromRight (64));
     footer.removeFromRight (4);
     libraryButton.setBounds (footer.removeFromRight (96));
+    footer.removeFromRight (4);
+    importButton.setBounds (footer.removeFromRight (64));
     countLabel.setBounds (footer);
 
     bounds.removeFromBottom (8);

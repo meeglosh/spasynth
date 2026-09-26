@@ -8938,6 +8938,709 @@ namespace
         presetsRoot.deleteRecursively();
     }
 
+    // --- 1.0.26 export/import/type tests ------------------------------------
+
+    // Export a single user preset, then import it into a completely
+    // different presets root, and confirm the round trip preserves the
+    // preset's saved TYPE and content. A second export, of a preset whose
+    // state references an absolute (non-$LIB$) sample path, must report
+    // that reference as won't-travel.
+    static void exportImportPresetRoundTripTest()
+    {
+        std::cout << "exportImportPresetRoundTripTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        const auto rootA = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("spasynth-export-a", "");
+        lib::PresetManager pmA ([&] { return proc.buildStateTree(); },
+                                [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, rootA);
+
+        expect (pmA.saveUserPreset ("Portable Lead", {}, "Lead"), "saves a preset with a type");
+        const auto srcFile = pmA.getUserPresetFolder()
+                                 .getChildFile ("Portable Lead" + juce::String (lib::PresetManager::presetExtension));
+        expect (srcFile.existsAsFile(), "source preset file exists");
+
+        const auto exportDest = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-exported-preset", ".spasynth");
+        const auto exportResult = pmA.exportPreset (srcFile, exportDest);
+        expect (exportResult.ok, "export succeeds");
+        expect (exportResult.nonPortable.isEmpty(),
+                "no non-portable refs for a preset with no sample content");
+        expect (exportDest.existsAsFile(), "exported file exists on disk");
+
+        // Import into an entirely separate presets root.
+        const auto rootB = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("spasynth-export-b", "");
+        spa::SPASynthProcessor procB;
+        procB.prepareToPlay (48000.0, 512);
+        lib::PresetManager pmB ([&] { return procB.buildStateTree(); },
+                                [&] (const juce::ValueTree& t) { procB.restoreStateTree (t); }, rootB);
+
+        juce::Array<juce::File> toImport { exportDest };
+        const auto importResult = pmB.importPaths (toImport, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+        expect (importResult.imported == 1, "imports the one exported file");
+
+        bool found = false;
+        for (const auto& p : pmB.getPresets())
+            if (p.name == "Portable Lead")
+            {
+                found = true;
+                expect (p.isUser, "imported preset lands in User/");
+                expect (p.storedType == "Lead", "imported preset keeps its stored type");
+            }
+        expect (found, "the imported preset shows up on rescan");
+
+        // Now a preset whose state has a non-portable (absolute) sample ref.
+        auto state = proc.buildStateTree();
+        auto samples = state.getOrCreateChildWithName ("SAMPLES", nullptr);
+        samples.setProperty ("slot0", juce::String ("/some/absolute/path/kick.wav"), nullptr);
+        const auto nonPortableRefs = lib::PresetManager::nonPortableRefs (state);
+        expect (nonPortableRefs.contains ("/some/absolute/path/kick.wav"),
+                "an absolute sample path is reported as non-portable");
+        // Anti-vacuous check: a $LIB$ path must NOT be flagged.
+        samples.setProperty ("slot0", juce::String ("$LIB$/Pack/kick.wav"), nullptr);
+        expect (lib::PresetManager::nonPortableRefs (state).isEmpty(),
+                "a $LIB$ portable path is never flagged as non-portable");
+
+        exportDest.deleteFile();
+        rootA.deleteRecursively();
+        rootB.deleteRecursively();
+    }
+
+    // Exporting a whole User/ bank as a zip, then importing that zip into a
+    // fresh presets root, must recreate the same bank (folder name + every
+    // preset inside it).
+    static void exportImportBankZipRoundTripTest()
+    {
+        std::cout << "exportImportBankZipRoundTripTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        const auto rootA = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("spasynth-bankzip-a", "");
+        lib::PresetManager pmA ([&] { return proc.buildStateTree(); },
+                                [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, rootA);
+
+        const auto bankFolder = pmA.getUserPresetFolder().getChildFile ("MyBank");
+        expect (pmA.saveUserPreset ("One", bankFolder), "saves first bank preset");
+        expect (pmA.saveUserPreset ("Two", bankFolder), "saves second bank preset");
+
+        // Named after the bank itself, not an arbitrary export filename --
+        // importPaths() names the recreated bank after the ZIP's own stem,
+        // so the zip must be named "MyBank.zip" for the round trip to land
+        // back in a bank called "MyBank".
+        const auto zipDest = pmA.getUserPresetFolder().getParentDirectory()
+                                 .getNonexistentChildFile ("MyBank", ".zip");
+        const auto exportResult = pmA.exportBank ("MyBank", zipDest);
+        expect (exportResult.ok, "bank export succeeds");
+        expect (zipDest.existsAsFile(), "bank zip exists on disk");
+
+        const auto rootB = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("spasynth-bankzip-b", "");
+        spa::SPASynthProcessor procB;
+        procB.prepareToPlay (48000.0, 512);
+        lib::PresetManager pmB ([&] { return procB.buildStateTree(); },
+                                [&] (const juce::ValueTree& t) { procB.restoreStateTree (t); }, rootB);
+
+        juce::Array<juce::File> toImport { zipDest };
+        const auto importResult = pmB.importPaths (toImport, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+        expect (importResult.imported == 2, "imports both presets from the bank zip");
+
+        const auto recreatedBank = pmB.getUserPresetFolder().getChildFile ("MyBank");
+        expect (recreatedBank.getChildFile ("One" + juce::String (lib::PresetManager::presetExtension)).existsAsFile(),
+                "zip import recreates the bank folder named after the zip");
+        expect (recreatedBank.getChildFile ("Two" + juce::String (lib::PresetManager::presetExtension)).existsAsFile(),
+                "and both presets land inside it");
+
+        zipDest.deleteFile();
+        rootA.deleteRecursively();
+        rootB.deleteRecursively();
+    }
+
+    // Importing a folder must install it as a bank; importing loose files
+    // must land at User/ root; name clashes must honor Replace/Keep Both/Skip.
+    static void importFolderAndClashHandlingTest()
+    {
+        std::cout << "importFolderAndClashHandlingTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-clash", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                              [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, presetsRoot);
+
+        // A source folder to import as a bank, with one loose preset to
+        // import at the User/ root alongside it.
+        const auto srcFolder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getNonexistentChildFile ("spasynth-import-src-folder", "");
+        srcFolder.createDirectory();
+        const auto srcState = proc.buildStateTree();
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", "Folder Preset");
+            root.setAttribute ("version", 1);
+            root.addChildElement (srcState.createXml().release());
+            root.writeTo (srcFolder.getChildFile ("Folder Preset.spasynth"));
+        }
+        const auto looseFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getNonexistentChildFile ("spasynth-import-loose", ".spasynth");
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", "Loose Preset");
+            root.setAttribute ("version", 1);
+            root.addChildElement (srcState.createXml().release());
+            root.writeTo (looseFile);
+        }
+
+        juce::Array<juce::File> firstBatch { srcFolder, looseFile };
+        const auto firstResult = pm.importPaths (firstBatch, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+        expect (firstResult.imported == 2, "imports the folder's preset plus the loose file");
+
+        const auto bankFolder = pm.getUserPresetFolder().getChildFile (srcFolder.getFileName());
+        expect (bankFolder.getChildFile ("Folder Preset" + juce::String (lib::PresetManager::presetExtension))
+                    .existsAsFile(),
+                "a dropped folder becomes a bank named after the folder");
+        expect (pm.getUserPresetFolder().getChildFile ("Loose Preset"
+                        + juce::String (lib::PresetManager::presetExtension)).existsAsFile(),
+                "a loose .spasynth file lands at the User/ root");
+
+        // Re-import the same loose file: skip must leave the existing file
+        // untouched; replace must overwrite; keepBoth must add a " 2" copy.
+        const auto targetFile = pm.getUserPresetFolder().getChildFile (
+            "Loose Preset" + juce::String (lib::PresetManager::presetExtension));
+        const auto beforeSkip = targetFile.loadFileAsString();
+
+        juce::Array<juce::File> again { looseFile };
+        auto skipResult = pm.importPaths (again, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+        expect (skipResult.imported == 0, "skip resolves the clash without importing");
+        expect (targetFile.loadFileAsString() == beforeSkip, "skip leaves the existing file untouched");
+
+        auto keepBothResult = pm.importPaths (again, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::keepBoth;
+        });
+        expect (keepBothResult.imported == 1, "keepBoth imports as a second copy");
+        expect (pm.getUserPresetFolder().getChildFile ("Loose Preset 2"
+                        + juce::String (lib::PresetManager::presetExtension)).existsAsFile(),
+                "keepBoth appends \" 2\" to the name");
+
+        auto replaceResult = pm.importPaths (again, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::replace;
+        });
+        expect (replaceResult.imported == 1, "replace re-imports over the existing file");
+
+        srcFolder.deleteRecursively();
+        looseFile.deleteFile();
+        presetsRoot.deleteRecursively();
+    }
+
+    // A malformed file among otherwise-good ones is skipped and reported,
+    // never crashes the whole import.
+    static void importMalformedSkippedTest()
+    {
+        std::cout << "importMalformedSkippedTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-malformed", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                              [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, presetsRoot);
+
+        const auto goodFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getNonexistentChildFile ("spasynth-import-good", ".spasynth");
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", "Good One");
+            root.setAttribute ("version", 1);
+            root.addChildElement (proc.buildStateTree().createXml().release());
+            root.writeTo (goodFile);
+        }
+        const auto badFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-import-bad", ".spasynth");
+        badFile.replaceWithText ("not a preset at all");
+
+        juce::Array<juce::File> batch { goodFile, badFile };
+        const auto result = pm.importPaths (batch, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+        expect (result.imported == 1, "the good file imports");
+        expect (result.malformed.size() == 1, "the bad file is reported as malformed, not silently dropped");
+        expect (pm.getUserPresetFolder().getChildFile ("Good One"
+                        + juce::String (lib::PresetManager::presetExtension)).existsAsFile(),
+                "the good preset is on disk despite the malformed sibling");
+
+        goodFile.deleteFile();
+        badFile.deleteFile();
+        presetsRoot.deleteRecursively();
+    }
+
+    // A hand-crafted zip entry whose stored path tries to escape the target
+    // bank folder (zip-slip) must be refused -- never written outside the
+    // bank, and reported so the caller knows something was rejected.
+    // Anti-vacuous: a well-behaved entry in the SAME zip must still import.
+    static void importZipSlipRejectedTest()
+    {
+        std::cout << "importZipSlipRejectedTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-zipslip", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                              [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, presetsRoot);
+
+        const auto sourceState = proc.buildStateTree();
+        const auto makeSourceFile = [&] (const juce::File& f, const juce::String& name)
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", name);
+            root.setAttribute ("version", 1);
+            root.addChildElement (sourceState.createXml().release());
+            root.writeTo (f);
+        };
+
+        const auto goodSrc = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-zip-good-src", ".spasynth");
+        makeSourceFile (goodSrc, "Good Zip Preset");
+        const auto evilSrc = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-zip-evil-src", ".spasynth");
+        makeSourceFile (evilSrc, "Evil Zip Preset");
+
+        const auto zipFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-zipslip", ".zip");
+        {
+            juce::ZipFile::Builder builder;
+            builder.addFile (goodSrc, 9, "Good Zip Preset.spasynth");
+            // Escapes the bank folder the zip would otherwise be imported into.
+            builder.addFile (evilSrc, 9, "../../evil.spasynth");
+            juce::FileOutputStream out (zipFile);
+            builder.writeToStream (out, nullptr);
+        }
+
+        juce::Array<juce::File> batch { zipFile };
+        const auto result = pm.importPaths (batch, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+
+        expect (result.imported == 1, "only the well-behaved entry imports");
+        expect (result.rejectedZipSlip.size() == 1, "the escaping entry is reported as rejected");
+
+        const auto bankFolder = pm.getUserPresetFolder().getChildFile ("spasynth-zipslip");
+        expect (bankFolder.getChildFile ("Good Zip Preset" + juce::String (lib::PresetManager::presetExtension))
+                    .existsAsFile(),
+                "the good entry lands inside the bank");
+
+        const auto outsideRoot = presetsRoot.getParentDirectory();
+        const bool escaped = ! outsideRoot.findChildFiles (juce::File::findFiles, false, "evil*").isEmpty();
+        expect (! escaped, "nothing named after the escaping entry was written outside the bank");
+
+        goodSrc.deleteFile();
+        evilSrc.deleteFile();
+        zipFile.deleteFile();
+        presetsRoot.deleteRecursively();
+    }
+
+    // An imported preset whose $LIB$ sample reference doesn't resolve
+    // against the CURRENT library must be listed in needsLibraryPacks; one
+    // whose reference DOES resolve must not be.
+    static void importMissingLibraryDetectionTest()
+    {
+        std::cout << "importMissingLibraryDetectionTest\n";
+        namespace lib = spa::library;
+
+        const auto savedRoot = lib::getLibraryRoot();
+
+        const auto fakeLibRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-lib", "");
+        const auto packDir = fakeLibRoot.getChildFile ("Pack");
+        packDir.createDirectory();
+        const auto presentWav = packDir.getChildFile ("present.wav");
+        presentWav.replaceWithText ("not really a wav, just needs to exist");
+        lib::setLibraryRoot (fakeLibRoot);
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-lib-presets", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                              [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, presetsRoot);
+
+        const auto makePresetWithSample = [&] (const juce::File& dest, const juce::String& name,
+                                               const juce::String& samplePath)
+        {
+            auto state = proc.buildStateTree();
+            auto samples = state.getOrCreateChildWithName ("SAMPLES", nullptr);
+            samples.setProperty ("slot0", samplePath, nullptr);
+
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", name);
+            root.setAttribute ("version", 1);
+            root.addChildElement (state.createXml().release());
+            root.writeTo (dest);
+        };
+
+        const auto hasFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-import-has", ".spasynth");
+        makePresetWithSample (hasFile, "Has Its Pack", "$LIB$Pack/present.wav");
+        const auto missingFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-import-missing", ".spasynth");
+        makePresetWithSample (missingFile, "Missing Its Pack", "$LIB$OtherPack/gone.wav");
+
+        juce::Array<juce::File> batch { hasFile, missingFile };
+        const auto result = pm.importPaths (batch, [] (const juce::String&) {
+            return lib::PresetManager::ImportClash::skip;
+        });
+
+        expect (result.imported == 2, "both presets import (missing content doesn't block the import itself)");
+        expect (result.needsLibraryPacks.contains ("Missing Its Pack"),
+                "the preset referencing a missing pack file is flagged");
+        expect (! result.needsLibraryPacks.contains ("Has Its Pack"),
+                "the preset whose sample resolves is NOT flagged");
+
+        lib::setLibraryRoot (savedRoot);
+        hasFile.deleteFile();
+        missingFile.deleteFile();
+        fakeLibRoot.deleteRecursively();
+        presetsRoot.deleteRecursively();
+    }
+
+    // PresetBrowser's import used to resolve a name clash with a blocking
+    // juce::AlertWindow::runModalLoop() -- unsafe inside a plugin editor
+    // (Logic's AUHostingService and similar hosts don't tolerate a nested
+    // modal loop stalling the message thread mid-render). PresetManager::
+    // ImportSession (beginImport/advance/decide/finish) replaces that with a
+    // step API a caller drives asynchronously. This test scripts a sequence
+    // of decisions -- Replace, Keep Both, Skip, and an "apply to the rest"
+    // Skip -- exactly as PresetBrowser::continueImport would from its
+    // enterModalState callbacks, and checks the outcome against the SAME
+    // scenario run through the old synchronous importPaths()+resolveClash
+    // path, proving the async rewrite didn't change behaviour.
+    static void importSessionScriptedAsyncClashTest()
+    {
+        std::cout << "importSessionScriptedAsyncClashTest\n";
+        namespace lib = spa::library;
+        using Clash = lib::PresetManager::ImportClash;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto sourceState = proc.buildStateTree();
+
+        const auto makeSourceFile = [&] (const juce::String& name) -> juce::File
+        {
+            const auto f = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("spasynth-clash-src-" + name, ".spasynth");
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", name);
+            root.setAttribute ("version", 1);
+            root.addChildElement (sourceState.createXml().release());
+            root.writeTo (f);
+            return f;
+        };
+
+        const auto srcA = makeSourceFile ("Clash A");
+        const auto srcB = makeSourceFile ("Clash B");
+        const auto srcC = makeSourceFile ("Clash C");
+        juce::Array<juce::File> batch { srcA, srcB, srcC };
+
+        // Script: A -> keepBoth (single decision, not remembered); B -> skip,
+        // remembered for the rest of the import, so C never even asks.
+        const auto scriptedActionFor = [] (const juce::String& name) -> std::pair<Clash, bool>
+        {
+            if (name == "Clash A") return { Clash::keepBoth, false };
+            return { Clash::skip, true };   // B, and (if ever asked) C
+        };
+
+        // --- Reference run: the old synchronous resolveClash path ----------
+        const auto refRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-clash-ref", "");
+        spa::SPASynthProcessor procRef;
+        procRef.prepareToPlay (48000.0, 512);
+        lib::PresetManager pmRef ([&] { return procRef.buildStateTree(); },
+                                  [&] (const juce::ValueTree& t) { procRef.restoreStateTree (t); }, refRoot);
+        // Pre-populate so the batch below is a genuine re-import clash for
+        // all three names.
+        pmRef.importPaths (batch, [] (const juce::String&) { return Clash::skip; });
+
+        bool refRemembered = false;
+        Clash refRememberedAction = Clash::skip;
+        const auto refResolver = [&] (const juce::String& name) -> Clash
+        {
+            if (refRemembered)
+                return refRememberedAction;
+            const auto [action, applyToAll] = scriptedActionFor (name);
+            if (applyToAll)
+            {
+                refRemembered = true;
+                refRememberedAction = action;
+            }
+            return action;
+        };
+        const auto refResult = pmRef.importPaths (batch, refResolver);
+
+        // --- Session under test: the async step API ------------------------
+        const auto sessionRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-clash-session", "");
+        spa::SPASynthProcessor procSession;
+        procSession.prepareToPlay (48000.0, 512);
+        lib::PresetManager pmSession ([&] { return procSession.buildStateTree(); },
+                                      [&] (const juce::ValueTree& t) { procSession.restoreStateTree (t); },
+                                      sessionRoot);
+        pmSession.importPaths (batch, [] (const juce::String&) { return Clash::skip; });
+
+        auto session = pmSession.beginImport (batch);
+        int decisions = 0;
+        for (;;)
+        {
+            const auto step = session->advance();
+            if (step.finished)
+                break;
+            expect (step.awaitingDecision, "advance() always either finishes or asks for a decision");
+            ++decisions;
+            const auto [action, applyToAll] = scriptedActionFor (step.clashName);
+            session->decide (action, applyToAll);
+        }
+        expect (decisions == 2, "only two clashes are ever actually asked about -- "
+                                "the apply-to-all on B answers C without a prompt");
+        const auto sessionResult = session->finish();
+
+        expect (sessionResult.imported == refResult.imported,
+                "async session imports the same count as the synchronous resolver path");
+        expect (sessionResult.imported == 1, "only A's keepBoth copy is imported; B and C are skipped");
+
+        const auto userRootRef = pmRef.getUserPresetFolder();
+        const auto userRootSession = pmSession.getUserPresetFolder();
+        const auto ext = juce::String (lib::PresetManager::presetExtension);
+        expect (userRootRef.getChildFile ("Clash A 2" + ext).existsAsFile()
+                    == userRootSession.getChildFile ("Clash A 2" + ext).existsAsFile(),
+                "both paths agree A's keepBoth copy exists");
+        expect (userRootSession.getChildFile ("Clash A 2" + ext).existsAsFile(),
+                "the session path actually wrote A's keepBoth copy");
+        expect (! userRootSession.getChildFile ("Clash B 2" + ext).existsAsFile(),
+                "B was skipped, not duplicated");
+        expect (! userRootSession.getChildFile ("Clash C 2" + ext).existsAsFile(),
+                "C was skipped (via apply-to-all), not duplicated");
+
+        srcA.deleteFile();
+        srcB.deleteFile();
+        srcC.deleteFile();
+        refRoot.deleteRecursively();
+        sessionRoot.deleteRecursively();
+    }
+
+    // Closing the editor (host tears down the whole plugin, e.g. project
+    // close) while an async import clash prompt is still open must not
+    // crash. Mirrors voicePanelEditorCloseTest's HostHolder (a top-level
+    // component whose destructor deleteAllChildren()s, modelling the JUCE AU
+    // wrapper's EditorCompHolder) and its SafePointer discipline: the
+    // AlertWindow is owned by the ModalComponentManager, not by the editor,
+    // so tearing down the editor tree around it must leave its later
+    // dismissal (which fires PresetBrowser::continueImport's callback)
+    // harmless -- the SafePointer<PresetBrowser> inside that callback must
+    // read nullptr instead of dereferencing a freed browser.
+    static void presetImportClashPromptEditorCloseTest()
+    {
+        std::cout << "presetImportClashPromptEditorCloseTest\n";
+        namespace lib = spa::library;
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+
+        auto procPtr = std::make_unique<spa::SPASynthProcessor>();
+        auto& proc = *procPtr;
+        proc.prepareToPlay (48000.0, 512);
+
+        // A pre-existing "Clash Editor Close" user preset guarantees the
+        // import below hits a clash immediately.
+        expect (proc.getPresetManager().saveUserPreset ("Clash Editor Close"),
+                "seed preset saved");
+        const auto srcFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("spasynth-clash-editor-close-src", ".spasynth");
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", "Clash Editor Close");
+            root.setAttribute ("version", 1);
+            root.addChildElement (proc.buildStateTree().createXml().release());
+            root.writeTo (srcFile);
+        }
+
+        struct HostHolder : juce::Component
+        {
+            ~HostHolder() override { deleteAllChildren(); }
+        };
+        auto holder = std::make_unique<HostHolder>();
+        auto* editorRaw = proc.createEditor();
+        editorRaw->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        holder->addAndMakeVisible (editorRaw);
+        holder->setSize (editorRaw->getWidth(), editorRaw->getHeight());
+        holder->addToDesktop (0);
+        holder->setVisible (true);
+        pumpFor (150);
+
+        spa::ui::PresetBrowser* browser = nullptr;
+        std::function<void (juce::Component&)> findBrowser = [&] (juce::Component& c)
+        {
+            if (browser == nullptr)
+                browser = dynamic_cast<spa::ui::PresetBrowser*> (&c);
+            for (auto* child : c.getChildren())
+                findBrowser (*child);
+        };
+        findBrowser (*editorRaw);
+        expect (browser != nullptr, "preset browser found in the editor tree");
+        if (browser == nullptr) return;
+
+        juce::Array<juce::File> batch { srcFile };
+        browser->importFromPaths (batch);
+        pumpFor (60);
+
+        juce::CallOutBox* calloutIgnored = nullptr; (void) calloutIgnored;
+        juce::AlertWindow* clashPrompt = nullptr;
+        std::function<void (juce::Component&)> findAlert = [&] (juce::Component& c)
+        {
+            if (clashPrompt == nullptr)
+                clashPrompt = dynamic_cast<juce::AlertWindow*> (&c);
+            for (auto* child : c.getChildren())
+                findAlert (*child);
+        };
+        // AlertWindow is added to the desktop (its own top-level window),
+        // not nested under the editor -- walk every desktop component.
+        for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
+            if (auto* dc = juce::Desktop::getInstance().getComponent (i))
+                findAlert (*dc);
+
+        if (clashPrompt == nullptr && ! juce::Process::isForegroundProcess())
+        {
+            std::cout << "  skip  clash prompt open: not the foreground process\n";
+            srcFile.deleteFile();
+            return;
+        }
+        expect (clashPrompt != nullptr, "the clash prompt is open");
+        if (clashPrompt == nullptr) return;
+
+        juce::Component::SafePointer<juce::AlertWindow> safePrompt (clashPrompt);
+
+        // Tear the whole editor down with the prompt still open and no pump
+        // in between -- what a host does on project close.
+        holder.reset();
+        procPtr.reset();
+
+        // Now let the still-alive AlertWindow's own button fire its
+        // ModalCallbackFunction -- the callback's SafePointer<PresetBrowser>
+        // must see the browser is gone and simply not resume the import.
+        if (safePrompt != nullptr)
+        {
+            // Any button exits the modal state with that button's id.
+            safePrompt->exitModalState (1);
+            pumpFor (200);
+        }
+
+        expect (true, "editor + processor teardown with an open clash prompt, "
+                      "then the prompt's own dismissal, did not crash");
+        srcFile.deleteFile();
+    }
+
+    // A preset's stored "type" XML attribute must win over the name-prefix
+    // guess soundTypeOf() otherwise falls back to. Anti-vacuous: the same
+    // name WITHOUT a stored type must resolve to the prefix-derived type,
+    // proving the precedence (not just that some type comes back).
+    static void storedTypePrecedenceTest()
+    {
+        std::cout << "storedTypePrecedenceTest\n";
+        namespace ui = spa::ui;
+        using Info = spa::library::PresetManager::PresetInfo;
+
+        // "BASS Growler" would prefix-match to "Bass" (see the soundTypeTable
+        // in PresetBrowser.cpp) -- a stored "Lead" type must win instead.
+        const Info withStoredType { "BASS Growler", "User", {}, true, "Lead" };
+        expect (ui::PresetBrowser::soundTypeOf (withStoredType) == "Lead",
+                "a stored type wins over the name-prefix guess");
+
+        // Anti-vacuous: the SAME name with no stored type must fall back to
+        // the prefix table -- proving the branch above is a real override,
+        // not just "some non-empty string always wins".
+        const Info withoutStoredType { "BASS Growler", "User", {}, true, {} };
+        expect (ui::PresetBrowser::soundTypeOf (withoutStoredType) == "Bass",
+                "with no stored type, the same name resolves via the prefix table");
+    }
+
+    // A USER preset's type can be rewritten in place; a FACTORY preset's
+    // cannot (refused, file untouched). customTypesInUse() must reflect a
+    // custom type only while some preset still carries it.
+    static void setPresetTypeAndCustomTypesTest()
+    {
+        std::cout << "setPresetTypeAndCustomTypesTest\n";
+        namespace lib = spa::library;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        const auto presetsRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("spasynth-settype", "");
+        lib::PresetManager pm ([&] { return proc.buildStateTree(); },
+                              [&] (const juce::ValueTree& t) { proc.restoreStateTree (t); }, presetsRoot);
+
+        expect (pm.saveUserPreset ("BASS Growler", {}, "Bass"), "saves a user preset with a built-in type");
+        const auto userFile = pm.getUserPresetFolder()
+                                  .getChildFile ("BASS Growler" + juce::String (lib::PresetManager::presetExtension));
+
+        expect (pm.setPresetType (userFile, "My Custom Type"), "setPresetType succeeds on a user preset");
+        pm.rescan();
+        bool foundCustom = false;
+        for (const auto& p : pm.getPresets())
+            if (p.file == userFile)
+                foundCustom = (p.storedType == "My Custom Type");
+        expect (foundCustom, "the rewritten file's type is picked up on rescan");
+
+        const juce::StringArray builtIns { "Bass", "Lead", "Pad" };
+        expect (pm.customTypesInUse (builtIns).contains ("My Custom Type"),
+                "the custom type appears while a preset still uses it");
+
+        // Revert it back to a built-in type -- the custom type must vanish
+        // from customTypesInUse() once nothing uses it any more.
+        expect (pm.setPresetType (userFile, "Bass"), "type can be changed again");
+        pm.rescan();
+        expect (! pm.customTypesInUse (builtIns).contains ("My Custom Type"),
+                "the custom type disappears once no preset carries it any more");
+
+        // Factory preset: build one directly under Factory/, rescan, and
+        // confirm setPresetType refuses it and leaves the file untouched.
+        const auto factoryDir = presetsRoot.getChildFile ("Factory").getChildFile ("SomePack");
+        factoryDir.createDirectory();
+        const auto factoryFile = factoryDir.getChildFile ("SomePack Keys" + juce::String (lib::PresetManager::presetExtension));
+        {
+            juce::XmlElement root ("SPASynthPreset");
+            root.setAttribute ("name", "SomePack Keys");
+            root.setAttribute ("version", 1);
+            root.addChildElement (proc.buildStateTree().createXml().release());
+            root.writeTo (factoryFile);
+        }
+        pm.rescan();
+        const auto before = factoryFile.loadFileAsString();
+        expect (! pm.setPresetType (factoryFile, "Lead"), "setPresetType refuses a factory preset");
+        expect (factoryFile.loadFileAsString() == before, "the factory file is left completely untouched");
+
+        presetsRoot.deleteRecursively();
+    }
+
     // "Reset to Default" (the menu item added post-1.0.3) must restore every
     // parameter to its ParameterRegistry default and clear the current-preset
     // name back to "Init".
@@ -26104,6 +26807,16 @@ int main (int argc, char* argv[])
     RUN (presetRoundTripTest);
     RUN (presetBankTest);
     RUN (malformedPresetTest);
+    RUN (exportImportPresetRoundTripTest);
+    RUN (exportImportBankZipRoundTripTest);
+    RUN (importFolderAndClashHandlingTest);
+    RUN (importMalformedSkippedTest);
+    RUN (importZipSlipRejectedTest);
+    RUN (importMissingLibraryDetectionTest);
+    RUN (importSessionScriptedAsyncClashTest);
+    RUN (presetImportClashPromptEditorCloseTest);
+    RUN (storedTypePrecedenceTest);
+    RUN (setPresetTypeAndCustomTypesTest);
     RUN (presetResetToDefaultTest);
     RUN (presetLoadNoiseBurstTest);
     RUN (factoryPresetGenerationTest);

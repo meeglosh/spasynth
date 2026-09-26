@@ -100,7 +100,29 @@ followed by a space, underscore or dash (for example "BASS Growl" or
   INIT      Template
 
 Our factory presets are already sorted: their Keys/Texture/Pulse names
-show up under Keys/Soundscape/Rhythmic automatically.
+show up under Keys/Soundscape/Rhythmic automatically. When you save a
+preset you can also pick (or type) its sound type directly in the Save
+dialog, and change it any time afterward from a preset's right-click menu
+in the browser.
+
+EXPORTING AND IMPORTING PRESETS
+--------------------------------
+Right-click any preset in the browser for "Export preset...", which saves
+it as a single .spasynth file you can send to someone else or back up
+yourself. Right-click a preset that belongs to one of your own banks for
+an option to export that whole bank as one .zip file.
+
+To bring presets in, use the IMPORT button in the preset browser, or just
+drag and drop onto the browser: single .spasynth files, a folder of them,
+or an exported bank .zip all work. A folder or zip is installed as a new
+bank named after it; loose files go into your User presets. If a name
+already exists, we'll ask whether to replace it, keep both, or skip it.
+
+A preset can only bring its own sound content along if that content lives
+inside your library folder; if it references a sound file from somewhere
+else on the original machine, we'll let you know it didn't travel. After
+importing, we'll also flag any preset that needs a sound pack you don't
+currently have installed.
 
 SUPPORT
 -------

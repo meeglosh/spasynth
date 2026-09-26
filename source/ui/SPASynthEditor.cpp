@@ -1988,34 +1988,17 @@ void ContentComponent::paint (juce::Graphics& g)
     g.setColour (t.header.darker (0.25f));
     g.fillRect (band);
     // Tracked text carries trailing kern space, so plain centred drawText
-    // shifts the visible glyphs off-centre (worse the bigger the tracking).
-    // GlyphArrangement's bounding box is advance-based and inherits the same
-    // phantom tail, so measure the true ink instead: render the glyphs to a
-    // path and centre the path's bounds. (Measured on the 1380px snapshot:
-    // advance-based centring left the wordmark 5.5px left of centre and the
-    // two lines 3.5px out of agreement with each other.)
-    const auto drawTrackedCentred = [&g] (const juce::Font& font, const juce::String& text,
-                                          juce::Rectangle<int> area, juce::Colour colour)
-    {
-        juce::GlyphArrangement glyphs;
-        glyphs.addLineOfText (font, text, 0.0f, 0.0f);
-
-        juce::Path ink;
-        glyphs.createPath (ink);
-        const auto box = ink.getBounds();
-        ink.applyTransform (juce::AffineTransform::translation (
-            (float) area.getCentreX() - box.getCentreX(),
-            (float) area.getCentreY() - box.getCentreY()));
-
-        g.setColour (colour);
-        g.fillPath (ink);
-    };
+    // shifts the visible glyphs off-centre (worse the bigger the tracking) --
+    // see draw::trackedCentredText (shared with the About panel's wordmark).
+    // (Measured on the 1380px snapshot: advance-based centring left the
+    // wordmark 5.5px left of centre and the two lines 3.5px out of agreement
+    // with each other.)
 
     // The brand band is always dark, so its ink is always light.
-    drawTrackedCentred (metrics::wordmarkFont(), "SPASYNTH",
-                        band.withTrimmedBottom (9), juce::Colour (0xffe7ecef));
-    drawTrackedCentred (metrics::brandSubFont(), "SILVERPLATTER AUDIO",
-                        band.withTrimmedTop (21), juce::Colour (0xff7f8d97));
+    draw::trackedCentredText (g, metrics::wordmarkFont(), "SPASYNTH",
+                              band.withTrimmedBottom (9), juce::Colour (0xffe7ecef));
+    draw::trackedCentredText (g, metrics::brandSubFont(), "SILVERPLATTER AUDIO",
+                              band.withTrimmedTop (21), juce::Colour (0xff7f8d97));
 
     // Header strip. (moduleArea already lost the brand band above.)
     auto header = moduleArea.removeFromTop (metrics::headerHeight);
@@ -2888,26 +2871,131 @@ void ContentComponent::chooseLibraryFolder()
     });
 }
 
+// TYPE step of the save flow (1.0.26). A small call-out asked BEFORE the
+// native save dialog rather than a control glued onto that native dialog --
+// juce::FileChooser is a real OS dialog on both platforms and cannot host
+// our own combo box. Offers the built-in sound-type table plus every custom
+// type already in use (PresetBrowser::builtInSoundTypeNames /
+// PresetManager::customTypesInUse -- the same lists the browser's own "Set
+// type..." submenu builds from), plus an inline "New type..." name field.
+class TypePickerPanel : public juce::Component
+{
+public:
+    explicit TypePickerPanel (const juce::StringArray& offeredTypes)
+    {
+        typeLabel.setText ("TYPE", juce::dontSendNotification);
+        typeLabel.setFont (metrics::smallFont());
+        addAndMakeVisible (typeLabel);
+
+        typeBox.addItem ("(none)", 1);
+        int id = 2;
+        for (const auto& t : offeredTypes)
+            typeBox.addItem (t, id++);
+        newTypeItemId = id;
+        typeBox.addItem ("New type...", newTypeItemId);
+        typeBox.setSelectedId (1, juce::dontSendNotification);
+        typeBox.onChange = [this]
+        {
+            newTypeEditor.setVisible (typeBox.getSelectedId() == newTypeItemId);
+            resized();
+        };
+        addAndMakeVisible (typeBox);
+
+        newTypeEditor.setTextToShowWhenEmpty ("New type name", juce::Colours::grey);
+        newTypeEditor.setVisible (false);
+        addAndMakeVisible (newTypeEditor);
+
+        okButton.setButtonText ("Next...");
+        okButton.onClick = [this]
+        {
+            juce::String chosen;
+            if (typeBox.getSelectedId() == newTypeItemId)
+                chosen = newTypeEditor.getText().trim();
+            else if (typeBox.getSelectedId() > 1)
+                chosen = typeBox.getText();
+
+            if (onConfirmed)
+                onConfirmed (chosen);
+            if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();
+        };
+        addAndMakeVisible (okButton);
+
+        for (auto* c : std::initializer_list<juce::Component*> { &typeLabel, &typeBox,
+                                                                  &newTypeEditor, &okButton })
+            disableMouseClickFocusGrab (*c);
+
+        setSize (220, 96);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (10);
+        typeLabel.setBounds (r.removeFromTop (16));
+        typeBox.setBounds (r.removeFromTop (24));
+        r.removeFromTop (6);
+        if (newTypeEditor.isVisible())
+        {
+            newTypeEditor.setBounds (r.removeFromTop (24));
+            r.removeFromTop (6);
+        }
+        okButton.setBounds (r.removeFromTop (24));
+    }
+
+    std::function<void (juce::String)> onConfirmed;
+
+private:
+    juce::Label typeLabel;
+    juce::ComboBox typeBox;
+    juce::TextEditor newTypeEditor;
+    juce::TextButton okButton;
+    int newTypeItemId = 0;
+};
+
 void ContentComponent::saveUserPreset()
 {
     auto& pm = processor.getPresetManager();
     pm.getUserPresetFolder().createDirectory();
 
-    fileChooser = std::make_unique<juce::FileChooser> (
-        "Save preset",
-        pm.getUserPresetFolder().getChildFile ("My Preset"
-            + juce::String (library::PresetManager::presetExtension)),
-        "*" + juce::String (library::PresetManager::presetExtension));
+    juce::StringArray offeredTypes = PresetBrowser::builtInSoundTypeNames();
+    offeredTypes.addArray (pm.customTypesInUse (PresetBrowser::builtInSoundTypeNames()));
 
-    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
-                            | juce::FileBrowserComponent::canSelectFiles,
-                              [this] (const juce::FileChooser& fc)
+    auto panel = std::make_unique<TypePickerPanel> (offeredTypes);
+    auto* rawPanel = panel.get();
+
+    auto* top = callOutParent();   // never getTopLevelComponent() -- see its comment
+    if (top == nullptr)
+        return;
+
+    juce::CallOutBox::launchAsynchronously (std::move (panel), savePresetButton.getScreenBounds(), top);
+
+    rawPanel->onConfirmed = [safe = juce::Component::SafePointer<ContentComponent> (this)]
+                            (juce::String type)
     {
-        const auto result = fc.getResult();
-        if (result != juce::File())
-            processor.getPresetManager().saveUserPreset (
-                result.getFileNameWithoutExtension(), result.getParentDirectory());
-    });
+        if (safe == nullptr)
+            return;
+
+        auto& pmRef = safe->processor.getPresetManager();
+        pmRef.getUserPresetFolder().createDirectory();
+
+        safe->fileChooser = std::make_unique<juce::FileChooser> (
+            "Save preset",
+            pmRef.getUserPresetFolder().getChildFile ("My Preset"
+                + juce::String (library::PresetManager::presetExtension)),
+            "*" + juce::String (library::PresetManager::presetExtension));
+
+        safe->fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                      | juce::FileBrowserComponent::canSelectFiles,
+                                        [safe, type] (const juce::FileChooser& fc)
+        {
+            if (safe == nullptr)
+                return;
+            const auto result = fc.getResult();
+            if (result != juce::File())
+                safe->processor.getPresetManager().saveUserPreset (
+                    result.getFileNameWithoutExtension(), result.getParentDirectory(), type);
+        });
+    };
 }
 
 } // namespace ui

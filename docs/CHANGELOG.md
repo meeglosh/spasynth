@@ -31,6 +31,21 @@
   for nothing. Clearing a row now automatically pulls the rows below it up
   to close the gap, and right-clicking a row offers a quick "Clear row"
   option. This came from feedback.
+- You can now export and import presets. Right-click any preset for
+  "Export preset...", or right-click one inside a bank for an option to
+  export that whole bank as a single zip file. A new IMPORT button in the
+  preset browser (drag and drop onto the browser works too) accepts single
+  presets, a folder of presets, or an exported bank zip, and asks before
+  replacing anything with the same name. If an exported preset uses sound
+  content from outside your library folder, we'll let you know it won't
+  travel with the file. This came from feedback.
+- Saving a preset now lets you pick or type a sound TYPE for it, so your
+  own presets can show up correctly in the TYPE menu instead of only ever
+  falling back to a guess from the name. You can also change a preset's
+  type later from its right-click menu. This came from feedback.
+- Small polish to the About panel: it now shows the SPASynth wordmark in
+  our own brand style, the website link uses your accent colour, and the
+  license line no longer leaves a gap when there's nothing to show there.
 
 ## 1.0.25
 

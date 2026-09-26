@@ -152,7 +152,12 @@ void PresetManager::rescan()
     {
         for (const auto& f : folder.findChildFiles (juce::File::findFiles, recursive,
                                                     "*" + juce::String (presetExtension)))
-            presets.push_back ({ f.getFileNameWithoutExtension(), category, f, isUser });
+        {
+            juce::String storedType;
+            if (auto xml = juce::XmlDocument::parse (f))
+                storedType = xml->getStringAttribute ("type");
+            presets.push_back ({ f.getFileNameWithoutExtension(), category, f, isUser, storedType });
+        }
     };
 
     const auto factory = presetsRoot.getChildFile ("Factory");
@@ -239,20 +244,24 @@ void PresetManager::loadPrevious()
 }
 
 bool PresetManager::writePreset (const juce::File& file, const juce::String& name,
-                                 const juce::ValueTree& state, int recipeVersionStamp) const
+                                 const juce::ValueTree& state, int recipeVersionStamp,
+                                 const juce::String& type) const
 {
     juce::XmlElement root (presetTag);
     root.setAttribute ("name", name);
     root.setAttribute ("version", 1);
     if (recipeVersionStamp > 0)
         root.setAttribute ("recipe", recipeVersionStamp);
+    if (type.isNotEmpty())
+        root.setAttribute ("type", type);
     root.addChildElement (state.createXml().release());
 
     file.getParentDirectory().createDirectory();
     return root.writeTo (file);
 }
 
-bool PresetManager::saveUserPreset (const juce::String& name, const juce::File& chosenFolder)
+bool PresetManager::saveUserPreset (const juce::String& name, const juce::File& chosenFolder,
+                                    const juce::String& type)
 {
     // Honor a bank subfolder chosen in the save dialog (including one just
     // created via "New Folder"), but only if it's actually inside the User
@@ -266,7 +275,7 @@ bool PresetManager::saveUserPreset (const juce::String& name, const juce::File& 
     const auto file = targetFolder.getChildFile (juce::File::createLegalFileName (name)
                                                   + presetExtension);
 
-    if (! writePreset (file, name, captureState()))
+    if (! writePreset (file, name, captureState(), 0, type))
         return false;
 
     currentName = name;
@@ -310,6 +319,633 @@ bool PresetManager::deleteUserPreset (const juce::File& file)
                 currentIndex = (int) i;
 
     return true;
+}
+
+namespace
+{
+    // Shared parse used by import (never applies state -- that would be
+    // wrong during a file-copy operation; loadPresetFile is the apply path).
+    bool parsePresetXmlText (const juce::String& xmlText, juce::String& nameOut,
+                             juce::ValueTree& stateOut, const juce::String& fallbackName)
+    {
+        const auto xml = juce::XmlDocument::parse (xmlText);
+        if (xml == nullptr || ! xml->hasTagName (presetTag) || xml->getFirstChildElement() == nullptr)
+            return false;
+        const auto state = juce::ValueTree::fromXml (*xml->getFirstChildElement());
+        if (! state.isValid())
+            return false;
+        nameOut = xml->getStringAttribute ("name", fallbackName);
+        stateOut = state;
+        return true;
+    }
+
+    bool parsePresetXmlFile (const juce::File& f, juce::String& nameOut, juce::ValueTree& stateOut)
+    {
+        return parsePresetXmlText (f.loadFileAsString(), nameOut, stateOut,
+                                   f.getFileNameWithoutExtension());
+    }
+
+    // Resolves a name clash against an existing target file in targetFolder,
+    // returning the file to write to, or an invalid File if the resolver
+    // says skip (skipped is set true in that case).
+    juce::File resolveClashTarget (const juce::File& targetFolder, const juce::String& baseName,
+                                   const juce::String& ext,
+                                   const PresetManager::ClashResolver& resolveClash, bool& skipped)
+    {
+        auto candidate = targetFolder.getChildFile (baseName + ext);
+        if (! candidate.existsAsFile())
+            return candidate;
+
+        const auto action = resolveClash ? resolveClash (baseName) : PresetManager::ImportClash::skip;
+        if (action == PresetManager::ImportClash::skip)
+        {
+            skipped = true;
+            return {};
+        }
+        if (action == PresetManager::ImportClash::replace)
+            return candidate;
+
+        // keepBoth: "<name> 2", "<name> 3", ... until free.
+        int n = 2;
+        juce::File alt;
+        do
+        {
+            alt = targetFolder.getChildFile (baseName + " " + juce::String (n) + ext);
+            ++n;
+        } while (alt.existsAsFile());
+        return alt;
+    }
+
+    // Shared by importPaths() and ImportSession::finish(): checks every
+    // written file's $LIB$ sample/wavetable refs against the CURRENT
+    // library root and records preset names whose content is missing.
+    void scanForMissingLibraryPacks (PresetManager&, PresetManager::ImportResult& result,
+                                     const juce::Array<juce::File>& importedFiles)
+    {
+        const auto libraryRoot = findLibraryRoot();
+        for (const auto& f : importedFiles)
+        {
+            juce::String name;
+            juce::ValueTree state;
+            if (! parsePresetXmlFile (f, name, state))
+                continue;
+
+            bool missing = false;
+            const auto checkRefs = [&] (const juce::String& childType)
+            {
+                auto child = state.getChildWithName (childType);
+                if (! child.isValid())
+                    return;
+                for (int i = 0; i < child.getNumProperties(); ++i)
+                {
+                    const auto value = child.getProperty (child.getPropertyName (i)).toString();
+                    if (value.startsWith ("$LIB$") && ! fromPortable (value, libraryRoot).existsAsFile())
+                        missing = true;
+                }
+            };
+            checkRefs ("SAMPLES");
+            checkRefs ("WAVETABLES");
+
+            if (missing)
+                result.needsLibraryPacks.add (name);
+        }
+    }
+}
+
+juce::StringArray PresetManager::nonPortableRefs (const juce::ValueTree& state)
+{
+    juce::StringArray refs;
+
+    const auto checkChild = [&] (const juce::String& childType)
+    {
+        auto child = state.getChildWithName (childType);
+        if (! child.isValid())
+            return;
+        for (int i = 0; i < child.getNumProperties(); ++i)
+        {
+            const auto value = child.getProperty (child.getPropertyName (i)).toString();
+            if (value.isNotEmpty() && ! value.startsWith ("$LIB$"))
+                refs.add (value);
+        }
+    };
+    checkChild ("SAMPLES");
+    checkChild ("WAVETABLES");
+
+    const auto convIR = state.getProperty ("convIR").toString();
+    if (convIR.isNotEmpty() && ! convIR.startsWith ("$LIB$"))
+        refs.add (convIR);
+
+    return refs;
+}
+
+PresetManager::ExportResult PresetManager::exportPreset (const juce::File& srcPresetFile,
+                                                         const juce::File& destFile) const
+{
+    ExportResult result;
+
+    juce::String name;
+    juce::ValueTree state;
+    if (! parsePresetXmlFile (srcPresetFile, name, state))
+        return result;
+
+    for (const auto& ref : nonPortableRefs (state))
+        result.nonPortable.add (name + ": " + ref);
+
+    destFile.getParentDirectory().createDirectory();
+    result.ok = srcPresetFile.copyFileTo (destFile);
+    return result;
+}
+
+PresetManager::ExportResult PresetManager::exportBank (const juce::String& bankName,
+                                                       const juce::File& destZip) const
+{
+    ExportResult result;
+
+    const auto bankFolder = getUserPresetFolder().getChildFile (bankName);
+    if (! bankFolder.isDirectory())
+        return result;
+
+    juce::ZipFile::Builder builder;
+    bool any = false;
+
+    for (const auto& f : bankFolder.findChildFiles (juce::File::findFiles, true,
+                                                     "*" + juce::String (presetExtension)))
+    {
+        any = true;
+        const auto rel = f.getRelativePathFrom (bankFolder).replaceCharacter ('\\', '/');
+        builder.addFile (f, 9, rel);
+
+        juce::String name;
+        juce::ValueTree state;
+        if (parsePresetXmlFile (f, name, state))
+            for (const auto& ref : nonPortableRefs (state))
+                result.nonPortable.add (name + ": " + ref);
+    }
+
+    if (! any)
+        return result;
+
+    destZip.getParentDirectory().createDirectory();
+    destZip.deleteFile();
+    juce::FileOutputStream out (destZip);
+    if (! out.openedOk())
+        return result;
+
+    result.ok = builder.writeToStream (out, nullptr);
+    return result;
+}
+
+PresetManager::ImportResult PresetManager::importPaths (const juce::Array<juce::File>& paths,
+                                                         const ClashResolver& resolveClash)
+{
+    ImportResult result;
+    const auto userRoot = getUserPresetFolder();
+    userRoot.createDirectory();
+    juce::Array<juce::File> importedFiles;
+
+    for (const auto& path : paths)
+    {
+        if (path.existsAsFile() && path.hasFileExtension ("spasynth"))
+        {
+            juce::String name;
+            juce::ValueTree state;
+            if (! parsePresetXmlFile (path, name, state))
+            {
+                result.malformed.add (path.getFileName());
+                continue;
+            }
+
+            bool skipped = false;
+            const auto target = resolveClashTarget (userRoot, juce::File::createLegalFileName (name),
+                                                    presetExtension, resolveClash, skipped);
+            if (skipped)
+                continue;
+            if (path.copyFileTo (target))
+            {
+                importedFiles.add (target);
+                ++result.imported;
+            }
+            else
+            {
+                result.malformed.add (path.getFileName());
+            }
+        }
+        else if (path.isDirectory())
+        {
+            const auto bankFolder = userRoot.getChildFile (
+                juce::File::createLegalFileName (path.getFileName()));
+            bankFolder.createDirectory();
+
+            for (const auto& f : path.findChildFiles (juce::File::findFiles, true,
+                                                       "*" + juce::String (presetExtension)))
+            {
+                juce::String name;
+                juce::ValueTree state;
+                if (! parsePresetXmlFile (f, name, state))
+                {
+                    result.malformed.add (f.getFileName());
+                    continue;
+                }
+
+                const auto relDir = f.getParentDirectory().getRelativePathFrom (path);
+                auto destFolder = (relDir.isEmpty() || relDir == ".")
+                                       ? bankFolder
+                                       : bankFolder.getChildFile (relDir);
+                destFolder.createDirectory();
+
+                bool skipped = false;
+                const auto target = resolveClashTarget (destFolder, juce::File::createLegalFileName (name),
+                                                        presetExtension, resolveClash, skipped);
+                if (skipped)
+                    continue;
+                if (f.copyFileTo (target))
+                {
+                    importedFiles.add (target);
+                    ++result.imported;
+                }
+                else
+                {
+                    result.malformed.add (f.getFileName());
+                }
+            }
+        }
+        else if (path.existsAsFile() && path.hasFileExtension ("zip"))
+        {
+            const auto bankFolder = userRoot.getChildFile (
+                juce::File::createLegalFileName (path.getFileNameWithoutExtension()));
+            bankFolder.createDirectory();
+
+            juce::ZipFile zip (path);
+            for (int i = 0; i < zip.getNumEntries(); ++i)
+            {
+                const auto* entry = zip.getEntry (i);
+                if (entry == nullptr || entry->filename.endsWithChar ('/'))
+                    continue;   // directory entry
+                if (! entry->filename.endsWithIgnoreCase (presetExtension))
+                    continue;   // ignore non-preset content in the zip silently
+
+                // Zip-slip guard: getChildFile resolves ".." segments the same
+                // way fromPortable() already relies on for $LIB$ paths -- the
+                // resolved path must stay a descendant of the bank folder.
+                const auto destCandidate = bankFolder.getChildFile (entry->filename);
+                if (destCandidate != bankFolder && ! destCandidate.isAChildOf (bankFolder))
+                {
+                    result.rejectedZipSlip.add (entry->filename);
+                    continue;
+                }
+
+                std::unique_ptr<juce::InputStream> entryStream (zip.createStreamForEntry (i));
+                if (entryStream == nullptr)
+                {
+                    result.malformed.add (entry->filename);
+                    continue;
+                }
+
+                const auto xmlText = entryStream->readEntireStreamAsString();
+                juce::String name;
+                juce::ValueTree state;
+                if (! parsePresetXmlText (xmlText, name, state, destCandidate.getFileNameWithoutExtension()))
+                {
+                    result.malformed.add (entry->filename);
+                    continue;
+                }
+
+                const auto destFolder = destCandidate.getParentDirectory();
+                destFolder.createDirectory();
+
+                bool skipped = false;
+                const auto target = resolveClashTarget (destFolder, juce::File::createLegalFileName (name),
+                                                        presetExtension, resolveClash, skipped);
+                if (skipped)
+                    continue;
+                if (target.replaceWithText (xmlText))
+                {
+                    importedFiles.add (target);
+                    ++result.imported;
+                }
+                else
+                {
+                    result.malformed.add (entry->filename);
+                }
+            }
+        }
+        else
+        {
+            result.malformed.add (path.getFileName());
+        }
+    }
+
+    if (result.imported > 0)
+        rescan();
+
+    // Missing-library detection against the CURRENT library root -- checked
+    // for every file actually written above, independent of the rescan.
+    scanForMissingLibraryPacks (*this, result, importedFiles);
+
+    return result;
+}
+
+// --- ImportSession --------------------------------------------------------
+//
+// Flattens every source path into individual work items up front (no writes,
+// no clash resolution yet), then advance()s through them one at a time. On a
+// clash it stops WITHOUT consuming that item (the cursor doesn't move), so a
+// caller that supplies a decision via decide() and calls advance() again
+// simply re-examines the same item -- this time with an action in hand -- at
+// the cost of a cheap re-parse, never a duplicate write. This is what lets
+// the UI show an async prompt per clash instead of a blocking modal loop.
+struct PresetManager::ImportSession::Impl
+{
+    struct Item
+    {
+        enum class Kind { singleFile, folderFile, zipEntry } kind;
+        juce::File srcFile;      // singleFile/folderFile: the .spasynth to copy;
+                                  // zipEntry: the .zip itself
+        juce::File destFolder;   // resolved destination folder (zipEntry:
+                                  // the bank root -- the entry's own
+                                  // subpath is resolved during advance())
+        int zipEntryIndex = -1;
+    };
+
+    PresetManager& owner;
+    std::vector<Item> items;
+    size_t cursor = 0;
+
+    PresetManager::ImportResult result;
+    juce::Array<juce::File> importedFiles;
+
+    bool haveApplyToAll = false;
+    PresetManager::ImportClash applyToAll = PresetManager::ImportClash::skip;
+    bool havePendingDecision = false;
+    PresetManager::ImportClash pendingDecision = PresetManager::ImportClash::skip;
+
+    Impl (PresetManager& o, const juce::Array<juce::File>& paths) : owner (o)
+    {
+        const auto userRoot = owner.getUserPresetFolder();
+        userRoot.createDirectory();
+
+        for (const auto& path : paths)
+        {
+            if (path.existsAsFile() && path.hasFileExtension ("spasynth"))
+            {
+                items.push_back ({ Item::Kind::singleFile, path, userRoot, -1 });
+            }
+            else if (path.isDirectory())
+            {
+                const auto bankFolder = userRoot.getChildFile (
+                    juce::File::createLegalFileName (path.getFileName()));
+
+                for (const auto& f : path.findChildFiles (juce::File::findFiles, true,
+                                                           "*" + juce::String (presetExtension)))
+                {
+                    const auto relDir = f.getParentDirectory().getRelativePathFrom (path);
+                    auto destFolder = (relDir.isEmpty() || relDir == ".")
+                                           ? bankFolder
+                                           : bankFolder.getChildFile (relDir);
+                    items.push_back ({ Item::Kind::folderFile, f, destFolder, -1 });
+                }
+            }
+            else if (path.existsAsFile() && path.hasFileExtension ("zip"))
+            {
+                const auto bankFolder = userRoot.getChildFile (
+                    juce::File::createLegalFileName (path.getFileNameWithoutExtension()));
+
+                juce::ZipFile zip (path);
+                for (int i = 0; i < zip.getNumEntries(); ++i)
+                {
+                    const auto* entry = zip.getEntry (i);
+                    if (entry == nullptr || entry->filename.endsWithChar ('/'))
+                        continue;   // directory entry
+                    if (! entry->filename.endsWithIgnoreCase (presetExtension))
+                        continue;   // ignore non-preset content in the zip silently
+
+                    items.push_back ({ Item::Kind::zipEntry, path, bankFolder, i });
+                }
+            }
+            else
+            {
+                result.malformed.add (path.getFileName());
+            }
+        }
+    }
+
+    PresetManager::ImportSession::StepResult advance()
+    {
+        while (cursor < items.size())
+        {
+            auto& item = items[cursor];
+
+            juce::String name;
+            juce::ValueTree state;
+            juce::String xmlText;                 // zipEntry only
+            juce::File destFolder = item.destFolder;
+            juce::String errorDisplayName = item.srcFile.getFileName();
+
+            if (item.kind == Item::Kind::zipEntry)
+            {
+                juce::ZipFile zip (item.srcFile);
+                const auto* entry = zip.getEntry (item.zipEntryIndex);
+                if (entry == nullptr)
+                {
+                    result.malformed.add (errorDisplayName);
+                    ++cursor;
+                    continue;
+                }
+                errorDisplayName = entry->filename;
+
+                // Zip-slip guard -- see importPaths()'s identical check.
+                const auto destCandidate = destFolder.getChildFile (entry->filename);
+                if (destCandidate != destFolder && ! destCandidate.isAChildOf (destFolder))
+                {
+                    result.rejectedZipSlip.add (entry->filename);
+                    ++cursor;
+                    continue;
+                }
+                destFolder = destCandidate.getParentDirectory();
+
+                std::unique_ptr<juce::InputStream> entryStream (zip.createStreamForEntry (item.zipEntryIndex));
+                if (entryStream == nullptr)
+                {
+                    result.malformed.add (entry->filename);
+                    ++cursor;
+                    continue;
+                }
+                xmlText = entryStream->readEntireStreamAsString();
+                if (! parsePresetXmlText (xmlText, name, state, destCandidate.getFileNameWithoutExtension()))
+                {
+                    result.malformed.add (entry->filename);
+                    ++cursor;
+                    continue;
+                }
+            }
+            else
+            {
+                if (! parsePresetXmlFile (item.srcFile, name, state))
+                {
+                    result.malformed.add (errorDisplayName);
+                    ++cursor;
+                    continue;
+                }
+            }
+
+            destFolder.createDirectory();
+
+            const auto baseName = juce::File::createLegalFileName (name);
+            const auto candidate = destFolder.getChildFile (baseName + presetExtension);
+
+            juce::File target;
+            if (! candidate.existsAsFile())
+            {
+                target = candidate;
+            }
+            else
+            {
+                PresetManager::ImportClash action;
+                if (haveApplyToAll)
+                {
+                    action = applyToAll;
+                }
+                else if (havePendingDecision)
+                {
+                    action = pendingDecision;
+                    havePendingDecision = false;
+                }
+                else
+                {
+                    // Pause here without consuming this item -- the caller
+                    // resolves the clash asynchronously and calls decide(),
+                    // then advance() again re-examines this same item.
+                    return { false, true, name };
+                }
+
+                if (action == PresetManager::ImportClash::skip)
+                {
+                    ++cursor;
+                    continue;
+                }
+                if (action == PresetManager::ImportClash::replace)
+                {
+                    target = candidate;
+                }
+                else   // keepBoth
+                {
+                    int n = 2;
+                    juce::File alt;
+                    do
+                    {
+                        alt = destFolder.getChildFile (baseName + " " + juce::String (n) + presetExtension);
+                        ++n;
+                    } while (alt.existsAsFile());
+                    target = alt;
+                }
+            }
+
+            const bool ok = (item.kind == Item::Kind::zipEntry)
+                                 ? target.replaceWithText (xmlText)
+                                 : item.srcFile.copyFileTo (target);
+            if (ok)
+            {
+                importedFiles.add (target);
+                ++result.imported;
+            }
+            else
+            {
+                result.malformed.add (errorDisplayName);
+            }
+
+            ++cursor;
+        }
+
+        return { true, false, {} };
+    }
+};
+
+PresetManager::ImportSession::ImportSession (PresetManager& owner, const juce::Array<juce::File>& paths)
+    : impl (std::make_unique<Impl> (owner, paths))
+{
+}
+
+PresetManager::ImportSession::~ImportSession() = default;
+
+PresetManager::ImportSession::StepResult PresetManager::ImportSession::advance()
+{
+    return impl->advance();
+}
+
+void PresetManager::ImportSession::decide (ImportClash action, bool applyToRest)
+{
+    if (applyToRest)
+    {
+        impl->haveApplyToAll = true;
+        impl->applyToAll = action;
+    }
+    else
+    {
+        impl->havePendingDecision = true;
+        impl->pendingDecision = action;
+    }
+}
+
+PresetManager::ImportResult PresetManager::ImportSession::finish()
+{
+    if (impl->result.imported > 0)
+        impl->owner.rescan();
+
+    scanForMissingLibraryPacks (impl->owner, impl->result, impl->importedFiles);
+    return impl->result;
+}
+
+std::unique_ptr<PresetManager::ImportSession> PresetManager::beginImport (const juce::Array<juce::File>& paths)
+{
+    return std::unique_ptr<ImportSession> (new ImportSession (*this, paths));
+}
+
+bool PresetManager::setPresetType (const juce::File& file, const juce::String& newType)
+{
+    const PresetInfo* entry = nullptr;
+    for (const auto& p : presets)
+        if (p.file == file)
+            entry = &p;
+
+    if (entry == nullptr || ! entry->isUser)
+        return false;
+
+    const auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName (presetTag) || xml->getFirstChildElement() == nullptr)
+        return false;
+
+    const auto name = xml->getStringAttribute ("name", file.getFileNameWithoutExtension());
+    const auto recipe = xml->getIntAttribute ("recipe", 0);
+    const auto state = juce::ValueTree::fromXml (*xml->getFirstChildElement());
+    if (! state.isValid())
+        return false;
+
+    const auto tempFile = file.getSiblingFile (file.getFileNameWithoutExtension() + ".tmp"
+                                               + presetExtension);
+    if (! writePreset (tempFile, name, state, recipe, newType))
+    {
+        tempFile.deleteFile();
+        return false;
+    }
+
+    if (! tempFile.moveFileTo (file))   // moveFileTo deletes an existing destination first
+    {
+        tempFile.deleteFile();
+        return false;
+    }
+
+    rescan();
+    return true;
+}
+
+juce::StringArray PresetManager::customTypesInUse (const juce::StringArray& builtInTypeNames) const
+{
+    juce::StringArray custom;
+    for (const auto& p : presets)
+        if (p.storedType.isNotEmpty() && ! builtInTypeNames.contains (p.storedType))
+            custom.addIfNotAlreadyThere (p.storedType);
+    custom.sort (true);
+    return custom;
 }
 
 juce::ValueTree PresetManager::makeTemplateState() const

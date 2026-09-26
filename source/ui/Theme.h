@@ -318,6 +318,16 @@ namespace draw
     // Flat module panel: fill + hairline.
     void panel (juce::Graphics&, juce::Rectangle<float>);
 
+    // Draws heavily-tracked text (extraKerningFactor fonts, e.g. the
+    // wordmark) genuinely centred on its INK rather than its advance box --
+    // a tracked font's advance box carries a trailing kern gap that plain
+    // drawText's centring measures against, so the visible glyphs land off-
+    // centre (worse the more tracking). Renders the glyphs to a path and
+    // centres the path's own bounds instead. Shared by the brand band
+    // (SPASynthEditor.cpp) and the About panel wordmark.
+    void trackedCentredText (juce::Graphics&, const juce::Font&, const juce::String& text,
+                             juce::Rectangle<int> area, juce::Colour);
+
     // MiniFreak-style section header: SMALL CAPS title, thin rule to the
     // right, optional right-aligned readout. Returns the content area below.
     // recess: draw the rule plus the eased inner shadow rising from it (the

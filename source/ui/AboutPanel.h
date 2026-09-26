@@ -24,10 +24,11 @@ public:
     explicit AboutPanel (juce::AudioProcessor& processorForHostInfo)
         : processor (processorForHostInfo)
     {
-        wordmark.setText ("SPASYNTH", juce::dontSendNotification);
-        wordmark.setFont (juce::Font (juce::FontOptions (22.0f, juce::Font::bold)));
-        wordmark.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (wordmark);
+        // The wordmark itself is painted directly in paint() with the same
+        // draw::trackedCentredText the brand band uses (SPASynthEditor.cpp)
+        // rather than a plain bold Label, so this panel's header reads as
+        // the actual brand mark instead of small ad hoc bold text --
+        // wordmarkArea (set in resized()) is just the rect it paints into.
 
         byline.setText ("by Silverplatter Audio", juce::dontSendNotification);
         byline.setFont (metrics::smallFont());
@@ -43,9 +44,14 @@ public:
         link.setButtonText ("silverplatteraudio.com");
         link.setURL (juce::URL (websiteUrl));
         link.setFont (metrics::smallFont(), false, juce::Justification::centred);
+        // HyperlinkButton defaults to its own blue; use the theme's accent so
+        // the one clickable thing in this panel reads as part of the same
+        // accent-driven UI as the rest of the synth, not a generic web link.
+        link.setColour (juce::HyperlinkButton::textColourId, currentTheme().accent);
         addAndMakeVisible (link);
 
-        licenseLabel.setText (library::getLicenseLine(), juce::dontSendNotification);
+        licenseText = library::getLicenseLine();
+        licenseLabel.setText (licenseText, juce::dontSendNotification);
         licenseLabel.setFont (metrics::labelFont());
         licenseLabel.setJustificationType (juce::Justification::centred);
         licenseLabel.setColour (juce::Label::textColourId, currentTheme().textSecondary);
@@ -82,7 +88,7 @@ public:
         // handling regardless of which child holds focus.
         setWantsKeyboardFocus (true);
 
-        setSize (280, 240);
+        setSize (280, licenseText.isEmpty() ? 224 : 240);
     }
 
     void paint (juce::Graphics& g) override
@@ -91,19 +97,31 @@ public:
         g.fillAll (t.panel);
         g.setColour (t.seam);
         g.drawRect (getLocalBounds(), 1);
+
+        // The brand wordmark, drawn the same way the editor's brand band
+        // draws it (draw::trackedCentredText) rather than a plain bold
+        // Label -- see the ctor comment.
+        draw::trackedCentredText (g, metrics::wordmarkFont(), "SPASYNTH",
+                                  wordmarkArea, t.textPrimary);
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (14, 10);
-        wordmark.setBounds (r.removeFromTop (28));
+        wordmarkArea = r.removeFromTop (28);
         byline.setBounds (r.removeFromTop (16));
         r.removeFromTop (8);
         infoLabel.setBounds (r.removeFromTop (56));
         r.removeFromTop (4);
         link.setBounds (r.removeFromTop (20));
         r.removeFromTop (10);
-        licenseLabel.setBounds (r.removeFromTop (16));
+        // Collapse the license row's space entirely when there is no
+        // ownership stamp to show -- an empty centred Label still reserved a
+        // full row of blank space between the link and the copyright line.
+        if (licenseText.isNotEmpty())
+            licenseLabel.setBounds (r.removeFromTop (16));
+        else
+            licenseLabel.setBounds ({});
         copyrightLabel.setBounds (r.removeFromTop (16));
         juceLabel.setBounds (r.removeFromTop (16));
         r.removeFromTop (10);
@@ -184,7 +202,9 @@ private:
     static constexpr const char* websiteUrl = "https://silverplatteraudio.com";
 
     juce::AudioProcessor& processor;
-    juce::Label wordmark, byline, infoLabel, licenseLabel, copyrightLabel, juceLabel;
+    juce::Rectangle<int> wordmarkArea;
+    juce::String licenseText;
+    juce::Label byline, infoLabel, licenseLabel, copyrightLabel, juceLabel;
     juce::HyperlinkButton link;
     juce::TextButton copyButton, closeButton;
 };

@@ -53,6 +53,23 @@ void panel (juce::Graphics&, juce::Rectangle<float>)
     // module fill if that's ever needed again.
 }
 
+void trackedCentredText (juce::Graphics& g, const juce::Font& font, const juce::String& text,
+                         juce::Rectangle<int> area, juce::Colour colour)
+{
+    juce::GlyphArrangement glyphs;
+    glyphs.addLineOfText (font, text, 0.0f, 0.0f);
+
+    juce::Path ink;
+    glyphs.createPath (ink);
+    const auto box = ink.getBounds();
+    ink.applyTransform (juce::AffineTransform::translation (
+        (float) area.getCentreX() - box.getCentreX(),
+        (float) area.getCentreY() - box.getCentreY()));
+
+    g.setColour (colour);
+    g.fillPath (ink);
+}
+
 juce::Rectangle<int> sectionHeader (juce::Graphics& g, juce::Rectangle<int> bounds,
                                     const juce::String& title, const juce::String& readout,
                                     juce::Colour titleColour, bool recess)

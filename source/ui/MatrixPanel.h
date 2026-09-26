@@ -4,9 +4,20 @@
 #include "../params/ParameterRegistry.h"
 #include <set>
 #include <utility>
+#include <array>
+#include <vector>
+#include <functional>
 
 namespace spa::ui
 {
+
+// Declared here (not included from AssignOverlay.h, which includes THIS
+// header) to avoid a header cycle -- same signature, defined once in
+// SPASynthEditor.cpp. See AssignOverlay.h's declaration comment for why
+// every popup must go through this rather than PopupMenu::showMenuAsync.
+void showPopupAnchored (juce::Component& anchor, juce::PopupMenu& menu,
+                        const juce::PopupMenu::Options& options,
+                        std::function<void (int)> callback);
 
 // "None" is choice index 0 for BOTH the source and destination route choice
 // lists -- checked directly against ParameterRegistry.cpp, not assumed:
@@ -240,13 +251,22 @@ public:
             // calls listeners in add order), so routeIsComplete() sees the
             // up-to-date choice.
             row->sourceGate.box = &row->source;
-            row->sourceGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); };
             row->source.addListener (&row->sourceGate);
 
             row->destGate.box = &row->dest;
-            row->destGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); };
             row->dest.addListener (&row->destGate);
 
+            // Empty-row compaction (Mike's request): a combo pick that
+            // leaves the row fully empty pulls later rows up. Wired after
+            // the auto-fill-depth lambdas above so a row that goes EMPTY
+            // (auto-fill is a no-op there) still gets checked -- both fire
+            // on the same real user gesture.
+            row->sourceGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); maybeCompactAfterUserEdit (r); };
+            row->destGate.onUserChange = [this, r] { maybeAutoFillRouteDepth (apvts, r); maybeCompactAfterUserEdit (r); };
+
+            row->grip.owner = this;
+            row->grip.rowIndex = r;
+            content.addAndMakeVisible (row->grip);
             content.addAndMakeVisible (row->source);
             content.addAndMakeVisible (row->dest);
             content.addAndMakeVisible (row->depth);
@@ -505,9 +525,18 @@ public:
         for (auto& row : rows)
         {
             auto r = juce::Rectangle<int> (0, y, contentWidth, rowHeight).reduced (2, 3);
-            row->source.setBounds (r.removeFromLeft (contentWidth * 30 / 100));
+            row->grip.setBounds (r.removeFromLeft (rowGripWidth));
+            r.removeFromLeft (2);
+            // Percentages now apply to the width LEFT after the grip, not
+            // the full contentWidth, so the combos keep the same relative
+            // 30/38/rest split rather than being squeezed by a fixed amount
+            // subtracted from an unchanged split (comboTextFitsCellTest
+            // measures other combos, not these, but the ratio is kept
+            // deliberately consistent with the pre-grip layout anyway).
+            const auto remaining = r.getWidth();
+            row->source.setBounds (r.removeFromLeft (remaining * 30 / 100));
             r.removeFromLeft (4);
-            row->dest.setBounds (r.removeFromLeft (contentWidth * 38 / 100));
+            row->dest.setBounds (r.removeFromLeft (remaining * 38 / 100));
             r.removeFromLeft (4);
             row->depth.setBounds (r);
             y += rowHeight;
@@ -615,8 +644,67 @@ private:
         }
     };
 
+    // Grip-dots handle at the left of a row (visual language copied from
+    // DraggableTabButton -- see SPASynthLookAndFeel.cpp's comment on
+    // tabGripReserve). Left-drag vertically to reorder the row; right-click
+    // opens the "Clear row" menu (see MatrixPanel::showRowMenu). Both are
+    // routed through the owning MatrixPanel since a single grip only knows
+    // its own row index -- the actual parameter moves need every row.
+    struct RowGrip : public juce::Component
+    {
+        MatrixPanel* owner = nullptr;
+        int rowIndex = -1;
+
+        RowGrip()
+        {
+            // Same QWERTY-focus rule as every other clickable control in
+            // this panel -- see Controls.h's Knob for the full explanation.
+            setWantsKeyboardFocus (false);
+            setMouseClickGrabsKeyboardFocus (false);
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (owner == nullptr)
+                return;
+            if (e.mods.isPopupMenu())
+                owner->showRowMenu (rowIndex, *this);
+            else
+                owner->beginRowDrag (rowIndex);
+        }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (owner == nullptr || e.mods.isPopupMenu())
+                return;
+            auto* parent = getParentComponent();
+            const auto p = parent != nullptr ? parent->getLocalPoint (this, e.position)
+                                              : e.position;
+            owner->updateRowDrag ((int) p.y);
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (owner != nullptr && ! e.mods.isPopupMenu())
+                owner->endRowDrag();
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            const float x = b.getCentreX() - 1.5f;
+            const float cy = b.getCentreY();
+            constexpr float d = 1.5f, gap = 3.5f;
+            g.setColour (currentTheme().textSecondary.withAlpha (isMouseOver() ? 0.75f : 0.45f));
+            for (int col = 0; col < 2; ++col)
+                for (int row = -1; row <= 1; ++row)
+                    g.fillEllipse (x + (float) col * gap, cy + (float) row * gap - d * 0.5f, d, d);
+        }
+    };
+
     struct Row
     {
+        RowGrip grip;
         RouteComboBox source, dest;
         juce::Slider depth;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> sourceAttachment,
@@ -624,6 +712,184 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> depthAttachment;
         GestureGate sourceGate, destGate;
     };
+
+    // The three per-route parameter keys, in registry order -- see
+    // params::id::route. Kept as one array so a move/clear/compact touches
+    // whatever the registry defines, not a hardcoded pair, per Mike's
+    // instruction to read the registry for the full set.
+    static constexpr const char* routeKeys[] = { params::id::route::source,
+                                                  params::id::route::dest,
+                                                  params::id::route::depth };
+    static constexpr int numRouteKeys = (int) (sizeof (routeKeys) / sizeof (routeKeys[0]));
+
+    struct RouteSnapshot { std::array<float, numRouteKeys> norm {}; };
+
+    RouteSnapshot readRouteSnapshot (int r) const
+    {
+        RouteSnapshot s;
+        for (int k = 0; k < numRouteKeys; ++k)
+        {
+            auto* p = apvts.getParameter (params::id::routeParam (r, routeKeys[k]));
+            s.norm[(size_t) k] = p != nullptr ? p->getValue() : 0.0f;
+        }
+        return s;
+    }
+
+    void writeRouteSnapshot (int r, const RouteSnapshot& s)
+    {
+        for (int k = 0; k < numRouteKeys; ++k)
+        {
+            auto* p = apvts.getParameter (params::id::routeParam (r, routeKeys[k]));
+            if (p == nullptr)
+                continue;
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (s.norm[(size_t) k]);
+            p->endChangeGesture();
+        }
+    }
+
+    void copyRoute (int dst, int src) { writeRouteSnapshot (dst, readRouteSnapshot (src)); }
+
+    bool isRouteEmpty (int r) const
+    {
+        auto* srcP = apvts.getParameter (params::id::routeParam (r, params::id::route::source));
+        auto* dstP = apvts.getParameter (params::id::routeParam (r, params::id::route::dest));
+        if (srcP == nullptr || dstP == nullptr)
+            return true;
+        const int s = (int) srcP->convertFrom0to1 (srcP->getValue());
+        const int d = (int) dstP->convertFrom0to1 (dstP->getValue());
+        return s == kNoneRouteChoiceIndex && d == kNoneRouteChoiceIndex;
+    }
+
+    // Writes the canonical blank route (both choices None, depth back to its
+    // registry default of 0) -- used both by "Clear row" and by compaction's
+    // tail cleanup.
+    void clearRoute (int r)
+    {
+        for (int half = 0; half < 2; ++half)
+        {
+            const auto key = half == 0 ? params::id::route::source : params::id::route::dest;
+            auto* p = apvts.getParameter (params::id::routeParam (r, key));
+            if (p == nullptr)
+                continue;
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 ((float) kNoneRouteChoiceIndex));
+            p->endChangeGesture();
+        }
+        auto* depthP = apvts.getParameter (params::id::routeParam (r, params::id::route::depth));
+        if (depthP != nullptr)
+        {
+            depthP->beginChangeGesture();
+            depthP->setValueNotifyingHost (depthP->convertTo0to1 (0.0f));
+            depthP->endChangeGesture();
+        }
+    }
+
+    // Moves route `from`'s full parameter set (source/dest/depth, moved
+    // together, never independently -- see the Row struct) to position `to`,
+    // shifting whatever sits between up or down by one. Pure parameter
+    // writes via setValueNotifyingHost with begin/endChangeGesture, exactly
+    // like any other user edit, so presets/sessions/undo/host automation see
+    // ordinary changes -- nothing here is DSP-aware, and the DSP sums all
+    // 16 routes regardless of slot, so this can never change the sound
+    // (routeOrderNeverChangesSoundTest pins that).
+    void moveRoute (int from, int to)
+    {
+        if (from == to || from < 0 || to < 0
+            || from >= params::numModRoutes || to >= params::numModRoutes)
+            return;
+
+        const auto saved = readRouteSnapshot (from);
+        if (from < to)
+            for (int i = from; i < to; ++i)
+                copyRoute (i, i + 1);
+        else
+            for (int i = from; i > to; --i)
+                copyRoute (i, i - 1);
+        writeRouteSnapshot (to, saved);
+        content.repaint();
+    }
+
+    // Called after any DIRECT user edit that might have just made row `r`
+    // fully empty (a combo pick to None, or "Clear row") -- never from
+    // preset/session load or host automation, which write via
+    // apvts.replaceState()/setValueNotifyingHost() with no user gesture and
+    // must leave a saved gap exactly where it was (Mike's explicit
+    // requirement). Pulls every later non-empty row up to close the gap,
+    // pushing the resulting empties to the bottom.
+    void maybeCompactAfterUserEdit (int r)
+    {
+        if (! isRouteEmpty (r))
+            return;
+
+        std::vector<RouteSnapshot> nonEmpty;
+        for (int i = r + 1; i < params::numModRoutes; ++i)
+            if (! isRouteEmpty (i))
+                nonEmpty.push_back (readRouteSnapshot (i));
+
+        int pos = r;
+        for (auto& snap : nonEmpty)
+            writeRouteSnapshot (pos++, snap);
+        for (int i = pos; i < params::numModRoutes; ++i)
+            clearRoute (i);
+
+        content.repaint();
+    }
+
+    void showRowMenu (int r, juce::Component& anchor)
+    {
+        juce::PopupMenu menu;
+        menu.addItem ("Clear row", [this, r]
+        {
+            clearRoute (r);
+            maybeCompactAfterUserEdit (r);
+        });
+        showPopupAnchored (anchor, menu, juce::PopupMenu::Options().withTargetComponent (&anchor), nullptr);
+    }
+
+    void beginRowDrag (int row)
+    {
+        dragging = true;
+        dragFromRow = row;
+        dragToRow = row;
+        content.repaint();
+    }
+
+    void updateRowDrag (int contentY)
+    {
+        if (! dragging)
+            return;
+        const int target = juce::jlimit (0, (int) rows.size() - 1, contentY / rowHeight);
+        if (target != dragToRow)
+        {
+            dragToRow = target;
+            content.repaint();
+        }
+    }
+
+    void endRowDrag()
+    {
+        if (! dragging)
+            return;
+        dragging = false;
+        const auto from = dragFromRow, to = dragToRow;
+        dragFromRow = dragToRow = -1;
+        if (from != to)
+            moveRoute (from, to);
+        else
+            content.repaint();
+    }
+
+    // Drop-indicator line at the boundary the dragged row would land on --
+    // painted over children so it reads above the combo boxes/slider.
+    void paintDragIndicator (juce::Graphics& g) const
+    {
+        if (! dragging || dragToRow < 0)
+            return;
+        const int boundary = dragToRow * rowHeight + (dragToRow > dragFromRow ? rowHeight : 0);
+        g.setColour (currentTheme().accentMod);
+        g.fillRect (0, boundary - 1, content.getWidth(), 2);
+    }
 
     // Plain TextButton has no virtual double-click hook of its own; this adds
     // one without touching its click-toggling (disabled -- see the
@@ -666,6 +932,7 @@ private:
     }
 
     static constexpr int rowHeight = 25;
+    static constexpr int rowGripWidth = 14;
 
     // Scrolls the viewport the minimum amount needed to bring `route`'s row
     // fully into view -- a no-op if it's already visible, so a reveal of an
@@ -796,7 +1063,11 @@ private:
         {
             owner->paintRevealHighlights (g);
         }
-        void paintOverChildren (juce::Graphics& g) override { owner->paintInertRows (g); }
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            owner->paintInertRows (g);
+            owner->paintDragIndicator (g);
+        }
     };
 
     juce::AudioProcessorValueTreeState& apvts;
@@ -810,7 +1081,27 @@ private:
     std::set<int> revealedRoutes;
     InertGateWatcher inertWatcher;
     int contentRepaintCountForTest = 0;
+    bool dragging = false;
+    int dragFromRow = -1, dragToRow = -1;
 
+public:
+    // Test hooks for the drag-reorder feature -- exercise exactly what a
+    // real grip drag does (moveRoute) or observe the live drag state,
+    // without needing real mouse-drag timing (same rationale as
+    // simulateClick/simulateUserComboPick above).
+    void moveRouteForTest (int from, int to) { moveRoute (from, to); }
+    void clearRouteForTest (int r) { clearRoute (r); maybeCompactAfterUserEdit (r); }
+    bool isRouteEmptyForTest (int r) const { return isRouteEmpty (r); }
+    juce::Component& getGripForTest (int route) const { return rows[(size_t) route]->grip; }
+    void beginRowDragForTest (int row) { beginRowDrag (row); }
+    void updateRowDragForTest (int contentY) { updateRowDrag (contentY); }
+    void endRowDragForTest() { endRowDrag(); }
+    bool isDraggingForTest() const { return dragging; }
+    int getDragFromRowForTest() const { return dragFromRow; }
+    int getDragToRowForTest() const { return dragToRow; }
+    void showRowMenuForTest (int r) { showRowMenu (r, rows[(size_t) r]->grip); }
+
+private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MatrixPanel)
 };
 

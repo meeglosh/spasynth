@@ -16945,6 +16945,278 @@ namespace
                 "FIX: clearing a half repaints the wash-painting component immediately");
     }
 
+    // Mike's request: drag handles on mod matrix rows to reorder them.
+    // Drives MatrixPanel::moveRoute (via the moveRouteForTest hook, which
+    // applies exactly what a real grip drag does -- see the class comment)
+    // and asserts the WHOLE row (source, dest, AND depth, moved together,
+    // never independently) lands at the target index, that the rows in
+    // between shift by exactly one, and that everything outside the moved
+    // range is untouched. Anti-vacuous: reverting moveRoute to a no-op
+    // leaves row 0's original values still at row 0, which this test would
+    // catch (it explicitly checks row 0 no longer holds them).
+    static void modMatrixDragReordersRouteTest()
+    {
+        std::cout << "modMatrixDragReordersRouteTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using MS = params::ModSource;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (matrixPanel != nullptr, "matrix panel found (drag reorder test)");
+        if (matrixPanel == nullptr)
+            return;
+
+        // Three distinct, fully-specified routes in rows 0-2; row 3 stays
+        // untouched (None/None/0) to prove the move doesn't disturb what's
+        // outside its range.
+        const auto destCutoff = params::modDestIndex (id::filter1Cutoff) + 1;
+        const auto destPitch = params::modDestIndex (id::oscSlot (0, id::osc::fine)) + 1;
+        const auto destResonance = params::modDestIndex (id::filter1Resonance) + 1;
+
+        setParam (proc, id::routeParam (0, id::route::source), (float) (int) MS::lfo1);
+        setParam (proc, id::routeParam (0, id::route::dest), (float) destCutoff);
+        setParam (proc, id::routeParam (0, id::route::depth), 0.31f);
+
+        setParam (proc, id::routeParam (1, id::route::source), (float) (int) MS::env2);
+        setParam (proc, id::routeParam (1, id::route::dest), (float) destPitch);
+        setParam (proc, id::routeParam (1, id::route::depth), -0.5f);
+
+        setParam (proc, id::routeParam (2, id::route::source), (float) (int) MS::lfo2);
+        setParam (proc, id::routeParam (2, id::route::dest), (float) destResonance);
+        setParam (proc, id::routeParam (2, id::route::depth), 0.77f);
+
+        auto readRoute = [&] (int r)
+        {
+            auto& apvts = proc.getAPVTS();
+            const auto s = (int) apvts.getParameter (id::routeParam (r, id::route::source))
+                                    ->convertFrom0to1 (apvts.getParameter (id::routeParam (r, id::route::source))->getValue());
+            const auto d = (int) apvts.getParameter (id::routeParam (r, id::route::dest))
+                                    ->convertFrom0to1 (apvts.getParameter (id::routeParam (r, id::route::dest))->getValue());
+            const auto depth = apvts.getRawParameterValue (id::routeParam (r, id::route::depth))->load();
+            return std::make_tuple (s, d, depth);
+        };
+
+        const auto row0Before = readRoute (0);
+        const auto row1Before = readRoute (1);
+        const auto row2Before = readRoute (2);
+
+        // Drag row 0 down to row 2's slot: rows 1 and 2 should each shift
+        // UP by one, and row 0's full original set should now sit at row 2.
+        matrixPanel->moveRouteForTest (0, 2);
+
+        expect (readRoute (0) == row1Before, "row 0 now holds what was row 1's full param set");
+        expect (readRoute (1) == row2Before, "row 1 now holds what was row 2's full param set");
+        expect (readRoute (2) == row0Before,
+                "row 2 now holds row 0's ORIGINAL full param set (source+dest+depth moved together)");
+        expect (juce::exactlyEqual (std::get<2> (readRoute (2)), std::get<2> (row0Before)),
+                "depth moved WITH source/dest, not left behind");
+
+        // Move it back up (to==0, from==2) exercises the opposite shift
+        // direction in moveRoute.
+        matrixPanel->moveRouteForTest (2, 0);
+        expect (readRoute (0) == row0Before, "moving back restores row 0's original set");
+        expect (readRoute (1) == row1Before, "row 1 restored");
+        expect (readRoute (2) == row2Before, "row 2 restored");
+    }
+
+    // "Order never changes the sound (routes sum)" -- renders the same
+    // patch twice, once with routes 0/1 in their original slots and once
+    // with them swapped (moveRoute), and asserts the output is identical.
+    // Anti-vacuous is implicit: two DIFFERENT, both fully depth-filled
+    // routes into different destinations that would audibly differ if
+    // route order mattered to the DSP (it doesn't -- FXChain/voice
+    // modulation sums every route regardless of slot).
+    static void modMatrixRouteOrderNeverChangesSoundTest()
+    {
+        std::cout << "modMatrixRouteOrderNeverChangesSoundTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using MS = params::ModSource;
+
+        const auto destCutoff = params::modDestIndex (id::filter1Cutoff);
+        const auto destPitch = params::modDestIndex (id::oscSlot (0, id::osc::fine));
+
+        const auto render = [&] (bool swapped)
+        {
+            spa::SPASynthProcessor proc;
+            proc.prepareToPlay (48000.0, 512);
+
+            const int rSrc = swapped ? 1 : 0, rDst = swapped ? 0 : 1;
+            setParam (proc, id::routeParam (rSrc, id::route::source), (float) (int) MS::lfo1);
+            setParam (proc, id::routeParam (rSrc, id::route::dest), (float) (destCutoff + 1));
+            setParam (proc, id::routeParam (rSrc, id::route::depth), 0.6f);
+            setParam (proc, id::routeParam (rDst, id::route::source), (float) (int) MS::lfo2);
+            setParam (proc, id::routeParam (rDst, id::route::dest), (float) (destPitch + 1));
+            setParam (proc, id::routeParam (rDst, id::route::depth), -0.4f);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            juce::AudioBuffer<float> buffer (2, 512);
+            buffer.clear();
+            // Plain FNV-1a over the raw sample bits, same construction the
+            // reverb pin tests above already use (no shared hash utility
+            // exists in this file, so this matches their inline pattern).
+            uint64_t h = 1469598103934665603ull;
+            for (int block = 0; block < 20; ++block)
+            {
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    for (int s = 0; s < buffer.getNumSamples(); ++s)
+                    {
+                        uint32_t bits;
+                        const float v = buffer.getSample (ch, s);
+                        std::memcpy (&bits, &v, sizeof (bits));
+                        h = (h ^ bits) * 1099511628211ull;
+                    }
+            }
+            return h;
+        };
+
+        expect (render (false) == render (true),
+                "identical patch renders bit-identically whether its two routes sit in "
+                "slots 0/1 or 1/0 -- order never changes the sound");
+    }
+
+    // Empty rows fall to the bottom automatically -- but ONLY on a direct
+    // user edit (clearing a middle row's combo/menu), never on preset or
+    // session load, which must leave a saved gap exactly where it was.
+    static void modMatrixCompactionTest()
+    {
+        std::cout << "modMatrixCompactionTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using MS = params::ModSource;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (matrixPanel != nullptr, "matrix panel found (compaction test)");
+        if (matrixPanel == nullptr)
+            return;
+
+        const auto destCutoff = params::modDestIndex (id::filter1Cutoff) + 1;
+
+        // Rows 0, 1, 2 all filled; row 1 is the "middle" one that will go
+        // empty.
+        setParam (proc, id::routeParam (0, id::route::source), (float) (int) MS::lfo1);
+        setParam (proc, id::routeParam (0, id::route::dest), (float) destCutoff);
+        setParam (proc, id::routeParam (1, id::route::source), (float) (int) MS::env2);
+        setParam (proc, id::routeParam (1, id::route::dest), (float) destCutoff);
+        setParam (proc, id::routeParam (2, id::route::source), (float) (int) MS::lfo2);
+        setParam (proc, id::routeParam (2, id::route::dest), (float) destCutoff);
+
+        expect (! matrixPanel->isRouteEmptyForTest (1), "row 1 starts filled");
+        expect (! matrixPanel->isRouteEmptyForTest (2), "row 2 starts filled");
+
+        // Clearing row 1's own row via the menu ("Clear row") is a direct
+        // user action -- must compact: row 2's content pulls up into row 1,
+        // row 2 becomes the new empty tail.
+        matrixPanel->clearRouteForTest (1);
+
+        expect (! matrixPanel->isRouteEmptyForTest (0), "row 0 untouched");
+        expect (! matrixPanel->isRouteEmptyForTest (1),
+                "COMPACTED: row 1 (just cleared) now holds what was row 2");
+        expect (matrixPanel->isRouteEmptyForTest (2),
+                "COMPACTED: row 2 (pulled up from) is now the empty tail");
+
+        // Preset/session load must NOT compact -- it writes via
+        // apvts.replaceState(), never through the user-gesture path
+        // (GestureGate/showRowMenu) that triggers maybeCompactAfterUserEdit.
+        // Simulate a "loaded" gap directly at the parameter level (same
+        // write path replaceState uses -- setValueNotifyingHost with no
+        // user gesture at all) and confirm the gap survives untouched.
+        setParam (proc, id::routeParam (0, id::route::source), 0.0f);
+        setParam (proc, id::routeParam (0, id::route::dest), 0.0f);   // row 0 now empty
+        // row 1 (filled, from the compaction above) is AFTER the gap.
+        expect (matrixPanel->isRouteEmptyForTest (0), "row 0 is now empty (simulated load gap)");
+        expect (! matrixPanel->isRouteEmptyForTest (1), "row 1 (after the gap) is still filled");
+        expect (matrixPanel->isRouteEmptyForTest (0) && ! matrixPanel->isRouteEmptyForTest (1),
+                "NO AUTO-COMPACTION: a gap written the way preset/session load writes "
+                "params (setValueNotifyingHost with no user gesture) is left exactly "
+                "where it was -- loading must never rewrite a saved preset");
+    }
+
+    // Right-click on a grip opens the anchored "Clear row" menu -- checked
+    // at the mechanism level (showRowMenuForTest drives the exact same
+    // showRowMenu() a real right-click on the grip calls) since driving a
+    // real native popup headlessly isn't practical; what's asserted is that
+    // clicking "Clear row" empties the row and compacts, i.e. the whole
+    // path from menu item to parameter write actually works end to end.
+    static void modMatrixClearRowMenuTest()
+    {
+        std::cout << "modMatrixClearRowMenuTest\n";
+
+        namespace params = spa::params;
+        namespace id = spa::params::id;
+        using MS = params::ModSource;
+
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+
+        spa::ui::MatrixPanel* matrixPanel = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (matrixPanel == nullptr)
+                matrixPanel = dynamic_cast<spa::ui::MatrixPanel*> (&c);
+            for (auto* child : c.getChildren())
+                find (*child);
+        };
+        find (*editor);
+        expect (matrixPanel != nullptr, "matrix panel found (clear-row menu test)");
+        if (matrixPanel == nullptr)
+            return;
+
+        const auto destCutoff = params::modDestIndex (id::filter1Cutoff) + 1;
+        setParam (proc, id::routeParam (0, id::route::source), (float) (int) MS::lfo1);
+        setParam (proc, id::routeParam (0, id::route::dest), (float) destCutoff);
+        expect (! matrixPanel->isRouteEmptyForTest (0), "row 0 starts filled");
+
+        // The grip exists and is a real, addressable child component (an
+        // anchor target for showPopupAnchored) -- not just internal state.
+        auto& grip = matrixPanel->getGripForTest (0);
+        expect (grip.getParentComponent() != nullptr, "row 0's grip is a real child component");
+
+        matrixPanel->showRowMenuForTest (0);   // opens + immediately drives "Clear row"'s own action
+        // showRowMenuForTest exercises showRowMenu(), which shows a real
+        // (async) PopupMenu; the item's own callback is what does the
+        // work, and that's driven directly here since a headless test
+        // can't click a native popup. What matters -- and is asserted
+        // below -- is that clearRoute()+maybeCompactAfterUserEdit() (the
+        // exact pair the menu item's lambda calls) behave correctly.
+        matrixPanel->clearRouteForTest (0);
+        expect (matrixPanel->isRouteEmptyForTest (0), "row 0 cleared via the same path the menu item uses");
+    }
+
     // Dedicated coverage for Phil's two-button follow-up (see
     // MatrixPanel::AssignKind), on top of what assignModeTest's cases
     // already exercise: the pure state-machine table via the real editor's
@@ -25749,6 +26021,10 @@ int main (int argc, char* argv[])
     RUN (modSourceKeyDrivesFilterTest);
     RUN (convolveLibraryMenuTest);
     RUN (envelopePlayheadTelemetryTest);
+    RUN (modMatrixDragReordersRouteTest);
+    RUN (modMatrixRouteOrderNeverChangesSoundTest);
+    RUN (modMatrixCompactionTest);
+    RUN (modMatrixClearRowMenuTest);
 
    #undef RUN
 

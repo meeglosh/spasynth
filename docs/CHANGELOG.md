@@ -22,6 +22,11 @@
   then release, following the real modulated envelope rather than just the
   raw knob settings. Held notes each get their own dot, with the most
   recently played note shown brightest. This came from feedback.
+- Mod matrix rows now have a drag handle so you can reorder them, instead
+  of ending up with empty rows stuck in the middle and scrolling past them
+  for nothing. Clearing a row now automatically pulls the rows below it up
+  to close the gap, and right-clicking a row offers a quick "Clear row"
+  option. This came from feedback.
 
 ## 1.0.25
 

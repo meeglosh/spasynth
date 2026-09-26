@@ -15,6 +15,29 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_XCODE_GENERATE_SCHEME OFF)
 
+# Short git commit + build date, for the About panel. Resolved at CONFIGURE
+# time (not build time) so a CI tarball/checkout with no .git directory (or
+# no git binary at all) still configures and builds cleanly -- it just shows
+# "unknown" rather than failing. Re-run cmake to pick up a new commit; this
+# intentionally does NOT re-run on every build (that would need a
+# custom_command + always-stale marker, and a build-time-accurate commit
+# isn't worth that complexity for an About box).
+find_package(Git QUIET)
+set(SPASYNTH_GIT_COMMIT "unknown")
+if(Git_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE SPASYNTH_GIT_COMMIT_OUT
+        RESULT_VARIABLE SPASYNTH_GIT_RESULT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(SPASYNTH_GIT_RESULT EQUAL 0 AND NOT SPASYNTH_GIT_COMMIT_OUT STREQUAL "")
+        set(SPASYNTH_GIT_COMMIT "${SPASYNTH_GIT_COMMIT_OUT}")
+    endif()
+endif()
+string(TIMESTAMP SPASYNTH_BUILD_DATE "%Y-%m-%d" UTC)
+
 # Universal binary is required for release; keep it opt-in for day-to-day
 # development because it doubles compile time.
 option(SPASYNTH_UNIVERSAL_BINARY "Build macOS universal binary (arm64 + x86_64)" OFF)
@@ -156,7 +179,9 @@ target_compile_definitions(SPASynth PRIVATE
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
-    SPASYNTH_VERSION="${PROJECT_VERSION}")
+    SPASYNTH_VERSION="${PROJECT_VERSION}"
+    SPASYNTH_GIT_COMMIT="${SPASYNTH_GIT_COMMIT}"
+    SPASYNTH_BUILD_DATE="${SPASYNTH_BUILD_DATE}")
 
 # Diagnostic-only, default OFF: when ON, JUCE flashes every actually-
 # repainted screen region in a random colour on top of the real paint (see
@@ -200,7 +225,9 @@ if(SPASYNTH_BUILD_TESTS)
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_MODAL_LOOPS_PERMITTED=1
-        SPASYNTH_VERSION="${PROJECT_VERSION}")
+        SPASYNTH_VERSION="${PROJECT_VERSION}"
+        SPASYNTH_GIT_COMMIT="${SPASYNTH_GIT_COMMIT}"
+        SPASYNTH_BUILD_DATE="${SPASYNTH_BUILD_DATE}")
     target_link_libraries(SPASynthTests
         PRIVATE
             SPAAssets

@@ -117,6 +117,15 @@ public:
     // SPASynthEditor.cpp.
     void revealMatrixRoutes (int destIndex) override;
 
+    // "About SPASynth..." (logo settings menu). Public, like
+    // applyMidiLearnMenuResult above, so tests can drive the exact wiring
+    // the menu item calls rather than fighting a real async PopupMenu to
+    // click a specific item in a headless run.
+    void showAboutPanel();
+    // Test-only: the panel this session most recently opened, or nullptr if
+    // it was never opened or has since been dismissed/deleted.
+    juce::Component* getAboutPanelForTest() const { return openAboutPanel.getComponent(); }
+
     void pollMidiLearnBadgeNow() { timerCallback(); }
     juce::String getMidiLearnBadgeText() const { return midiLearnBadge.getText(); }
     juce::Rectangle<int> getMidiLearnBadgeBounds() const { return midiLearnBadge.getBounds(); }
@@ -266,6 +275,10 @@ private:
     // are still around (open or dismissed-not-deleted) when the editor
     // itself goes away. Dead entries are pruned on insert.
     juce::Array<juce::Component::SafePointer<juce::Component>> openVoicePanels;
+    // "About SPASynth..." call-out. Read-only (no APVTS attachments), so it
+    // has none of VoicePanel's dangling-attachment risk on editor teardown;
+    // tracked as a SafePointer purely for getAboutPanelForTest().
+    juce::Component::SafePointer<juce::Component> openAboutPanel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideAttachment;
     // GLIDE knob only means anything once glideMode is off "Off".
     std::unique_ptr<DependentEnable> glideTimeEnable;

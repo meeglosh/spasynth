@@ -4,6 +4,7 @@
 #include "EqEditor.h"
 #include "LimiterDisplay.h"
 #include "NativeWindowShift.h"
+#include "AboutPanel.h"
 
 #include "BinaryData.h"
 
@@ -2467,11 +2468,79 @@ void ContentComponent::showSettingsMenu()
     m.addSeparator();
     m.addItem ("Reset to Default", [safe] { if (safe != nullptr) safe->processor.getPresetManager().resetToDefault(); });
     m.addItem ("Clear All MIDI Learn", [safe] { if (safe != nullptr) safe->processor.getMidiLearn().clearAll(); });
+    m.addSeparator();
+    m.addItem ("About SPASynth...", [safe] { if (safe != nullptr) safe->showAboutPanel(); });
 
     showPopupAnchored (m, juce::PopupMenu::Options()
                             .withTargetComponent (&settingsButton)
                             .withMinimumWidth (190),
                        nullptr);
+}
+
+void ContentComponent::showAboutPanel()
+{
+    juce::Component::SafePointer<ContentComponent> safe (this);
+    auto panel = std::make_unique<AboutPanel> (processor);
+    // The Close button's own dismiss path -- Esc and click-outside are
+    // handled by CallOutBox itself (see AboutPanel.h) and don't go through
+    // this, which is why the actual "hand focus back to the keyboard" work
+    // below lives in a DismissWatcher keyed off the call-out's own
+    // visibility, not in this callback -- exactly VoicePanel's pattern
+    // (onDismissedCallback there is likewise NOT where the focus hand-back
+    // for Esc/click-outside happens).
+    panel->onCloseRequested = [safe]
+    {
+        if (safe != nullptr)
+            if (auto* callout = safe->openAboutPanel.getComponent())
+                if (auto* box = dynamic_cast<juce::CallOutBox*> (callout->getParentComponent()))
+                    box->dismiss();
+    };
+
+    // Parented to the editor shell -- see callOutParent()'s comment (the
+    // same AU EditorCompHolder::deleteAllChildren() hazard VoicePanel and
+    // the accent picker avoid this way).
+    if (auto* top = callOutParent())
+    {
+        auto* panelRaw = panel.get();
+        auto& callout = juce::CallOutBox::launchAsynchronously (
+            std::move (panel),
+            top->getLocalArea (&settingsButton, settingsButton.getLocalBounds()),
+            top);
+        openAboutPanel = juce::Component::SafePointer<juce::Component> (panelRaw);
+        // Same reasoning as the VOICE call-out's own border click guard.
+        callout.setMouseClickGrabsKeyboardFocus (false);
+
+        // Hand focus back to the on-screen keyboard the instant the
+        // call-out is dismissed, however that happened (Esc, click
+        // outside, or the Close button) -- mirrors the VOICE call-out's
+        // DismissWatcher exactly (see the VOICE button's onClick), which
+        // watches the CALL-OUT's own visibility rather than the panel's,
+        // since CallOutBox::dismiss() flips that synchronously well before
+        // the deferred delete.
+        struct DismissWatcher final : private juce::ComponentListener
+        {
+            DismissWatcher (juce::CallOutBox& box, juce::Component::SafePointer<ContentComponent> c)
+                : content (c) { box.addComponentListener (this); }
+            void componentVisibilityChanged (juce::Component& c) override
+            {
+                if (! c.isVisible())
+                {
+                    if (auto* live = content.getComponent())
+                        if (live->keyboardVisible)
+                            live->keyboard.grabKeyboardFocus();
+                    c.removeComponentListener (this);
+                    delete this;
+                }
+            }
+            void componentBeingDeleted (juce::Component& c) override
+            {
+                c.removeComponentListener (this);
+                delete this;
+            }
+            juce::Component::SafePointer<ContentComponent> content;
+        };
+        new DismissWatcher (callout, safe);
+    }
 }
 
 void ContentComponent::setKeyboardVisible (bool shouldShow)

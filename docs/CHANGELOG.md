@@ -2,6 +2,10 @@
 
 ## 1.0.26
 
+- Added "About SPASynth..." to the logo settings menu. It shows the version,
+  build date and commit, which format is running (AU, VST3 or Standalone),
+  a link to silverplatteraudio.com, and a "Copy Info" button for pasting a
+  quick summary into a support message.
 - The filter's KEYTRK knob now reads as a percentage, with a tooltip
   explaining what it does: 100% means the cutoff follows the note you play
   exactly, one octave up for every octave you play higher; C3 is left

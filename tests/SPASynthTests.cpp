@@ -19,6 +19,7 @@
 #include "params/Randomizer.h"
 #include "ui/SPASynthEditor.h"
 #include "ui/EqEditor.h"
+#include "ui/AboutPanel.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -24971,6 +24972,164 @@ static void envelopePlayheadTelemetryTest()
     setParam (proc, id::ampRelease, 0.0f);
 }
 
+    // "About SPASynth..." (1.0.26). Covers: the settings-menu item opens the
+    // panel parented to callOutParent() (never getTopLevelComponent(), same
+    // reasoning as every other pop-over here); the panel shows the version
+    // string and the link's URL; Esc/Close dismiss it; "Copy Info" produces
+    // text containing version + commit + format; the panel never steals
+    // keyboard focus from the on-screen keyboard component; and closing the
+    // editor with the panel open does not crash, mirroring
+    // voicePanelEditorCloseTest's HostHolder (deleteAllChildren, the same
+    // hazard callOutParent() exists to avoid).
+    static void aboutPanelTest()
+    {
+        std::cout << "aboutPanelTest\n";
+
+        const auto pumpFor = [] (int ms)
+        {
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+            while (juce::Time::getMillisecondCounter() < deadline)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        };
+        const auto findCallout = [] (juce::Component& root) -> juce::CallOutBox*
+        {
+            juce::CallOutBox* found = nullptr;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                if (found == nullptr) found = dynamic_cast<juce::CallOutBox*> (&c);
+                for (auto* child : c.getChildren()) walk (*child);
+            };
+            walk (root);
+            return found;
+        };
+
+        auto procPtr = std::make_unique<spa::SPASynthProcessor>();
+        auto& proc = *procPtr;
+        proc.prepareToPlay (48000.0, 512);
+        // Keyboard visible from the start (same technique modAssignFocusTest
+        // uses) so there is a real focus target to check never gets stolen.
+        proc.getAPVTS().state.setProperty ("uiKeyboardVisible", true, nullptr);
+
+        // Host-style holder, modelled on the JUCE AU wrapper's
+        // EditorCompHolder (see voicePanelEditorCloseTest's identical
+        // comment): its destructor deleteAllChildren()s, so anything
+        // wrongly parented to getTopLevelComponent() gets `delete`d here.
+        struct HostHolder : juce::Component
+        {
+            ~HostHolder() override { deleteAllChildren(); }
+        };
+        auto holder = std::make_unique<HostHolder>();
+        auto* editorRaw = proc.createEditor();
+        editorRaw->setSize (spa::ui::metrics::baseWidth,
+                            spa::ui::metrics::baseHeight + spa::ui::metrics::keyboardStripHeight);
+        holder->addAndMakeVisible (editorRaw);
+        holder->setSize (editorRaw->getWidth(), editorRaw->getHeight());
+        holder->addToDesktop (0);
+        holder->setVisible (true);
+        pumpFor (150);
+
+        auto* content = dynamic_cast<spa::ui::ContentComponent*> (editorRaw->getChildComponent (0));
+        expect (content != nullptr, "editor's ContentComponent found");
+        if (content == nullptr) { holder.reset(); return; }
+
+        juce::MidiKeyboardComponent* keyboard = nullptr;
+        std::function<void (juce::Component&)> findKeyboard = [&] (juce::Component& c)
+        {
+            if (keyboard == nullptr)
+                keyboard = dynamic_cast<juce::MidiKeyboardComponent*> (&c);
+            for (auto* child : c.getChildren()) findKeyboard (*child);
+        };
+        findKeyboard (*editorRaw);
+        expect (keyboard != nullptr, "on-screen keyboard found");
+
+        bool gotRealFocus = false;
+        if (keyboard != nullptr)
+        {
+            keyboard->grabKeyboardFocus();
+            pumpFor (50);
+            gotRealFocus = keyboard->hasKeyboardFocus (false);
+            if (! gotRealFocus)
+                std::cout << "  ..   couldn't obtain real OS keyboard focus in this "
+                             "environment -- skipping the focus-retention checks\n";
+        }
+
+        // Drive the exact call the "About SPASynth..." menu item invokes
+        // (public for this reason -- see its declaration comment), rather
+        // than fighting a real async PopupMenu to click one specific item
+        // headlessly (same rationale as applyMidiLearnMenuResult).
+        content->showAboutPanel();
+        pumpFor (100);
+
+        auto* panelComp = content->getAboutPanelForTest();
+        expect (panelComp != nullptr, "About panel opened");
+        auto* about = dynamic_cast<spa::ui::AboutPanel*> (panelComp);
+        expect (about != nullptr, "opened panel is an AboutPanel");
+
+        auto* callout = findCallout (*editorRaw);
+        expect (callout != nullptr, "About panel's call-out found in the editor tree");
+        expect (callout != nullptr && callout->getParentComponent() == editorRaw,
+                "About panel's call-out is parented to the editor shell "
+                "(callOutParent()), not the host's top-level holder");
+
+        if (about != nullptr)
+        {
+            const auto versionText = about->getVersionTextForTest();
+            expect (versionText.contains (SPASYNTH_VERSION),
+                    "panel shows the version string");
+            expect (about->getLinkUrlForTest() == "https://silverplatteraudio.com",
+                    "panel's link points at silverplatteraudio.com");
+
+            const auto clip = about->buildClipboardText();
+            expect (clip.contains (SPASYNTH_VERSION), "copied text contains the version");
+            expect (clip.contains (SPASYNTH_GIT_COMMIT), "copied text contains the commit");
+            // In this headless test harness the processor is never actually
+            // wrapped by a real AU/VST3/Standalone host, so wrapperType is
+            // wrapperType_Undefined -- AboutPanel correctly reports
+            // "Unknown" rather than guessing. What matters here is that a
+            // "Format: ..." line is present at all; the real value is
+            // exercised by the plugin/standalone builds this test can't run.
+            expect (clip.contains ("Format: "), "copied text contains a running-format line");
+        }
+
+        // The panel is deliberately left focusable while its modal call-out
+        // is open (CallOutBox needs a real target the instant it opens,
+        // same reasoning as VoicePanel's ctor comment) -- but once it is
+        // dismissed, real focus must land back on the on-screen keyboard,
+        // never stay stranded on a dead call-out. Esc dismissal is handled
+        // by CallOutBox itself (see AboutPanel.h); drive it the same way
+        // through the real callout so that path is what's under test.
+        if (callout != nullptr)
+        {
+            juce::KeyPress esc (juce::KeyPress::escapeKey);
+            callout->keyPressed (esc);
+            pumpFor (150);
+            expect (findCallout (*editorRaw) == nullptr, "Esc dismissed the About panel");
+            if (gotRealFocus && keyboard != nullptr)
+                expect (keyboard->hasKeyboardFocus (false),
+                        "on-screen keyboard regains real focus after Esc dismisses the panel");
+        }
+
+        // Reopen and dismiss via the Close button's own callback path.
+        content->showAboutPanel();
+        pumpFor (100);
+        if (auto* about2 = dynamic_cast<spa::ui::AboutPanel*> (content->getAboutPanelForTest()))
+            if (about2->onCloseRequested)
+                about2->onCloseRequested();
+        pumpFor (150);
+        expect (findCallout (*editorRaw) == nullptr, "Close button dismissed the About panel");
+        if (gotRealFocus && keyboard != nullptr)
+            expect (keyboard->hasKeyboardFocus (false),
+                    "on-screen keyboard regains real focus after Close dismisses the panel");
+
+        // Reopen once more and close the whole editor with it still open --
+        // must not crash (mirrors voicePanelEditorCloseTest).
+        content->showAboutPanel();
+        pumpFor (60);
+        holder.reset();
+        pumpFor (300);
+        expect (true, "editor closed with the About panel open");
+    }
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -25792,6 +25951,42 @@ int main (int argc, char* argv[])
         return 0;
     }
 
+    // Visual review for the "About SPASynth..." panel (1.0.26): opens it via
+    // the same public showAboutPanel() the settings-menu item calls, same
+    // pattern as --snapshot-assign.
+    if (argc >= 3 && juce::String (argv[1]) == "--snapshot-about")
+    {
+        spa::SPASynthProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (spa::ui::metrics::baseWidth, spa::ui::metrics::baseHeight);
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+
+        if (auto* content = dynamic_cast<spa::ui::ContentComponent*> (editor->getChildComponent (0)))
+        {
+            content->showAboutPanel();
+            // Capture quickly: CallOutBoxCallback's own 200ms timer
+            // auto-dismisses whenever this process isn't the real OS
+            // foreground/key-window process (true in this CLI render), so
+            // don't wait anywhere near that long.
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        }
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+        const auto file = juce::File (argv[2]).getChildFile ("spasynth-about.png");
+        file.deleteFile();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream stream (file);
+        if (stream.openedOk())
+            png.writeImageToStream (image, stream);
+        std::cout << "snapshot: " << file.getFullPathName() << "\n";
+        editor->removeFromDesktop();
+        return 0;
+    }
+
     for (int i = 1; i < argc; ++i)
         if (juce::String (argv[i]) == "--real-library")
             g_realLibraryTestOptIn = true;
@@ -26025,6 +26220,7 @@ int main (int argc, char* argv[])
     RUN (modMatrixRouteOrderNeverChangesSoundTest);
     RUN (modMatrixCompactionTest);
     RUN (modMatrixClearRowMenuTest);
+    RUN (aboutPanelTest);
 
    #undef RUN
 

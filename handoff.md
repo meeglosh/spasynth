@@ -1,9 +1,38 @@
-# SPASynth handoff (2026-09-18)
+# SPASynth handoff (2026-09-26)
 
 Quick "start here" for the next session. Full detail lives in `CLAUDE.md`; this
 is the short version.
 
 ## Where we are
+
+- **2026-09-26: v1.0.26 built + staged, going to Paul and Phil as the BETA.**
+  Mike installed and confirmed 1.0.25, then asked for one last feature
+  round. 1.0.26 = edited-preset asterisk + SAVE (update in place, previous
+  version to Trash) / Save As; preset export/import (files, folders, zip
+  packs -> banks) with an async clash prompt; stored preset TYPE + picker on
+  save + Set type...; Key mod source + KEYTRK in percent; envelope playhead
+  dots; mod matrix drag-to-reorder + compaction; About SPASynth panel;
+  Convolve library menu remembers pack/IR. Hashes and details: CLAUDE.md's
+  2026-09-26 section (final 1.0.26 pkg/exe are from the in-place rebuild at
+  `8e262f8`). Tester note `docs/tester-note-1.0.26.txt`.
+  **Next: bump to 1.0.27 for anything after it is sent.** Open items: the
+  RANDOMIZE ALL quiet residual (~11.5% of real-library rolls, two unapplied
+  fixes waiting on Mike's ear), `randomLockMask` riding in presets, matrix
+  reorder retargets DAW automation (by design, flagged), tests put temp
+  preset files in the real Trash (delete/save-in-place tests), the
+  `convolveLibraryMenuTest` load flake, wavetable chaos-phase stepping
+  (waiting on Paul), Hall MIX taper (Phil). 1.1.0 plan unchanged below.
+
+- **2026-09-25: v1.0.25 built, staged, INSTALLED and CONFIRMED by Mike.**
+  Ping-pong WIDTH, FX display redesign + dense FX layout, reverb arrival
+  fix (Dattorro taps), RANDOMIZE ALL quiet-roll fixes + a background-thread
+  shutdown crash, WILD in presets, preset loads keep window size, per-osc
+  filter routing, preset TYPE menu, Custom LFO shape. Process rule adopted
+  after that round's cost: `--only` while iterating, one full suite per
+  job, ASan only for DSP/lifetime + pre-release, fresh agent for a second
+  round, two-round cap. Never run two test suites at once.
+
+- **2026-09-19..24: v1.0.19-1.0.24** -- see CLAUDE.md's sections for each.
 
 - **2026-09-18: v1.0.18 built + staged (main `c65b2b2`), awaiting Mike's
   install. v1.0.17 already went to Paul and Phil.** Read the 1.0.18 section

@@ -28,11 +28,14 @@ Known flake: `convolveLibraryMenuTest` can time out under heavy load
 (ASan, or two suites at once); passes alone. **Never run two suites at
 once** -- agents may leave a background ASan run alive after handing back;
 check `ps` before starting another.
-macOS pkg md5 `d11066e999d275e406221e179ee474b7` (notarized, universal,
-minos 11.0); Windows `ci-windows-0f8ff5d` (run `36218241677`) md5
-`43f97a9968c2c4403ceb4fd529fcf4f9`; byte-identical across dist/installers
+**Rebuilt in place at `8e262f8`** after adding the edited-preset asterisk +
+Save (in place, old file to Trash) / Save As. FINAL macOS pkg md5
+`ec5ee84e52bd4648570ebafa41ebde9b` (notarized, universal, minos 11.0);
+Windows `ci-windows-8e262f8` (run `36257870675`) md5
+`a9047fc29b2b16284a9ff033d1e9185d` (the `0f8ff5d` pair is superseded); byte-identical across dist/installers
 and both shopify folders. Tester note `docs/tester-note-1.0.26.txt`.
-**Pending: Mike installs, runs the gauntlet, sends to testers (beta).**
+**Pending: Mike sends 1.0.26 to Paul and Phil as the beta. Bump to 1.0.27
+for anything after that.**
 
 ## Current state (2026-09-25): v1.0.25 (main `a7c86a2`) built + staged; big tester round
 
